@@ -1,5 +1,4 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
@@ -65,28 +64,26 @@ function DashboardTabs() {
 
 export default function DashboardNavigator() {
   return (
-    <NavigationContainer>
-      <Stack.Navigator
-        screenOptions={{
-          headerTintColor: colors.text,
-          headerTitleStyle: {
-            fontWeight: '700',
-          },
-          headerShadowVisible: false,
-          headerStyle: {
-            backgroundColor: colors.background,
-          },
-          contentStyle: {
-            backgroundColor: colors.background,
-          },
-        }}
-      >
-        <Stack.Screen component={DashboardTabs} name="MainTabs" options={{ headerShown: false }} />
-        <Stack.Screen component={CaseDetailScreen} name="CaseDetail" options={{ title: 'Detalle de causa' }} />
-        <Stack.Screen component={NewCaseScreen} name="NewCase" options={{ title: 'Nueva causa' }} />
-        <Stack.Screen component={NewHearingScreen} name="NewHearing" options={{ title: 'Programar audiencia' }} />
-        <Stack.Screen component={UploadDocumentScreen} name="UploadDocument" options={{ title: 'Subir documento' }} />
-      </Stack.Navigator>
-    </NavigationContainer>
+    <Stack.Navigator
+      screenOptions={{
+        headerTintColor: colors.text,
+        headerTitleStyle: {
+          fontWeight: '700',
+        },
+        headerShadowVisible: false,
+        headerStyle: {
+          backgroundColor: colors.background,
+        },
+        contentStyle: {
+          backgroundColor: colors.background,
+        },
+      }}
+    >
+      <Stack.Screen component={DashboardTabs} name="MainTabs" options={{ headerShown: false }} />
+      <Stack.Screen component={CaseDetailScreen} name="CaseDetail" options={{ title: 'Detalle de causa' }} />
+      <Stack.Screen component={NewCaseScreen} name="NewCase" options={{ title: 'Nueva causa' }} />
+      <Stack.Screen component={NewHearingScreen} name="NewHearing" options={{ title: 'Programar audiencia' }} />
+      <Stack.Screen component={UploadDocumentScreen} name="UploadDocument" options={{ title: 'Subir documento' }} />
+    </Stack.Navigator>
   );
 }

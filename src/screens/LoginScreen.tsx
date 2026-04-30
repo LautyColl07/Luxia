@@ -11,99 +11,18 @@ import {
   Platform,
   Alert,
 } from "react-native";
-
-import { signInWithEmailAndPassword } from "firebase/auth";
 import { User, Lock, Eye, EyeOff, HelpCircle } from "lucide-react-native";
-import { auth } from "../config/firebase";
 
-// GOOGLE LOGIN DESACTIVADO TEMPORALMENTE EN EXPO GO
-// import * as WebBrowser from "expo-web-browser";
-// import * as Google from "expo-auth-session/providers/google";
-// import {
-//   GoogleAuthProvider,
-//   signInWithCredential,
-// } from "firebase/auth";
-
-// WebBrowser.maybeCompleteAuthSession();
+import { authClient } from "../services/authClient";
 
 export default function LoginScreen({ navigation }: any) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
-
   const [emailError, setEmailError] = useState("");
   const [passwordError, setPasswordError] = useState("");
-
   const [isLoading, setIsLoading] = useState(false);
-
-  // GOOGLE LOGIN DESACTIVADO TEMPORALMENTE EN EXPO GO
-  /*
-  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
-
-  const [request, response, promptAsync] = Google.useAuthRequest({
-    webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
-    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
-  });
-
-  useEffect(() => {
-    const loginWithGoogle = async () => {
-      try {
-        if (response?.type === "success") {
-          setIsGoogleLoading(true);
-
-          const { id_token } = response.params;
-
-          if (!id_token) {
-            Alert.alert("Error", "No se pudo obtener el token de Google.");
-            return;
-          }
-
-          const credential = GoogleAuthProvider.credential(id_token);
-
-          await signInWithCredential(auth, credential);
-
-          navigation.replace("MainApp");
-        }
-      } catch (error: any) {
-        console.log("Google login error:", error);
-        Alert.alert(
-          "Error",
-          "No se pudo iniciar sesión con Google. Intentá nuevamente."
-        );
-      } finally {
-        setIsGoogleLoading(false);
-      }
-    };
-
-    loginWithGoogle();
-  }, [response]);
-
-  const handleGoogleLogin = async () => {
-    try {
-      await promptAsync({ useProxy: true } as any);
-    } catch (error) {
-      console.log("Prompt Google error:", error);
-      Alert.alert("Error", "No se pudo abrir el inicio de sesión con Google.");
-    }
-  };
-  */
-
-  const getFirebaseErrorMessage = (code: string) => {
-    switch (code) {
-      case "auth/invalid-email":
-        return "El email no es válido";
-      case "auth/user-not-found":
-        return "No existe una cuenta con este email";
-      case "auth/wrong-password":
-        return "La contraseña es incorrecta";
-      case "auth/invalid-credential":
-        return "Credenciales inválidas";
-      default:
-        return "No se pudo iniciar sesión. Intentá nuevamente.";
-    }
-  };
 
   const validateForm = () => {
     let isValid = true;
@@ -125,16 +44,25 @@ export default function LoginScreen({ navigation }: any) {
   };
 
   const handleLogin = async () => {
-    if (!validateForm()) return;
+    if (!validateForm()) {
+      return;
+    }
 
     try {
       setIsLoading(true);
 
-      await signInWithEmailAndPassword(auth, email.trim(), password);
-
-      navigation.replace("MainApp");
-    } catch (error: any) {
-      Alert.alert("Error", getFirebaseErrorMessage(error.code));
+      await authClient.login({
+        email: email.trim(),
+        password,
+        rememberMe,
+      });
+    } catch (error) {
+      Alert.alert(
+        "Error",
+        error instanceof Error
+          ? error.message
+          : "No se pudo iniciar sesion. Intenta nuevamente.",
+      );
     } finally {
       setIsLoading(false);
     }
@@ -152,15 +80,15 @@ export default function LoginScreen({ navigation }: any) {
         <View style={styles.container}>
           <View style={styles.card}>
             <View style={styles.header}>
-              <Text style={styles.title}>Iniciar sesión</Text>
+              <Text style={styles.title}>Iniciar sesion</Text>
               <Text style={styles.subtitle}>
-                Accedé a tu cuenta para continuar en la plataforma judicial
+                Accede a tu cuenta para continuar en la plataforma judicial
               </Text>
             </View>
 
             <View style={styles.form}>
               <View style={styles.inputGroup}>
-                <Text style={styles.label}>Usuario</Text>
+                <Text style={styles.label}>Email</Text>
 
                 <View
                   style={[
@@ -173,7 +101,7 @@ export default function LoginScreen({ navigation }: any) {
                   <TextInput
                     value={email}
                     onChangeText={setEmail}
-                    placeholder="Ingresá tu email"
+                    placeholder="Ingresa tu email"
                     placeholderTextColor="#5B6776"
                     keyboardType="email-address"
                     autoCapitalize="none"
@@ -188,7 +116,7 @@ export default function LoginScreen({ navigation }: any) {
               </View>
 
               <View style={styles.inputGroup}>
-                <Text style={styles.label}>Contraseña</Text>
+                <Text style={styles.label}>Contrasena</Text>
 
                 <View
                   style={[
@@ -201,7 +129,7 @@ export default function LoginScreen({ navigation }: any) {
                   <TextInput
                     value={password}
                     onChangeText={setPassword}
-                    placeholder="Ingresá tu contraseña"
+                    placeholder="Ingresa tu contrasena"
                     placeholderTextColor="#5B6776"
                     secureTextEntry={!showPassword}
                     autoCapitalize="none"
@@ -236,7 +164,7 @@ export default function LoginScreen({ navigation }: any) {
                     rememberMe ? styles.checkboxActive : null,
                   ]}
                 >
-                  {rememberMe ? <Text style={styles.checkText}>✓</Text> : null}
+                  {rememberMe ? <Text style={styles.checkText}>X</Text> : null}
                 </View>
 
                 <Text style={styles.rememberText}>Recordarme</Text>
@@ -260,50 +188,30 @@ export default function LoginScreen({ navigation }: any) {
                 )}
               </TouchableOpacity>
 
-              {/*
-              BOTÓN GOOGLE DESACTIVADO TEMPORALMENTE EN EXPO GO
-
-              <TouchableOpacity
-                style={[
-                  styles.googleButton,
-                  !request || isGoogleLoading
-                    ? styles.googleButtonDisabled
-                    : null,
-                ]}
-                onPress={handleGoogleLogin}
-                disabled={!request || isGoogleLoading}
-              >
-                {isGoogleLoading ? (
-                  <ActivityIndicator color="#1E2A36" size="small" />
-                ) : (
-                  <Text style={styles.googleButtonText}>
-                    Continuar con Google
-                  </Text>
-                )}
-              </TouchableOpacity>
-              */}
-
               <TouchableOpacity
                 onPress={() => navigation.navigate("ForgotPassword")}
               >
-                <Text style={styles.forgotText}>Olvidé la contraseña</Text>
+                <Text style={styles.forgotText}>Olvide la contrasena</Text>
               </TouchableOpacity>
 
               <View style={styles.divider} />
 
-              <TouchableOpacity style={styles.helpButton}>
+              <TouchableOpacity
+                onPress={() => navigation.navigate("HelpAccess")}
+                style={styles.helpButton}
+              >
                 <HelpCircle size={16} color="#5B6776" />
                 <Text style={styles.helpText}>
-                  ¿Necesitás ayuda para acceder?
+                  Necesitas ayuda para acceder?
                 </Text>
               </TouchableOpacity>
             </View>
           </View>
 
           <View style={styles.registerContainer}>
-            <Text style={styles.registerText}>¿No tenés cuenta? </Text>
+            <Text style={styles.registerText}>No tenes cuenta? </Text>
             <TouchableOpacity onPress={() => navigation.navigate("Register")}>
-              <Text style={styles.registerLink}>Registrate aquí</Text>
+              <Text style={styles.registerLink}>Registrate aqui</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -451,23 +359,6 @@ const styles = StyleSheet.create({
   },
   loginButtonText: {
     color: "#FFFFFF",
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  googleButton: {
-    height: 52,
-    backgroundColor: "#FFFFFF",
-    borderRadius: 10,
-    borderWidth: 2,
-    borderColor: "#C4A77D",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  googleButtonDisabled: {
-    opacity: 0.6,
-  },
-  googleButtonText: {
-    color: "#1E2A36",
     fontSize: 14,
     fontWeight: "700",
   },

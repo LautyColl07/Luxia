@@ -1,15 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useState } from 'react';
-import {
-  Alert,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
@@ -49,9 +41,42 @@ export default function DashboardScreen({ navigation }) {
 
   useFocusEffect(
     useCallback(() => {
-      loadDashboard();
+      void loadDashboard();
     }, [loadDashboard])
   );
+
+  const handleRefresh = useCallback(() => {
+    void loadDashboard(true);
+  }, [loadDashboard]);
+
+  const handleNotificationsPress = useCallback(() => {
+    navigation.navigate('Más');
+  }, [navigation]);
+
+  const handleOpenCalendar = useCallback(() => {
+    navigation.navigate('Calendario');
+  }, [navigation]);
+
+  const handleCreateCase = useCallback(() => {
+    navigation.navigate('NewCase');
+  }, [navigation]);
+
+  const handleUploadDocument = useCallback(() => {
+    navigation.navigate('UploadDocument');
+  }, [navigation]);
+
+  const handleCreateHearing = useCallback(() => {
+    navigation.navigate('NewHearing');
+  }, [navigation]);
+
+  const handleOpenHearing = useCallback((hearing) => {
+    if (hearing?.caseId) {
+      navigation.navigate('CaseDetail', { caseId: hearing.caseId });
+      return;
+    }
+
+    navigation.navigate('Calendario');
+  }, [navigation]);
 
   if (loading && !dashboard) {
     return <LoadingState />;
@@ -91,7 +116,7 @@ export default function DashboardScreen({ navigation }) {
   return (
     <ScrollView
       contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl onRefresh={() => loadDashboard(true)} refreshing={refreshing} tintColor={colors.primary} />}
+      refreshControl={<RefreshControl onRefresh={handleRefresh} refreshing={refreshing} tintColor={colors.primary} />}
       showsVerticalScrollIndicator={false}
       style={styles.screen}
     >
@@ -102,7 +127,7 @@ export default function DashboardScreen({ navigation }) {
         <View style={styles.heroTopRow}>
           <Text style={styles.brand}>LUXIA</Text>
 
-          <Pressable style={styles.notificationButton}>
+          <Pressable onPress={handleNotificationsPress} style={styles.notificationButton}>
             <MaterialCommunityIcons color={colors.card} name="bell-outline" size={24} />
             {notificationCount > 0 ? (
               <View style={styles.notificationBadge}>
@@ -126,7 +151,7 @@ export default function DashboardScreen({ navigation }) {
 
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionEyebrow}>PRÓXIMAS AUDIENCIAS</Text>
-        <Pressable onPress={() => navigation.navigate('Calendario')}>
+        <Pressable onPress={handleOpenCalendar}>
           <Text style={styles.sectionLink}>Ver calendario →</Text>
         </Pressable>
       </View>
@@ -137,9 +162,7 @@ export default function DashboardScreen({ navigation }) {
             hearing={hearing}
             isLast={index === dashboard.proximasAudiencias.length - 1}
             key={hearing.id}
-            onPressAction={() =>
-              Alert.alert('Audiencia lista', `El flujo para iniciar "${hearing.title}" queda preparado para la integración real.`)
-            }
+            onPressAction={() => handleOpenHearing(hearing)}
           />
         ))
       ) : (
@@ -157,19 +180,19 @@ export default function DashboardScreen({ navigation }) {
       <View style={styles.quickActionsGrid}>
         <QuickActionButton
           icon="plus-box-outline"
-          onPress={() => navigation.navigate('NewCase')}
+          onPress={handleCreateCase}
           subtitle="Alta rápida de expediente"
           title="Nueva Causa"
         />
         <QuickActionButton
           icon="tray-arrow-up"
-          onPress={() => navigation.navigate('UploadDocument')}
+          onPress={handleUploadDocument}
           subtitle="Adjuntar pieza procesal"
           title="Subir Documento"
         />
         <QuickActionButton
           icon="calendar-plus"
-          onPress={() => navigation.navigate('NewHearing')}
+          onPress={handleCreateHearing}
           subtitle="Agenda una audiencia"
           title="Programar Audiencia"
         />

@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   SafeAreaView,
@@ -13,6 +14,7 @@ import {
 import { Mail, ArrowLeft } from "lucide-react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 
+import { authClient } from "../services/authClient";
 import { CARD_SHADOW, COLORS, TYPOGRAPHY } from "../theme/luxiaTheme";
 import { RootStackParamList } from "../types/navigation";
 
@@ -25,26 +27,39 @@ const ForgotPasswordScreen = ({ navigation }: ForgotPasswordScreenProps) => {
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     const trimmedEmail = email.trim();
 
     if (!trimmedEmail) {
-      setError("Ingresá tu email para continuar");
+      setError("Ingresa tu email para continuar");
       setMessage("");
       return;
     }
 
     if (!/\S+@\S+\.\S+/.test(trimmedEmail)) {
-      setError("Ingresá un email válido");
+      setError("Ingresa un email valido");
       setMessage("");
       return;
     }
 
-    setError("");
-    setMessage(
-      "La pantalla ya quedó lista. Cuando conectemos Firebase, desde acá se enviará el email de recuperación.",
-    );
+    try {
+      setIsSubmitting(true);
+      setError("");
+      setMessage("");
+
+      await authClient.resetPassword(trimmedEmail);
+      setMessage("Te enviamos un email para restablecer tu contrasena.");
+    } catch (submitError) {
+      setError(
+        submitError instanceof Error
+          ? submitError.message
+          : "No pudimos enviar el email de recuperacion.",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -53,16 +68,24 @@ const ForgotPasswordScreen = ({ navigation }: ForgotPasswordScreenProps) => {
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={styles.keyboardAvoidingView}
       >
-        <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+        >
           <View style={styles.container}>
             <View style={styles.card}>
               <Text style={styles.title}>Recuperar acceso</Text>
               <Text style={styles.subtitle}>
-                Ingresá tu email y dejá preparado el flujo para recuperar tu contraseña.
+                Ingresa tu email para enviar el enlace de recuperacion.
               </Text>
 
               <Text style={styles.label}>Email</Text>
-              <View style={[styles.inputWrapper, error ? styles.inputWrapperError : undefined]}>
+              <View
+                style={[
+                  styles.inputWrapper,
+                  error ? styles.inputWrapperError : undefined,
+                ]}
+              >
                 <Mail size={18} color={COLORS.textSecondary} />
                 <TextInput
                   autoCapitalize="none"
@@ -83,8 +106,17 @@ const ForgotPasswordScreen = ({ navigation }: ForgotPasswordScreenProps) => {
               {error ? <Text style={styles.errorText}>{error}</Text> : null}
               {message ? <Text style={styles.successText}>{message}</Text> : null}
 
-              <TouchableOpacity activeOpacity={0.9} onPress={handleSubmit} style={styles.primaryButton}>
-                <Text style={styles.primaryButtonText}>CONTINUAR</Text>
+              <TouchableOpacity
+                activeOpacity={0.9}
+                disabled={isSubmitting}
+                onPress={handleSubmit}
+                style={styles.primaryButton}
+              >
+                {isSubmitting ? (
+                  <ActivityIndicator color={COLORS.white} size="small" />
+                ) : (
+                  <Text style={styles.primaryButtonText}>CONTINUAR</Text>
+                )}
               </TouchableOpacity>
 
               <TouchableOpacity

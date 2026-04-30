@@ -127,8 +127,6 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
         username: form.username.trim(),
         password: form.password,
       });
-
-      navigation.replace("MainApp");
     } catch (error) {
       const message =
         error instanceof Error

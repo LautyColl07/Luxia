@@ -12,10 +12,27 @@ const API_BASE_URL = (
 
 let authToken = null;
 let mockStore = JSON.parse(JSON.stringify(mockData));
+const REQUEST_TIMEOUT_MS = 8000;
 
 function simulateDelay(result, ms = 450) {
   return new Promise((resolve) => {
     setTimeout(() => resolve(result), ms);
+  });
+}
+
+function runWithTimeout(promise, timeoutMs, timeoutMessage) {
+  let timeoutId = null;
+
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(createRequestError(timeoutMessage, 0));
+    }, timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
   });
 }
 
@@ -310,6 +327,20 @@ function normalizeDashboardResumen(data) {
   };
 }
 
+function normalizeNotification(notification) {
+  const source = notification || {};
+  const createdAt = normalizeDateValue(source.createdAt ?? source.fecha ?? source.date);
+
+  return {
+    ...source,
+    id: getId(source.id),
+    title: safeString(source.title ?? source.titulo, 'Notificacion'),
+    message: safeString(source.message ?? source.mensaje, ''),
+    read: Boolean(source.read ?? source.leida),
+    createdAt,
+  };
+}
+
 function mapUpcomingHearings(limit = 5) {
   const caseMap = getCaseMap();
 
@@ -363,11 +394,11 @@ function getErrorMessage(status, data) {
   }
 
   if (status === 401 || status === 403) {
-    return 'El servidor rechazó la solicitud. Por ahora este módulo todavía no envía autenticación.';
+    return 'El servidor rechazo la solicitud. Verifica la sesion del usuario e intenta nuevamente.';
   }
 
   if (status >= 500) {
-    return 'El servidor respondió con un error interno. Probá nuevamente en unos minutos.';
+    return 'El servidor respondio con un error interno. Proba nuevamente en unos minutos.';
   }
 
   return 'No pudimos completar la solicitud.';
@@ -375,10 +406,10 @@ function getErrorMessage(status, data) {
 
 export async function request(endpoint, options = {}) {
   if (!API_BASE_URL) {
-    throw new Error('Definí EXPO_PUBLIC_API_BASE_URL para usar la API real.');
+    throw new Error('Defini EXPO_PUBLIC_API_BASE_URL para usar la API real.');
   }
 
-  const path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const path = endpoint.startsWith('/') ? endpoint : '/' + endpoint;
   const hasJsonBody =
     options.body !== undefined &&
     options.body !== null &&
@@ -389,18 +420,23 @@ export async function request(endpoint, options = {}) {
   let response;
 
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
-      ...options,
-      body,
-      headers: {
-        Accept: 'application/json',
-        ...(body !== undefined && body !== null && !(body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
-        ...options.headers,
-      },
-    });
+    response = await runWithTimeout(
+      fetch(API_BASE_URL + path, {
+        ...options,
+        body,
+        headers: {
+          Accept: 'application/json',
+          ...(body !== undefined && body !== null && !(body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
+          ...getAuthHeaders(),
+          ...options.headers,
+        },
+      }),
+      REQUEST_TIMEOUT_MS,
+      'La solicitud a ' + path + ' supero el maximo de ' + REQUEST_TIMEOUT_MS + ' ms.'
+    );
   } catch (error) {
     throw createRequestError(
-      'No pudimos conectarnos con el servidor. Verificá que esté activo y accesible desde Expo.',
+      error?.message || 'No pudimos conectarnos con el servidor. Verifica que este activo y accesible desde Expo.',
       0,
       error
     );
@@ -526,6 +562,8 @@ function normalizeCasePayload(data = {}) {
   return {
     title: safeString(data.title ?? data.titulo, '').trim(),
     description: safeString(data.description ?? data.descripcion, '').trim(),
+    court: safeString(data.court ?? data.juzgado, '').trim(),
+    status: safeString(data.status ?? data.estado, 'Activa').trim(),
   };
 }
 
@@ -551,6 +589,8 @@ export async function createCase(data) {
     ...response,
     title: response?.title ?? payload.title,
     description: response?.description ?? payload.description,
+    court: response?.court ?? payload.court,
+    status: response?.status ?? payload.status,
   });
 }
 
@@ -582,6 +622,8 @@ export async function updateCase(id, data) {
     id,
     title: response?.title ?? payload.title,
     description: response?.description ?? payload.description,
+    court: response?.court ?? payload.court,
+    status: response?.status ?? payload.status,
   });
 }
 
@@ -617,6 +659,8 @@ function normalizeHearingPayload(data = {}) {
     title: safeString(data.title ?? data.titulo, '').trim(),
     date: combineDateTime(data.date ?? data.fecha, data.time ?? data.hora),
     caseId: toNumber(data.caseId ?? data.causaId),
+    modality: safeString(data.modality ?? data.modalidad, '').trim(),
+    location: safeString(data.location ?? data.ubicacion, '').trim(),
   };
 }
 
@@ -645,6 +689,8 @@ export async function createHearing(data) {
     title: response?.title ?? payload.title,
     date: response?.date ?? payload.date,
     caseId: response?.caseId ?? payload.caseId,
+    modality: response?.modality ?? payload.modality,
+    location: response?.location ?? payload.location,
   });
 }
 
@@ -672,8 +718,9 @@ function normalizeDocumentPayload(data = {}) {
 
   return {
     fileName,
-    path: safeString(data.path ?? data.ruta, `/uploads/${fileName || 'documento-simulado.pdf'}`),
+    path: safeString(data.path ?? data.ruta, '/uploads/' + (fileName || 'documento-simulado.pdf')),
     hearingId: toNumber(data.hearingId ?? data.audienciaId),
+    documentType: safeString(data.documentType ?? data.tipo, '').trim(),
   };
 }
 
@@ -703,10 +750,32 @@ export async function uploadDocument(data) {
     fileName: response?.fileName ?? payload.fileName,
     path: response?.path ?? payload.path,
     hearingId: response?.hearingId ?? payload.hearingId,
-    documentType: response?.documentType ?? data.documentType ?? data.tipo,
+    documentType: response?.documentType ?? payload.documentType,
   });
 }
 
 export async function getNotifications() {
-  return simulateDelay([...mockStore.notifications]);
+  if (USE_MOCKS) {
+    return simulateDelay([...mockStore.notifications]);
+  }
+
+  try {
+    const data = await request('/notificaciones');
+    return sortByDateDesc(toArray(data).map((item) => normalizeNotification(item)), 'createdAt');
+  } catch {
+    return [];
+  }
+}
+
+export async function getDashboardBootstrap() {
+  const [resumen, notifications] = await Promise.all([getDashboardResumen(), getNotifications().catch(() => [])]);
+
+  return {
+    resumen,
+    notificationCount: notifications.filter((item) => !item.read).length,
+  };
+}
+
+export function preloadDashboardBootstrap() {
+  return getDashboardBootstrap().catch(() => null);
 }
