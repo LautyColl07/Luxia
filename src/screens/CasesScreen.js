@@ -1,23 +1,19 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useState } from 'react';
-import {
-  FlatList,
-  Pressable,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { useCallback, useMemo, useState } from 'react';
+import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
-import colors from '../constants/colors';
+import StatusBadge from '../components/StatusBadge';
+import { useAppTheme } from '../context/ThemeContext';
 import { getCases } from '../services/api';
-import { formatLongDate } from '../utils/date';
+import { formatDate } from '../utils/date';
 
 export default function CasesScreen({ navigation }) {
+  const { colors } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [cases, setCases] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -33,9 +29,14 @@ export default function CasesScreen({ navigation }) {
 
       setError('');
       const items = await getCases();
-      setCases(items);
+      setCases(Array.isArray(items) ? items : []);
     } catch (loadError) {
-      setError(loadError.message);
+      console.error('[CasesScreen] Error cargando causas:', loadError);
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : 'No pudimos cargar las causas registradas.'
+      );
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -44,72 +45,87 @@ export default function CasesScreen({ navigation }) {
 
   useFocusEffect(
     useCallback(() => {
-      loadCases();
+      void loadCases();
     }, [loadCases])
   );
 
   if (loading && !cases.length) {
-    return <LoadingState message="Estamos cargando las causas activas y su contexto judicial." title="Cargando causas" />;
+    return (
+      <LoadingState
+        title="Cargando causas"
+        message="Estamos reuniendo los expedientes y su informacion principal."
+      />
+    );
   }
 
   if (error && !cases.length) {
-    return <ErrorState message={error} onRetry={loadCases} title="No pudimos traer las causas" />;
+    return (
+      <ErrorState
+        title="No pudimos cargar las causas"
+        message={error}
+        onRetry={loadCases}
+      />
+    );
   }
 
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
-        <View>
+        <View style={styles.headerCopy}>
           <Text style={styles.title}>Causas</Text>
-          <Text style={styles.subtitle}>Seguimiento de expedientes, estados y próximos hitos.</Text>
+          <Text style={styles.subtitle}>
+            Consulta el estado de tus expedientes, su juzgado interviniente y las fechas relevantes.
+          </Text>
         </View>
 
         <Pressable onPress={() => navigation.navigate('NewCase')} style={styles.primaryButton}>
-          <MaterialCommunityIcons color={colors.card} name="plus" size={18} />
-          <Text style={styles.primaryButtonText}>Nueva Causa</Text>
+          <MaterialCommunityIcons color={colors.textOnPrimary} name="plus" size={18} />
+          <Text style={styles.primaryButtonText}>Nueva causa</Text>
         </Pressable>
       </View>
 
       <FlatList
         contentContainerStyle={styles.listContent}
         data={cases}
-        keyExtractor={(item) => String(item.id)}
-        refreshControl={<RefreshControl onRefresh={() => loadCases(true)} refreshing={refreshing} tintColor={colors.primary} />}
+        keyExtractor={(item) => String(item?.id)}
+        refreshControl={
+          <RefreshControl
+            onRefresh={() => void loadCases(true)}
+            refreshing={refreshing}
+            tintColor={colors.primary}
+          />
+        }
         renderItem={({ item }) => (
-          <Pressable onPress={() => navigation.navigate('CaseDetail', { caseId: item.id })} style={styles.card}>
+          <Pressable
+            onPress={() => navigation.navigate('CaseDetail', { caseId: item?.id })}
+            style={styles.card}
+          >
             <View style={styles.cardTopRow}>
-              <Text style={styles.cardTitle}>{item.title}</Text>
-              <View
-                style={[
-                  styles.statusPill,
-                  item.status === 'Activa'
-                    ? styles.statusActive
-                    : item.status === 'Cerrada'
-                      ? styles.statusClosed
-                      : styles.statusReview,
-                ]}
-              >
-                <Text style={styles.statusText}>{item.status}</Text>
-              </View>
+              <Text style={styles.cardTitle}>{item?.title || 'Causa sin titulo'}</Text>
+              <StatusBadge status={item?.status} />
             </View>
 
-            <Text style={styles.description}>{item.description}</Text>
+            <Text style={styles.description}>
+              {item?.description || 'Sin informacion adicional registrada.'}
+            </Text>
 
             <View style={styles.metaRow}>
               <MaterialCommunityIcons color={colors.textSecondary} name="scale-balance" size={16} />
-              <Text style={styles.metaText}>{item.court || 'Juzgado a confirmar'}</Text>
+              <Text style={styles.metaText}>{item?.court || 'Juzgado a confirmar'}</Text>
             </View>
 
             <View style={styles.metaRow}>
               <MaterialCommunityIcons color={colors.textSecondary} name="calendar-outline" size={16} />
-              <Text style={styles.metaText}>Creada el {formatLongDate(item.createdAt)}</Text>
+              <Text style={styles.metaText}>Fecha de alta: {formatDate(item?.createdAt)}</Text>
             </View>
           </Pressable>
         )}
         ListEmptyComponent={
           <EmptyState
+            actionLabel="Nueva causa"
             icon="briefcase-search-outline"
-            message="Todavía no se cargaron causas. Podés empezar creando la primera desde este módulo."
+            message="Todavia no tenes causas registradas."
+            onAction={() => navigation.navigate('NewCase')}
             title="Sin causas registradas"
           />
         }
@@ -119,7 +135,7 @@ export default function CasesScreen({ navigation }) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors) => StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
@@ -130,6 +146,9 @@ const styles = StyleSheet.create({
     paddingBottom: 18,
     gap: 16,
   },
+  headerCopy: {
+    gap: 6,
+  },
   title: {
     color: colors.text,
     fontSize: 28,
@@ -139,8 +158,7 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 14,
     lineHeight: 20,
-    marginTop: 6,
-    maxWidth: '80%',
+    maxWidth: '88%',
   },
   primaryButton: {
     alignSelf: 'flex-start',
@@ -153,7 +171,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   primaryButtonText: {
-    color: colors.card,
+    color: colors.textOnPrimary,
     fontSize: 14,
     fontWeight: '700',
   },
@@ -166,11 +184,13 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     borderRadius: 24,
     padding: 18,
-    shadowColor: colors.primary,
+    shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.08,
+    shadowOpacity: 0.14,
     shadowRadius: 18,
     elevation: 4,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
   },
   cardTopRow: {
     flexDirection: 'row',
@@ -182,25 +202,6 @@ const styles = StyleSheet.create({
     flex: 1,
     color: colors.text,
     fontSize: 18,
-    fontWeight: '700',
-  },
-  statusPill: {
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-  },
-  statusActive: {
-    backgroundColor: '#E7F4EA',
-  },
-  statusClosed: {
-    backgroundColor: '#FCEBEC',
-  },
-  statusReview: {
-    backgroundColor: '#FFF4DA',
-  },
-  statusText: {
-    color: colors.text,
-    fontSize: 12,
     fontWeight: '700',
   },
   description: {

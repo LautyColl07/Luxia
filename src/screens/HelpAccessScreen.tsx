@@ -22,8 +22,7 @@ const HelpAccessScreen = ({ navigation }: HelpAccessScreenProps) => {
           <HelpCircle size={26} color={COLORS.primary} />
           <Text style={styles.title}>Ayuda para acceder</Text>
           <Text style={styles.description}>
-            Esta pantalla ya está lista para sumar soporte real, preguntas frecuentes o validaciones
-            de identidad cuando conectemos el back.
+            Si necesitas recuperar el acceso, revisa estos pasos antes de comunicarte con soporte.
           </Text>
 
           <View style={styles.tipRow}>
@@ -40,7 +39,7 @@ const HelpAccessScreen = ({ navigation }: HelpAccessScreenProps) => {
             onPress={() => navigation.navigate("ForgotPassword")}
             style={styles.primaryButton}
           >
-            <Text style={styles.primaryButtonText}>RECUPERAR CONTRASEÑA</Text>
+            <Text style={styles.primaryButtonText}>Recuperar contrasena</Text>
           </TouchableOpacity>
 
           <TouchableOpacity

@@ -50,8 +50,9 @@ const ForgotPasswordScreen = ({ navigation }: ForgotPasswordScreenProps) => {
       setMessage("");
 
       await authClient.resetPassword(trimmedEmail);
-      setMessage("Te enviamos un email para restablecer tu contrasena.");
+      setMessage("Te enviamos un correo con las instrucciones para restablecer tu contrasena.");
     } catch (submitError) {
+      console.error("[ForgotPasswordScreen] Error enviando recuperacion:", submitError);
       setError(
         submitError instanceof Error
           ? submitError.message
@@ -76,10 +77,10 @@ const ForgotPasswordScreen = ({ navigation }: ForgotPasswordScreenProps) => {
             <View style={styles.card}>
               <Text style={styles.title}>Recuperar acceso</Text>
               <Text style={styles.subtitle}>
-                Ingresa tu email para enviar el enlace de recuperacion.
+                Ingresa tu correo electronico para enviarte el enlace de recuperacion.
               </Text>
 
-              <Text style={styles.label}>Email</Text>
+              <Text style={styles.label}>Correo electronico</Text>
               <View
                 style={[
                   styles.inputWrapper,
@@ -115,7 +116,7 @@ const ForgotPasswordScreen = ({ navigation }: ForgotPasswordScreenProps) => {
                 {isSubmitting ? (
                   <ActivityIndicator color={COLORS.white} size="small" />
                 ) : (
-                  <Text style={styles.primaryButtonText}>CONTINUAR</Text>
+                  <Text style={styles.primaryButtonText}>Enviar instrucciones</Text>
                 )}
               </TouchableOpacity>
 

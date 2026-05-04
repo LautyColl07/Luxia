@@ -8,9 +8,9 @@ function createRelativeDate(daysOffset, hours, minutes) {
 
 const user = {
   id: 1,
-  name: 'Santino',
-  email: 'santino@luxia.com',
-  role: 'Abogado Senior',
+  name: 'Usuario',
+  email: 'usuario@luxia.com',
+  role: 'Profesional',
 };
 
 const cases = [

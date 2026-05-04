@@ -1,4 +1,4 @@
-const MONTHS = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'];
+const ARGENTINA_LOCALE = 'es-AR';
 
 function normalizeDate(dateValue) {
   if (!dateValue) {
@@ -28,44 +28,126 @@ export function isToday(dateValue) {
   return isSameDay(normalizeDate(dateValue), new Date());
 }
 
-export function formatShortDate(dateValue) {
-  const date = normalizeDate(dateValue);
-
-  if (!date) {
-    return 'SIN FECHA';
-  }
-
-  if (isToday(date)) {
-    return 'HOY';
-  }
-
-  return `${String(date.getDate()).padStart(2, '0')} ${MONTHS[date.getMonth()]}`;
+function formatWithLocale(date, options) {
+  return new Intl.DateTimeFormat(ARGENTINA_LOCALE, options).format(date);
 }
 
-export function formatTime(dateValue) {
-  const date = normalizeDate(dateValue);
-
-  if (!date) {
-    return '--:--';
-  }
-
-  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-}
-
-export function formatLongDate(dateValue) {
+export function formatDate(dateValue) {
   const date = normalizeDate(dateValue);
 
   if (!date) {
     return 'Sin fecha';
   }
 
-  const month = MONTHS[date.getMonth()].toLowerCase();
+  return formatWithLocale(date, {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+}
 
-  return `${String(date.getDate()).padStart(2, '0')} ${month} ${date.getFullYear()}`;
+export function formatShortDate(dateValue) {
+  const date = normalizeDate(dateValue);
+
+  if (!date) {
+    return 'Sin fecha';
+  }
+
+  if (isToday(date)) {
+    return 'Hoy';
+  }
+
+  return formatWithLocale(date, {
+    day: '2-digit',
+    month: '2-digit',
+  });
+}
+
+export function formatTime(dateValue) {
+  const date = normalizeDate(dateValue);
+
+  if (!date) {
+    return '--:-- hs';
+  }
+
+  return `${formatWithLocale(date, {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })} hs`;
+}
+
+export function formatLongDate(dateValue) {
+  return formatDate(dateValue);
+}
+
+export function formatDateTime(dateValue) {
+  const date = normalizeDate(dateValue);
+
+  if (!date) {
+    return 'Sin fecha';
+  }
+
+  return `${formatDate(date)} · ${formatTime(date)}`;
+}
+
+export function formatDateTextInput(value) {
+  const digits = String(value ?? '')
+    .replace(/\D/g, '')
+    .slice(0, 8);
+
+  if (digits.length <= 2) {
+    return digits;
+  }
+
+  if (digits.length <= 4) {
+    return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  }
+
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+}
+
+export function formatTimeTextInput(value) {
+  const digits = String(value ?? '')
+    .replace(/\D/g, '')
+    .slice(0, 4);
+
+  if (digits.length <= 2) {
+    return digits;
+  }
+
+  return `${digits.slice(0, 2)}:${digits.slice(2)}`;
+}
+
+export function parseMaskedDateToIso(dateValue) {
+  const normalizedDate = String(dateValue ?? '').trim();
+  const match = normalizedDate.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const [, day, month, year] = match;
+  const isoDate = `${year}-${month}-${day}`;
+  const parsedDate = normalizeDate(`${isoDate}T00:00:00`);
+
+  if (!parsedDate) {
+    return null;
+  }
+
+  const isSameCalendarDate =
+    parsedDate.getFullYear() === Number(year) &&
+    parsedDate.getMonth() + 1 === Number(month) &&
+    parsedDate.getDate() === Number(day);
+
+  return isSameCalendarDate ? isoDate : null;
 }
 
 export function formatDateTimeInput(date, time) {
-  const normalized = normalizeDate(`${date}T${time}:00`);
+  const normalizedDate = String(date ?? '').includes('/')
+    ? parseMaskedDateToIso(date)
+    : String(date ?? '').trim();
+  const normalized = normalizeDate(`${normalizedDate}T${time}:00`);
   return normalized ? normalized.toISOString() : null;
 }
 

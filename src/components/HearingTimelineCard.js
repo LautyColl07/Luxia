@@ -1,8 +1,10 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import colors from '../constants/colors';
-import { formatLongDate, formatShortDate, formatTime } from '../utils/date';
+import { useAppTheme } from '../context/ThemeContext';
+import { formatDateTime, formatShortDate, formatTime } from '../utils/date';
+import StatusBadge from './StatusBadge';
 
 export default function HearingTimelineCard({
   hearing,
@@ -10,6 +12,9 @@ export default function HearingTimelineCard({
   showAction = true,
   onPressAction,
 }) {
+  const { colors } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   return (
     <View style={styles.row}>
       <View style={styles.timeline}>
@@ -24,12 +29,17 @@ export default function HearingTimelineCard({
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.title}>{hearing.title}</Text>
-          <Text style={styles.caseTitle}>{hearing.caseTitle}</Text>
+          <View style={styles.headerRow}>
+            <View style={styles.headerCopy}>
+              <Text style={styles.title}>{hearing?.title || 'Audiencia sin titulo'}</Text>
+              <Text style={styles.caseTitle}>{hearing?.caseTitle || 'Causa sin referencia'}</Text>
+            </View>
+            <StatusBadge status={hearing?.status} />
+          </View>
 
           <View style={styles.metaRow}>
             <MaterialCommunityIcons color={colors.textSecondary} name="calendar-clock" size={16} />
-            <Text style={styles.metaText}>{formatLongDate(hearing.date)}</Text>
+            <Text style={styles.metaText}>{formatDateTime(hearing?.date)}</Text>
           </View>
 
           <View style={styles.metaRow}>
@@ -40,15 +50,15 @@ export default function HearingTimelineCard({
           <View style={styles.metaRow}>
             <MaterialCommunityIcons color={colors.textSecondary} name="map-marker-outline" size={16} />
             <Text style={styles.metaText}>
-              {hearing.modality || 'Modalidad pendiente'}
-              {hearing.location ? ` · ${hearing.location}` : ''}
+              {hearing?.modality || 'Modalidad a confirmar'}
+              {hearing?.location ? ` · ${hearing.location}` : ''}
             </Text>
           </View>
 
           {showAction ? (
             <Pressable onPress={onPressAction} style={styles.actionButton}>
-              <Text style={styles.actionText}>Iniciar Audiencia</Text>
-              <MaterialCommunityIcons color={colors.card} name="arrow-right" size={18} />
+              <Text style={styles.actionText}>Ver detalle de la audiencia</Text>
+              <MaterialCommunityIcons color={colors.textOnPrimary} name="arrow-right" size={18} />
             </Pressable>
           ) : null}
         </View>
@@ -57,7 +67,7 @@ export default function HearingTimelineCard({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors) => StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'stretch',
@@ -109,11 +119,22 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     borderRadius: 24,
     padding: 18,
-    shadowColor: colors.primary,
+    shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.08,
+    shadowOpacity: 0.18,
     shadowRadius: 18,
     elevation: 4,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  headerCopy: {
+    flex: 1,
   },
   title: {
     color: colors.text,
@@ -149,7 +170,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   actionText: {
-    color: colors.card,
+    color: colors.textOnPrimary,
     fontSize: 14,
     fontWeight: '700',
   },

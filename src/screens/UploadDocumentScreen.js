@@ -4,12 +4,16 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
-import colors from '../constants/colors';
+import { useAppTheme } from '../context/ThemeContext';
 import { getHearings, uploadDocument } from '../services/api';
+import { formatDateTime } from '../utils/date';
+import { showSuccessAndGoBack } from '../utils/formFeedback';
 
 const DOCUMENT_TYPES = ['Demanda', 'Escrito', 'Prueba', 'Anexo'];
 
 export default function UploadDocumentScreen({ navigation }) {
+  const { colors } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [hearings, setHearings] = useState([]);
   const [loadingHearings, setLoadingHearings] = useState(true);
   const [hearingsError, setHearingsError] = useState('');
@@ -22,42 +26,48 @@ export default function UploadDocumentScreen({ navigation }) {
   });
 
   useEffect(() => {
-    loadHearings();
+    void loadHearings();
   }, []);
 
-  const loadHearings = async () => {
+  async function loadHearings() {
     try {
       setLoadingHearings(true);
       setHearingsError('');
       const items = await getHearings();
-      setHearings(items);
+      setHearings(Array.isArray(items) ? items : []);
     } catch (error) {
+      console.error('[UploadDocumentScreen] Error cargando audiencias:', error);
       setHearings([]);
-      setHearingsError(error.message);
+      setHearingsError(
+        error instanceof Error ? error.message : 'No pudimos cargar las audiencias disponibles.'
+      );
     } finally {
       setLoadingHearings(false);
     }
-  };
+  }
 
   const selectedHearing = useMemo(
-    () => hearings.find((item) => String(item.id) === form.hearingId),
+    () => hearings.find((item) => String(item?.id) === form.hearingId) || null,
     [hearings, form.hearingId]
   );
 
   const updateField = (key, value) => setForm((current) => ({ ...current, [key]: value }));
 
   const handleSelectFile = () => {
-    const fileLabel = `pieza_procesal_${Date.now()}.pdf`;
+    const fileLabel = `documento_${Date.now()}.pdf`;
     setSelectedFile(fileLabel);
     if (!form.fileName) {
       updateField('fileName', fileLabel);
     }
-    Alert.alert('Archivo seleccionado', `${fileLabel} quedó listo para simular la subida.`);
+    Alert.alert('Archivo seleccionado', `${fileLabel} quedo listo para registrarse.`);
   };
 
   const handleUpload = async () => {
     if (!form.hearingId || !form.fileName.trim()) {
-      Alert.alert('Campos requeridos', 'Seleccioná una audiencia y definí el nombre del archivo.');
+      Alert.alert(
+        'Informacion incompleta',
+        'Selecciona una audiencia y define el nombre del archivo para continuar.'
+      );
       return;
     }
 
@@ -70,33 +80,49 @@ export default function UploadDocumentScreen({ navigation }) {
         localUri: selectedFile || 'archivo_simulado.pdf',
       });
 
-      Alert.alert('Documento subido', 'La carga quedó registrada dentro del módulo visual.', [
-        {
-          text: 'Continuar',
-          onPress: () => navigation.goBack(),
-        },
-      ]);
+      showSuccessAndGoBack(
+        navigation,
+        'Documento cargado',
+        'El documento se vinculo correctamente con la audiencia.'
+      );
     } catch (error) {
-      Alert.alert('No pudimos subir el documento', error.message);
+      console.error('[UploadDocumentScreen] Error subiendo documento:', error);
+      Alert.alert(
+        'No pudimos registrar el documento',
+        error instanceof Error ? error.message : 'Intenta nuevamente.'
+      );
     } finally {
       setSubmitting(false);
     }
   };
 
   if (loadingHearings && !hearings.length) {
-    return <LoadingState message="Estamos cargando las audiencias reales para asociar el documento." title="Cargando audiencias" />;
+    return (
+      <LoadingState
+        title="Cargando audiencias"
+        message="Estamos recuperando las audiencias disponibles para asociar el documento."
+      />
+    );
   }
 
   if (hearingsError && !hearings.length) {
-    return <ErrorState message={hearingsError} onRetry={loadHearings} title="No pudimos cargar las audiencias" />;
+    return (
+      <ErrorState
+        title="No pudimos cargar las audiencias"
+        message={hearingsError}
+        onRetry={loadHearings}
+      />
+    );
   }
 
   if (!hearings.length) {
     return (
       <EmptyState
+        actionLabel="Registrar audiencia"
         icon="calendar-blank-outline"
-        message="Necesitás al menos una audiencia creada para registrar un documento simulado."
-        title="Sin audiencias disponibles"
+        message="Todavia no hay audiencias disponibles para vincular documentos."
+        onAction={() => navigation.navigate('NewHearing')}
+        title="Sin audiencias registradas"
       />
     );
   }
@@ -104,37 +130,43 @@ export default function UploadDocumentScreen({ navigation }) {
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} style={styles.screen}>
       <Text style={styles.title}>Subir documento</Text>
-      <Text style={styles.subtitle}>Prepará el flujo de carga y dejalo listo para integrarse con storage real.</Text>
+      <Text style={styles.subtitle}>
+        Registra un documento y vinculalo con la audiencia correspondiente.
+      </Text>
 
-      <Field label="Audiencia">
+      <Field label="Audiencia vinculada" styles={styles}>
         <View style={styles.selectorList}>
           {hearings.map((item) => {
-            const selected = String(item.id) === form.hearingId;
+            const selected = String(item?.id) === form.hearingId;
             return (
               <Pressable
-                key={item.id}
-                onPress={() => updateField('hearingId', String(item.id))}
+                key={item?.id}
+                onPress={() => updateField('hearingId', String(item?.id))}
                 style={[styles.selectorCard, selected && styles.selectorCardActive]}
               >
-                <Text style={[styles.selectorTitle, selected && styles.selectorTitleActive]}>{item.title}</Text>
-                <Text style={[styles.selectorMeta, selected && styles.selectorMetaActive]}>{item.caseTitle}</Text>
+                <Text style={[styles.selectorTitle, selected && styles.selectorTitleActive]}>
+                  {item?.title || 'Audiencia sin titulo'}
+                </Text>
+                <Text style={[styles.selectorMeta, selected && styles.selectorMetaActive]}>
+                  {item?.caseTitle || 'Causa sin referencia'}
+                </Text>
               </Pressable>
             );
           })}
         </View>
       </Field>
 
-      <Field label="Nombre del archivo">
+      <Field label="Nombre del archivo" styles={styles}>
         <TextInput
           onChangeText={(value) => updateField('fileName', value)}
           placeholder="Ej. contestacion_demanda.pdf"
-          placeholderTextColor="#94A3B8"
+          placeholderTextColor={colors.textMuted}
           style={styles.input}
           value={form.fileName}
         />
       </Field>
 
-      <Field label="Tipo de documento">
+      <Field label="Tipo de documento" styles={styles}>
         <View style={styles.optionRow}>
           {DOCUMENT_TYPES.map((option) => (
             <Pressable
@@ -142,7 +174,9 @@ export default function UploadDocumentScreen({ navigation }) {
               onPress={() => updateField('documentType', option)}
               style={[styles.optionChip, form.documentType === option && styles.optionChipActive]}
             >
-              <Text style={[styles.optionChipText, form.documentType === option && styles.optionChipTextActive]}>{option}</Text>
+              <Text style={[styles.optionChipText, form.documentType === option && styles.optionChipTextActive]}>
+                {option}
+              </Text>
             </Pressable>
           ))}
         </View>
@@ -154,21 +188,32 @@ export default function UploadDocumentScreen({ navigation }) {
 
       {selectedHearing ? (
         <View style={styles.summaryCard}>
-          <Text style={styles.summaryTitle}>Resumen de carga</Text>
-          <Text style={styles.summaryText}>Audiencia: {selectedHearing.title}</Text>
-          <Text style={styles.summaryText}>Causa: {selectedHearing.caseTitle}</Text>
-          <Text style={styles.summaryText}>Archivo: {selectedFile || form.fileName || 'Pendiente de selección'}</Text>
+          <Text style={styles.summaryTitle}>Resumen del documento</Text>
+          <Text style={styles.summaryText}>Audiencia: {selectedHearing?.title}</Text>
+          <Text style={styles.summaryText}>Causa: {selectedHearing?.caseTitle}</Text>
+          <Text style={styles.summaryText}>
+            Fecha: {formatDateTime(selectedHearing?.date)}
+          </Text>
+          <Text style={styles.summaryText}>
+            Archivo: {selectedFile || form.fileName || 'Pendiente de seleccion'}
+          </Text>
         </View>
       ) : null}
 
-      <Pressable disabled={submitting} onPress={handleUpload} style={[styles.submitButton, submitting && styles.submitButtonDisabled]}>
-        <Text style={styles.submitButtonText}>{submitting ? 'Subiendo...' : 'Subir documento'}</Text>
+      <Pressable
+        disabled={submitting}
+        onPress={handleUpload}
+        style={[styles.submitButton, submitting && styles.submitButtonDisabled]}
+      >
+        <Text style={styles.submitButtonText}>
+          {submitting ? 'Guardando cambios...' : 'Guardar documento'}
+        </Text>
       </Pressable>
     </ScrollView>
   );
 }
 
-function Field({ children, label }) {
+function Field({ children, label, styles }) {
   return (
     <View style={styles.field}>
       <Text style={styles.label}>{label}</Text>
@@ -177,7 +222,7 @@ function Field({ children, label }) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors) => StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
@@ -213,7 +258,7 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     padding: 16,
     borderWidth: 1,
-    borderColor: 'transparent',
+    borderColor: colors.borderSoft,
   },
   selectorCardActive: {
     borderColor: colors.primary,
@@ -236,17 +281,19 @@ const styles = StyleSheet.create({
     color: colors.primary,
   },
   input: {
-    backgroundColor: colors.card,
+    backgroundColor: colors.inputBackground,
     borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 14,
     color: colors.text,
     fontSize: 15,
-    shadowColor: colors.primary,
+    shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
+    shadowOpacity: 0.1,
     shadowRadius: 16,
     elevation: 2,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
   },
   optionRow: {
     flexDirection: 'row',
@@ -258,9 +305,12 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 16,
     paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
   },
   optionChipActive: {
     backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
   optionChipText: {
     color: colors.textSecondary,
@@ -268,7 +318,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   optionChipTextActive: {
-    color: colors.card,
+    color: colors.textOnPrimary,
   },
   secondaryButton: {
     backgroundColor: colors.card,
@@ -287,6 +337,13 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     borderRadius: 22,
     padding: 18,
+    shadowColor: colors.shadow,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
+    elevation: 2,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
   },
   summaryTitle: {
     color: colors.text,
@@ -309,7 +366,7 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
   submitButtonText: {
-    color: colors.card,
+    color: colors.textOnPrimary,
     fontSize: 15,
     fontWeight: '700',
   },

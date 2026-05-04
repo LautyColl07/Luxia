@@ -128,6 +128,7 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
         password: form.password,
       });
     } catch (error) {
+      console.error("[RegisterScreen] Error registrando usuario:", error);
       const message =
         error instanceof Error
           ? error.message
@@ -154,7 +155,7 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
             <View style={styles.card}>
               <Text style={styles.title}>Crear cuenta</Text>
               <Text style={styles.subtitle}>
-                Registrate para acceder a la plataforma de gestión judicial
+                Completa tus datos para acceder a la plataforma de gestion judicial.
               </Text>
 
               <View style={styles.row}>
@@ -186,7 +187,7 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
                 keyboardType="email-address"
                 label="Email *"
                 onChangeText={(value) => setField("email", value)}
-                placeholder="tu.email@ejemplo.com"
+                placeholder="tu.email@estudio.com"
                 value={form.email}
               />
 
@@ -286,10 +287,10 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
                 {isSubmitting ? (
                   <View style={styles.loadingRow}>
                     <ActivityIndicator color={COLORS.white} size="small" />
-                    <Text style={styles.primaryButtonText}>CREANDO...</Text>
+                    <Text style={styles.primaryButtonText}>Creando cuenta...</Text>
                   </View>
                 ) : (
-                  <Text style={styles.primaryButtonText}>CREAR CUENTA</Text>
+                  <Text style={styles.primaryButtonText}>Crear cuenta</Text>
                 )}
               </TouchableOpacity>
             </View>

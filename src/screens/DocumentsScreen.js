@@ -1,16 +1,18 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
-import colors from '../constants/colors';
+import { useAppTheme } from '../context/ThemeContext';
 import { getDocuments } from '../services/api';
-import { formatLongDate } from '../utils/date';
+import { formatDate } from '../utils/date';
 
 export default function DocumentsScreen({ navigation }) {
+  const { colors } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [documents, setDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -20,9 +22,14 @@ export default function DocumentsScreen({ navigation }) {
       setLoading(true);
       setError('');
       const items = await getDocuments();
-      setDocuments(items);
+      setDocuments(Array.isArray(items) ? items : []);
     } catch (loadError) {
-      setError(loadError.message);
+      console.error('[DocumentsScreen] Error cargando documentos:', loadError);
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : 'No pudimos cargar los documentos.'
+      );
     } finally {
       setLoading(false);
     }
@@ -30,16 +37,27 @@ export default function DocumentsScreen({ navigation }) {
 
   useFocusEffect(
     useCallback(() => {
-      loadDocuments();
+      void loadDocuments();
     }, [loadDocuments])
   );
 
   if (loading && !documents.length) {
-    return <LoadingState message="Estamos reuniendo los documentos y sus vínculos con cada expediente." title="Cargando documentos" />;
+    return (
+      <LoadingState
+        title="Cargando documentos"
+        message="Estamos reuniendo escritos, anexos y prueba documental."
+      />
+    );
   }
 
   if (error && !documents.length) {
-    return <ErrorState message={error} onRetry={loadDocuments} title="No pudimos cargar los documentos" />;
+    return (
+      <ErrorState
+        title="No pudimos cargar los documentos"
+        message={error}
+        onRetry={loadDocuments}
+      />
+    );
   }
 
   return (
@@ -47,19 +65,21 @@ export default function DocumentsScreen({ navigation }) {
       <View style={styles.header}>
         <View>
           <Text style={styles.title}>Documentos</Text>
-          <Text style={styles.subtitle}>Repositorio visual de escritos, anexos y pruebas cargadas.</Text>
+          <Text style={styles.subtitle}>
+            Accede al repositorio documental vinculado a tus causas y audiencias.
+          </Text>
         </View>
 
         <Pressable onPress={() => navigation.navigate('UploadDocument')} style={styles.primaryButton}>
-          <MaterialCommunityIcons color={colors.card} name="tray-arrow-up" size={18} />
-          <Text style={styles.primaryButtonText}>Subir Documento</Text>
+          <MaterialCommunityIcons color={colors.textOnPrimary} name="tray-arrow-up" size={18} />
+          <Text style={styles.primaryButtonText}>Subir documento</Text>
         </Pressable>
       </View>
 
       <FlatList
         contentContainerStyle={styles.listContent}
         data={documents}
-        keyExtractor={(item) => String(item.id)}
+        keyExtractor={(item) => String(item?.id)}
         renderItem={({ item }) => (
           <View style={styles.card}>
             <View style={styles.cardTopRow}>
@@ -67,32 +87,34 @@ export default function DocumentsScreen({ navigation }) {
                 <MaterialCommunityIcons color={colors.primary} name="file-document-outline" size={22} />
               </View>
               <View style={styles.cardTextContent}>
-                <Text style={styles.cardTitle}>{item.fileName}</Text>
-                <Text style={styles.cardSubtitle}>{item.documentType}</Text>
+                <Text style={styles.cardTitle}>{item?.fileName || 'Documento sin nombre'}</Text>
+                <Text style={styles.cardSubtitle}>{item?.documentType || 'Documento'}</Text>
               </View>
             </View>
 
             <View style={styles.metaRow}>
               <MaterialCommunityIcons color={colors.textSecondary} name="briefcase-outline" size={16} />
-              <Text style={styles.metaText}>{item.caseTitle}</Text>
+              <Text style={styles.metaText}>{item?.caseTitle || 'Causa sin referencia'}</Text>
             </View>
 
             <View style={styles.metaRow}>
               <MaterialCommunityIcons color={colors.textSecondary} name="calendar-clock" size={16} />
-              <Text style={styles.metaText}>{item.hearingTitle}</Text>
+              <Text style={styles.metaText}>{item?.hearingTitle || 'Audiencia sin referencia'}</Text>
             </View>
 
             <View style={styles.metaRow}>
               <MaterialCommunityIcons color={colors.textSecondary} name="clock-outline" size={16} />
-              <Text style={styles.metaText}>Subido el {formatLongDate(item.uploadedAt)}</Text>
+              <Text style={styles.metaText}>Fecha de carga: {formatDate(item?.uploadedAt)}</Text>
             </View>
           </View>
         )}
         ListEmptyComponent={
           <EmptyState
+            actionLabel="Subir documento"
             icon="file-remove-outline"
-            message="Todavía no hay documentos para mostrar. Podés simular una carga desde el botón superior."
-            title="Sin documentos"
+            message="Todavia no se cargaron documentos."
+            onAction={() => navigation.navigate('UploadDocument')}
+            title="Sin documentos registrados"
           />
         }
         showsVerticalScrollIndicator={false}
@@ -101,7 +123,7 @@ export default function DocumentsScreen({ navigation }) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors) => StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
@@ -135,7 +157,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   primaryButtonText: {
-    color: colors.card,
+    color: colors.textOnPrimary,
     fontSize: 14,
     fontWeight: '700',
   },
@@ -148,11 +170,13 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     borderRadius: 24,
     padding: 18,
-    shadowColor: colors.primary,
+    shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.08,
+    shadowOpacity: 0.14,
     shadowRadius: 18,
     elevation: 4,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
   },
   cardTopRow: {
     flexDirection: 'row',

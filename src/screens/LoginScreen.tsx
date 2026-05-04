@@ -57,11 +57,12 @@ export default function LoginScreen({ navigation }: any) {
         rememberMe,
       });
     } catch (error) {
+      console.error("[LoginScreen] Error iniciando sesion:", error);
       Alert.alert(
-        "Error",
+        "No pudimos iniciar sesion",
         error instanceof Error
           ? error.message
-          : "No se pudo iniciar sesion. Intenta nuevamente.",
+          : "Verifica tus datos e intenta nuevamente.",
       );
     } finally {
       setIsLoading(false);
@@ -82,13 +83,13 @@ export default function LoginScreen({ navigation }: any) {
             <View style={styles.header}>
               <Text style={styles.title}>Iniciar sesion</Text>
               <Text style={styles.subtitle}>
-                Accede a tu cuenta para continuar en la plataforma judicial
+                Accede a tu cuenta para continuar en Luxia.
               </Text>
             </View>
 
             <View style={styles.form}>
               <View style={styles.inputGroup}>
-                <Text style={styles.label}>Email</Text>
+                <Text style={styles.label}>Correo electronico</Text>
 
                 <View
                   style={[
@@ -101,7 +102,7 @@ export default function LoginScreen({ navigation }: any) {
                   <TextInput
                     value={email}
                     onChangeText={setEmail}
-                    placeholder="Ingresa tu email"
+                    placeholder="tu.email@estudio.com"
                     placeholderTextColor="#5B6776"
                     keyboardType="email-address"
                     autoCapitalize="none"
@@ -184,14 +185,14 @@ export default function LoginScreen({ navigation }: any) {
                     <Text style={styles.loginButtonText}>Ingresando...</Text>
                   </View>
                 ) : (
-                  <Text style={styles.loginButtonText}>INGRESAR</Text>
+                  <Text style={styles.loginButtonText}>Ingresar</Text>
                 )}
               </TouchableOpacity>
 
               <TouchableOpacity
                 onPress={() => navigation.navigate("ForgotPassword")}
               >
-                <Text style={styles.forgotText}>Olvide la contrasena</Text>
+                <Text style={styles.forgotText}>Olvide mi contrasena</Text>
               </TouchableOpacity>
 
               <View style={styles.divider} />
@@ -211,7 +212,7 @@ export default function LoginScreen({ navigation }: any) {
           <View style={styles.registerContainer}>
             <Text style={styles.registerText}>No tenes cuenta? </Text>
             <TouchableOpacity onPress={() => navigation.navigate("Register")}>
-              <Text style={styles.registerLink}>Registrate aqui</Text>
+              <Text style={styles.registerLink}>Crear cuenta</Text>
             </TouchableOpacity>
           </View>
         </View>

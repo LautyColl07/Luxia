@@ -26,12 +26,12 @@ export type RegisterPayload = {
 };
 
 const getFirebaseSetupMessage = () =>
-  `Firebase cliente no esta configurado. Completa EXPO_PUBLIC_FIREBASE_* en tu .env. Faltan: ${missingFirebaseKeys.join(", ")}.`;
+  `El cliente de Firebase no esta configurado. Completa EXPO_PUBLIC_FIREBASE_* en tu .env. Faltan: ${missingFirebaseKeys.join(", ")}.`;
 
 const mapFirebaseAuthError = (code: string) => {
   switch (code) {
     case "auth/invalid-email":
-      return "El email no es valido.";
+      return "El email ingresado no es valido.";
     case "auth/user-not-found":
       return "No existe una cuenta con este email.";
     case "auth/wrong-password":
@@ -43,14 +43,14 @@ const mapFirebaseAuthError = (code: string) => {
     case "auth/invalid-credential":
       return "Las credenciales ingresadas no son validas.";
     default:
-      return "No se pudo completar la operacion con Firebase. Intenta nuevamente.";
+      return "No pudimos completar la operacion. Intenta nuevamente.";
   }
 };
 
 export const authClient = {
   async login(payload: LoginPayload) {
     if (!payload.email || !payload.password) {
-      throw new Error("Completa email y contrasena para continuar.");
+      throw new Error("Completa el email y la contrasena para continuar.");
     }
 
     if (!isFirebaseConfigured || !auth) {

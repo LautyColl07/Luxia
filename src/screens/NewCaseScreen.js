@@ -1,12 +1,16 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import colors from '../constants/colors';
+import { useAppTheme } from '../context/ThemeContext';
 import { createCase } from '../services/api';
+import { showSuccessAndGoBack } from '../utils/formFeedback';
+import { normalizeStatusLabel } from '../utils/status';
 
-const STATUS_OPTIONS = ['Activa', 'En revisión', 'Cerrada'];
+const STATUS_OPTIONS = ['Activa', 'Pendiente', 'En proceso', 'Archivada'];
 
 export default function NewCaseScreen({ navigation }) {
+  const { colors } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [form, setForm] = useState({
     title: '',
     description: '',
@@ -19,7 +23,7 @@ export default function NewCaseScreen({ navigation }) {
 
   const handleSubmit = async () => {
     if (!form.title.trim()) {
-      Alert.alert('Campo requerido', 'Ingresá un título para la causa.');
+      Alert.alert('Informacion incompleta', 'Ingresa la caratula o el nombre de la causa para continuar.');
       return;
     }
 
@@ -32,14 +36,13 @@ export default function NewCaseScreen({ navigation }) {
         status: form.status,
       });
 
-      Alert.alert('Causa creada', 'La causa se agregó correctamente al módulo.', [
-        {
-          text: 'Continuar',
-          onPress: () => navigation.goBack(),
-        },
-      ]);
+      showSuccessAndGoBack(navigation, 'Causa cargada', 'La causa se guardo correctamente.');
     } catch (error) {
-      Alert.alert('No pudimos crear la causa', error.message);
+      console.error('[NewCaseScreen] Error creando causa:', error);
+      Alert.alert(
+        'No pudimos registrar la causa',
+        error instanceof Error ? error.message : 'Intenta nuevamente.'
+      );
     } finally {
       setSubmitting(false);
     }
@@ -48,42 +51,44 @@ export default function NewCaseScreen({ navigation }) {
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} style={styles.screen}>
       <Text style={styles.title}>Nueva causa</Text>
-      <Text style={styles.subtitle}>Dejá listo el alta visual de un nuevo expediente para el flujo real.</Text>
+      <Text style={styles.subtitle}>
+        Registra un expediente con su caratula, descripcion, juzgado y estado inicial.
+      </Text>
 
-      <Field label="Título">
+      <Field label="Caratula o titulo" styles={styles}>
         <TextInput
           onChangeText={(value) => updateField('title', value)}
           placeholder="Ej. Gonzalez c/ Lopez"
-          placeholderTextColor="#94A3B8"
+          placeholderTextColor={colors.textMuted}
           style={styles.input}
           value={form.title}
         />
       </Field>
 
-      <Field label="Descripción">
+      <Field label="Descripcion" styles={styles}>
         <TextInput
           multiline
           numberOfLines={4}
           onChangeText={(value) => updateField('description', value)}
-          placeholder="Descripción breve del expediente"
-          placeholderTextColor="#94A3B8"
+          placeholder="Resume el objeto del expediente o sus observaciones principales."
+          placeholderTextColor={colors.textMuted}
           style={[styles.input, styles.textArea]}
           textAlignVertical="top"
           value={form.description}
         />
       </Field>
 
-      <Field label="Juzgado">
+      <Field label="Juzgado o tribunal" styles={styles}>
         <TextInput
           onChangeText={(value) => updateField('court', value)}
           placeholder="Ej. Juzgado Civil N° 12"
-          placeholderTextColor="#94A3B8"
+          placeholderTextColor={colors.textMuted}
           style={styles.input}
           value={form.court}
         />
       </Field>
 
-      <Field label="Estado">
+      <Field label="Estado inicial" styles={styles}>
         <View style={styles.optionRow}>
           {STATUS_OPTIONS.map((option) => (
             <Pressable
@@ -91,20 +96,26 @@ export default function NewCaseScreen({ navigation }) {
               onPress={() => updateField('status', option)}
               style={[styles.optionChip, form.status === option && styles.optionChipActive]}
             >
-              <Text style={[styles.optionChipText, form.status === option && styles.optionChipTextActive]}>{option}</Text>
+              <Text style={[styles.optionChipText, form.status === option && styles.optionChipTextActive]}>
+                {normalizeStatusLabel(option)}
+              </Text>
             </Pressable>
           ))}
         </View>
       </Field>
 
-      <Pressable disabled={submitting} onPress={handleSubmit} style={[styles.submitButton, submitting && styles.submitButtonDisabled]}>
-        <Text style={styles.submitButtonText}>{submitting ? 'Guardando...' : 'Crear causa'}</Text>
+      <Pressable
+        disabled={submitting}
+        onPress={handleSubmit}
+        style={[styles.submitButton, submitting && styles.submitButtonDisabled]}
+      >
+        <Text style={styles.submitButtonText}>{submitting ? 'Guardando cambios...' : 'Guardar causa'}</Text>
       </Pressable>
     </ScrollView>
   );
 }
 
-function Field({ children, label }) {
+function Field({ children, label, styles }) {
   return (
     <View style={styles.field}>
       <Text style={styles.label}>{label}</Text>
@@ -113,7 +124,7 @@ function Field({ children, label }) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors) => StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
@@ -142,17 +153,19 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   input: {
-    backgroundColor: colors.card,
+    backgroundColor: colors.inputBackground,
     borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 14,
     color: colors.text,
     fontSize: 15,
-    shadowColor: colors.primary,
+    shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
+    shadowOpacity: 0.1,
     shadowRadius: 16,
     elevation: 2,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
   },
   textArea: {
     minHeight: 116,
@@ -167,9 +180,12 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 16,
     paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
   },
   optionChipActive: {
     backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
   optionChipText: {
     color: colors.textSecondary,
@@ -177,7 +193,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   optionChipTextActive: {
-    color: colors.card,
+    color: colors.textOnPrimary,
   },
   submitButton: {
     marginTop: 8,
@@ -190,7 +206,7 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
   submitButtonText: {
-    color: colors.card,
+    color: colors.textOnPrimary,
     fontSize: 15,
     fontWeight: '700',
   },

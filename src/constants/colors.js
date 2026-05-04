@@ -1,17 +1,73 @@
-const colors = {
-  primary: '#0F2F56',
+export const lightColors = {
+  primary: '#123A67',
   primaryDeep: '#0B2545',
+  primaryHover: '#1E4F88',
   background: '#F5F6F8',
+  backgroundAlt: '#EFF3F8',
   card: '#FFFFFF',
+  cardElevated: '#FBFBFC',
   text: '#0B2545',
   textSecondary: '#6B7280',
+  textMuted: '#8C97A8',
+  textOnPrimary: '#FFFFFF',
   border: '#D8E0EA',
+  borderSoft: '#D7E0ED',
   success: '#2E7D32',
+  successSoft: '#E7F4EA',
   danger: '#C62828',
+  dangerSoft: '#FCEBEC',
   warning: '#B7791F',
+  warningSoft: '#FFF4DA',
   accent: '#DCE7F5',
   accentSoft: '#EAF1F8',
+  accentStrong: '#C8D7EC',
+  neutralSoft: '#EEF2F6',
+  mutedIcon: '#C8D1E0',
+  calendarMuted: '#CBD4E4',
+  legendText: '#4D658A',
+  weekdayText: '#7584A0',
+  inputBackground: '#FFFFFF',
   shadow: 'rgba(15, 47, 86, 0.12)',
+  white: '#FFFFFF',
 };
+
+export const darkColors = {
+  primary: '#4C78B3',
+  primaryDeep: '#0F2238',
+  primaryHover: '#5E8AC6',
+  background: '#08111C',
+  backgroundAlt: '#0D1928',
+  card: '#101D2D',
+  cardElevated: '#16263A',
+  text: '#F4F7FB',
+  textSecondary: '#A7B5C7',
+  textMuted: '#8090A6',
+  textOnPrimary: '#F8FBFF',
+  border: '#233549',
+  borderSoft: '#1B2C40',
+  success: '#7DD38A',
+  successSoft: '#143120',
+  danger: '#FF9B9B',
+  dangerSoft: '#3B1A1E',
+  warning: '#F2C66D',
+  warningSoft: '#3E3216',
+  accent: '#16263A',
+  accentSoft: '#132033',
+  accentStrong: '#203550',
+  neutralSoft: '#172434',
+  mutedIcon: '#5A6C84',
+  calendarMuted: '#50627B',
+  legendText: '#AFC0D5',
+  weekdayText: '#90A1B7',
+  inputBackground: '#16263A',
+  shadow: 'rgba(0, 0, 0, 0.35)',
+  white: '#FFFFFF',
+};
+
+export function getColorsForScheme(scheme = 'light') {
+  return scheme === 'dark' ? darkColors : lightColors;
+}
+
+const colors = lightColors;
 
 export default colors;

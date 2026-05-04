@@ -1,17 +1,20 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
-import colors from '../constants/colors';
+import StatusBadge from '../components/StatusBadge';
+import { useAppTheme } from '../context/ThemeContext';
 import { getCaseById } from '../services/api';
-import { formatLongDate, formatTime } from '../utils/date';
+import { formatDate, formatDateTime } from '../utils/date';
 
 export default function CaseDetailScreen({ navigation, route }) {
-  const caseId = route.params?.caseId;
+  const { colors } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const caseId = route?.params?.caseId;
   const [caseDetail, setCaseDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -23,7 +26,12 @@ export default function CaseDetailScreen({ navigation, route }) {
       const item = await getCaseById(caseId);
       setCaseDetail(item);
     } catch (loadError) {
-      setError(loadError.message);
+      console.error('[CaseDetailScreen] Error cargando causa:', loadError);
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : 'No pudimos cargar el detalle de la causa.'
+      );
     } finally {
       setLoading(false);
     }
@@ -31,106 +39,131 @@ export default function CaseDetailScreen({ navigation, route }) {
 
   useFocusEffect(
     useCallback(() => {
-      loadCase();
+      void loadCase();
     }, [loadCase])
   );
 
   if (loading && !caseDetail) {
-    return <LoadingState message="Estamos cargando el expediente completo y sus vínculos." title="Detalle de causa" />;
+    return (
+      <LoadingState
+        title="Cargando detalle de la causa"
+        message="Estamos reuniendo audiencias, documentos y tareas relacionadas."
+      />
+    );
   }
 
   if (error && !caseDetail) {
-    return <ErrorState message={error} onRetry={loadCase} title="No pudimos abrir esta causa" />;
+    return (
+      <ErrorState
+        title="No pudimos abrir esta causa"
+        message={error}
+        onRetry={loadCase}
+      />
+    );
   }
+
+  const hearings = caseDetail?.hearings || [];
+  const documents = caseDetail?.documents || [];
+  const tasks = caseDetail?.tasks || [];
 
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} style={styles.screen}>
       <View style={styles.heroCard}>
         <View style={styles.heroHeader}>
-          <Text style={styles.title}>{caseDetail.title}</Text>
-          <View style={styles.statusPill}>
-            <Text style={styles.statusText}>{caseDetail.status}</Text>
+          <View style={styles.heroCopy}>
+            <Text style={styles.title}>{caseDetail?.title || 'Causa sin titulo'}</Text>
+            <Text style={styles.description}>
+              {caseDetail?.description || 'Sin informacion adicional registrada.'}
+            </Text>
           </View>
+          <StatusBadge status={caseDetail?.status} />
         </View>
-
-        <Text style={styles.description}>{caseDetail.description}</Text>
 
         <View style={styles.metaRow}>
           <MaterialCommunityIcons color={colors.textSecondary} name="scale-balance" size={16} />
-          <Text style={styles.metaText}>{caseDetail.court}</Text>
+          <Text style={styles.metaText}>{caseDetail?.court || 'Juzgado a confirmar'}</Text>
         </View>
 
         <View style={styles.metaRow}>
           <MaterialCommunityIcons color={colors.textSecondary} name="calendar-outline" size={16} />
-          <Text style={styles.metaText}>Alta el {formatLongDate(caseDetail.createdAt)}</Text>
+          <Text style={styles.metaText}>Fecha de alta: {formatDate(caseDetail?.createdAt)}</Text>
         </View>
 
         <Pressable
-          onPress={() => navigation.navigate('NewHearing', { caseId: caseDetail.id })}
+          onPress={() => navigation.navigate('NewHearing', { caseId: caseDetail?.id })}
           style={styles.primaryButton}
         >
-          <Text style={styles.primaryButtonText}>Programar audiencia</Text>
-          <MaterialCommunityIcons color={colors.card} name="arrow-right" size={18} />
+          <Text style={styles.primaryButtonText}>Registrar audiencia</Text>
+          <MaterialCommunityIcons color={colors.textOnPrimary} name="arrow-right" size={18} />
         </Pressable>
       </View>
 
-      <Section title="Audiencias">
-        {caseDetail.hearings.length ? (
-          caseDetail.hearings.map((hearing) => (
-            <View key={hearing.id} style={styles.sectionCard}>
-              <Text style={styles.sectionCardTitle}>{hearing.title}</Text>
-              <Text style={styles.sectionCardSubtitle}>
-                {formatLongDate(hearing.date)} · {formatTime(hearing.date)}
-              </Text>
+      <Section styles={styles} title="Audiencias">
+        {hearings.length ? (
+          hearings.map((hearing) => (
+            <View key={hearing?.id} style={styles.sectionCard}>
+              <View style={styles.sectionCardHeader}>
+                <View style={styles.sectionCardCopy}>
+                  <Text style={styles.sectionCardTitle}>{hearing?.title || 'Audiencia sin titulo'}</Text>
+                  <Text style={styles.sectionCardSubtitle}>{formatDateTime(hearing?.date)}</Text>
+                </View>
+                <StatusBadge status={hearing?.status} />
+              </View>
               <Text style={styles.sectionCardMeta}>
-                {hearing.modality || 'Modalidad pendiente'}
-                {hearing.location ? ` · ${hearing.location}` : ''}
+                {hearing?.modality || 'Modalidad a confirmar'}
+                {hearing?.location ? ` · ${hearing.location}` : ''}
               </Text>
             </View>
           ))
         ) : (
           <EmptyState
+            actionLabel="Registrar audiencia"
             icon="calendar-blank-outline"
-            message="Esta causa todavía no tiene audiencias asociadas."
-            title="Sin audiencias"
+            message="Todavia no hay audiencias vinculadas a esta causa."
+            onAction={() => navigation.navigate('NewHearing', { caseId: caseDetail?.id })}
+            title="Sin audiencias registradas"
           />
         )}
       </Section>
 
-      <Section title="Documentos">
-        {caseDetail.documents.length ? (
-          caseDetail.documents.map((document) => (
-            <View key={document.id} style={styles.sectionCard}>
-              <Text style={styles.sectionCardTitle}>{document.fileName}</Text>
-              <Text style={styles.sectionCardSubtitle}>{document.documentType}</Text>
-              <Text style={styles.sectionCardMeta}>Cargado el {formatLongDate(document.uploadedAt)}</Text>
+      <Section styles={styles} title="Documentos">
+        {documents.length ? (
+          documents.map((document) => (
+            <View key={document?.id} style={styles.sectionCard}>
+              <Text style={styles.sectionCardTitle}>{document?.fileName || 'Documento sin nombre'}</Text>
+              <Text style={styles.sectionCardSubtitle}>{document?.documentType || 'Documento'}</Text>
+              <Text style={styles.sectionCardMeta}>
+                Fecha de carga: {formatDate(document?.uploadedAt)}
+              </Text>
             </View>
           ))
         ) : (
           <EmptyState
+            actionLabel="Subir documento"
             icon="file-document-outline"
-            message="Todavía no se adjuntaron documentos para este expediente."
-            title="Sin documentos"
+            message="Todavia no se cargaron documentos para esta causa."
+            onAction={() => navigation.navigate('UploadDocument')}
+            title="Sin documentos registrados"
           />
         )}
       </Section>
 
-      <Section title="Tareas">
-        {caseDetail.tasks.length ? (
-          caseDetail.tasks.map((task) => (
-            <View key={task.id} style={styles.taskRow}>
-              <View style={[styles.taskIcon, task.completed ? styles.taskIconDone : styles.taskIconPending]}>
+      <Section styles={styles} title="Tareas">
+        {tasks.length ? (
+          tasks.map((task) => (
+            <View key={task?.id} style={styles.taskRow}>
+              <View style={[styles.taskIcon, task?.completed ? styles.taskIconDone : styles.taskIconPending]}>
                 <MaterialCommunityIcons
-                  color={task.completed ? colors.success : colors.primary}
-                  name={task.completed ? 'check' : 'clock-outline'}
+                  color={task?.completed ? colors.success : colors.primary}
+                  name={task?.completed ? 'check' : 'clock-outline'}
                   size={18}
                 />
               </View>
               <View style={styles.taskContent}>
-                <Text style={styles.sectionCardTitle}>{task.title}</Text>
+                <Text style={styles.sectionCardTitle}>{task?.title || 'Tarea sin titulo'}</Text>
                 <Text style={styles.sectionCardMeta}>
-                  {task.completed ? 'Completada' : 'Pendiente'}
-                  {task.dueDate ? ` · vence ${formatLongDate(task.dueDate)}` : ''}
+                  {task?.completed ? 'Finalizada' : 'Pendiente'}
+                  {task?.dueDate ? ` · Vencimiento: ${formatDate(task.dueDate)}` : ''}
                 </Text>
               </View>
             </View>
@@ -139,17 +172,22 @@ export default function CaseDetailScreen({ navigation, route }) {
           <EmptyState
             icon="clipboard-check-outline"
             message="No hay tareas registradas para esta causa."
-            title="Sin tareas"
+            title="Sin tareas pendientes"
           />
         )}
       </Section>
 
-      {error ? <Text style={styles.inlineError}>{error}</Text> : null}
+      {error ? (
+        <View style={styles.inlineError}>
+          <MaterialCommunityIcons color={colors.danger} name="alert-outline" size={18} />
+          <Text style={styles.inlineErrorText}>{error}</Text>
+        </View>
+      ) : null}
     </ScrollView>
   );
 }
 
-function Section({ children, title }) {
+function Section({ children, styles, title }) {
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>{title}</Text>
@@ -158,7 +196,7 @@ function Section({ children, title }) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors) => StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
@@ -172,11 +210,13 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     borderRadius: 28,
     padding: 22,
-    shadowColor: colors.primary,
+    shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.08,
+    shadowOpacity: 0.14,
     shadowRadius: 18,
     elevation: 4,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
   },
   heroHeader: {
     flexDirection: 'row',
@@ -184,21 +224,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 12,
   },
-  title: {
+  heroCopy: {
     flex: 1,
+  },
+  title: {
     color: colors.text,
     fontSize: 24,
-    fontWeight: '700',
-  },
-  statusPill: {
-    backgroundColor: colors.accentSoft,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  statusText: {
-    color: colors.primary,
-    fontSize: 12,
     fontWeight: '700',
   },
   description: {
@@ -230,7 +261,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   primaryButtonText: {
-    color: colors.card,
+    color: colors.textOnPrimary,
     fontSize: 14,
     fontWeight: '700',
   },
@@ -249,11 +280,22 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     borderRadius: 22,
     padding: 18,
-    shadowColor: colors.primary,
+    shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.07,
+    shadowOpacity: 0.12,
     shadowRadius: 16,
     elevation: 3,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+  },
+  sectionCardHeader: {
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  sectionCardCopy: {
+    flex: 1,
   },
   sectionCardTitle: {
     color: colors.text,
@@ -276,14 +318,16 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
     borderRadius: 22,
     padding: 16,
-    shadowColor: colors.primary,
+    shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.07,
+    shadowOpacity: 0.12,
     shadowRadius: 16,
     elevation: 3,
     flexDirection: 'row',
     gap: 14,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
   },
   taskIcon: {
     width: 42,
@@ -296,14 +340,23 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accentSoft,
   },
   taskIconDone: {
-    backgroundColor: '#E7F4EA',
+    backgroundColor: colors.successSoft,
   },
   taskContent: {
     flex: 1,
   },
   inlineError: {
+    backgroundColor: colors.dangerSoft,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+  },
+  inlineErrorText: {
     color: colors.danger,
     fontSize: 13,
-    textAlign: 'center',
+    flex: 1,
   },
 });

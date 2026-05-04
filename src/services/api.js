@@ -1,6 +1,9 @@
 import Constants from 'expo-constants';
 
+import { auth } from '../config/firebase';
 import mockData from '../data/mockData';
+import { normalizeStatusLabel } from '../utils/status';
+import { getUserDisplayName, getUserEmail, getUserRole } from '../utils/userDisplay';
 
 export const USE_MOCKS = false;
 
@@ -65,6 +68,20 @@ function safeString(value, fallback = '') {
 function safeOptionalString(value) {
   const normalized = safeString(value, '');
   return normalized || null;
+}
+
+function getAuthenticatedUserCandidate() {
+  const currentUser = auth?.currentUser;
+
+  if (!currentUser) {
+    return null;
+  }
+
+  return {
+    id: currentUser.uid,
+    displayName: currentUser.displayName,
+    email: currentUser.email,
+  };
 }
 
 function normalizeDateValue(value) {
@@ -136,7 +153,10 @@ function getMetrics() {
   const now = new Date();
 
   return {
-    causasActivas: mockStore.cases.filter((item) => item.status !== 'Cerrada').length,
+    causasActivas: mockStore.cases.filter((item) => {
+      const normalizedStatus = normalizeStatusLabel(item?.status, 'Activa');
+      return normalizedStatus !== 'Finalizada' && normalizedStatus !== 'Archivada';
+    }).length,
     audienciasHoy: mockStore.hearings.filter((item) => new Date(item.date).toDateString() === now.toDateString()).length,
     documentos: mockStore.documents.length,
     tareasPendientes: mockStore.tasks.filter((item) => !item.completed).length,
@@ -145,9 +165,10 @@ function getMetrics() {
 
 function normalizeUser(user, fallback = {}) {
   const source = user || {};
-  const normalizedName = safeString(source.name ?? source.nombre ?? fallback.name ?? fallback.nombre, 'Usuario');
-  const normalizedEmail = safeString(source.email ?? source.correo ?? fallback.email, 'Sin email cargado');
-  const normalizedRole = safeString(source.role ?? source.rol ?? fallback.role ?? fallback.rol, 'Sin rol cargado');
+  const authUser = getAuthenticatedUserCandidate();
+  const normalizedName = getUserDisplayName(source, fallback, authUser);
+  const normalizedEmail = safeString(getUserEmail(source, fallback, authUser), 'Sin email registrado');
+  const normalizedRole = safeString(getUserRole(source, fallback), 'Profesional');
 
   return {
     ...source,
@@ -168,7 +189,7 @@ function normalizeTask(task) {
   return {
     ...source,
     id: getId(source.id),
-    title: safeString(source.title ?? source.titulo, 'Tarea sin título'),
+    title: safeString(source.title ?? source.titulo, 'Tarea sin titulo'),
     dueDate,
     fechaVencimiento: dueDate,
     completed: Boolean(source.completed ?? source.completada),
@@ -181,14 +202,14 @@ function normalizeHearing(hearing, context = {}) {
   const defaultCase = context.defaultCase || {};
   const caseRef = source.case || source.causa || defaultCase;
   const isoDate = normalizeDateValue(source.date ?? source.fechaHora) || combineDateTime(source.fecha, source.hora);
-  const title = safeString(source.title ?? source.titulo, 'Audiencia sin título');
+  const title = safeString(source.title ?? source.titulo, 'Audiencia sin titulo');
   const caseTitle = safeString(
     source.caseTitle ?? source.causaNombre ?? source.causa ?? caseRef?.title ?? caseRef?.titulo,
     'Causa sin referencia'
   );
   const court = safeString(
     source.court ?? source.juzgado ?? caseRef?.court ?? caseRef?.juzgado,
-    'Sin juzgado cargado'
+    'Juzgado a confirmar'
   );
   const modality = safeOptionalString(source.modality ?? source.modalidad);
   const location = safeOptionalString(source.location ?? source.ubicacion ?? source.sala);
@@ -198,7 +219,7 @@ function normalizeHearing(hearing, context = {}) {
       : typeof source.puedeIniciar === 'boolean'
         ? source.puedeIniciar
         : Boolean(isoDate && new Date(isoDate).getTime() >= Date.now());
-  const status = safeString(source.status ?? source.estado, 'Programada');
+  const status = normalizeStatusLabel(source.status ?? source.estado, 'Programada');
 
   return {
     ...source,
@@ -262,10 +283,10 @@ function normalizeDocument(document, context = {}) {
 
 function normalizeCase(caseItem) {
   const source = caseItem || {};
-  const title = safeString(source.title ?? source.titulo, 'Causa sin título');
-  const description = safeString(source.description ?? source.descripcion, 'Sin descripción cargada.');
-  const status = safeString(source.status ?? source.estado, 'Activa');
-  const court = safeString(source.court ?? source.juzgado ?? source.tribunal, 'Sin juzgado cargado');
+  const title = safeString(source.title ?? source.titulo, 'Causa sin titulo');
+  const description = safeString(source.description ?? source.descripcion, 'Sin informacion adicional registrada.');
+  const status = normalizeStatusLabel(source.status ?? source.estado, 'Activa');
+  const court = safeString(source.court ?? source.juzgado ?? source.tribunal, 'Juzgado a confirmar');
   const createdAt = normalizeDateValue(source.createdAt ?? source.fechaCreacion ?? source.fechaAlta ?? source.fecha);
   const defaultCase = { id: source.id, title, court };
   const rawHearings = toArray(source.hearings ?? source.audiencias);
@@ -352,7 +373,7 @@ function mapUpcomingHearings(limit = 5) {
       normalizeHearing({
         ...item,
         caseTitle: caseMap[item.caseId]?.title || 'Causa sin referencia',
-        court: caseMap[item.caseId]?.court || 'Sala no informada',
+        court: caseMap[item.caseId]?.court || 'Juzgado a confirmar',
         canStart: true,
       })
     );
@@ -394,14 +415,14 @@ function getErrorMessage(status, data) {
   }
 
   if (status === 401 || status === 403) {
-    return 'El servidor rechazo la solicitud. Verifica la sesion del usuario e intenta nuevamente.';
+    return 'La sesion actual no tiene permisos para completar esta accion. Volve a ingresar e intentalo nuevamente.';
   }
 
   if (status >= 500) {
-    return 'El servidor respondio con un error interno. Proba nuevamente en unos minutos.';
+    return 'No pudimos procesar la solicitud en este momento. Intenta nuevamente en unos minutos.';
   }
 
-  return 'No pudimos completar la solicitud.';
+  return 'No pudimos completar la solicitud. Intenta nuevamente.';
 }
 
 export async function request(endpoint, options = {}) {
@@ -436,7 +457,7 @@ export async function request(endpoint, options = {}) {
     );
   } catch (error) {
     throw createRequestError(
-      error?.message || 'No pudimos conectarnos con el servidor. Verifica que este activo y accesible desde Expo.',
+      error?.message || 'No pudimos conectar con el servidor. Verifica tu conexion e intenta nuevamente.',
       0,
       error
     );
@@ -474,7 +495,7 @@ export function getAuthHeaders() {
 
 export async function getMe() {
   if (USE_MOCKS) {
-    return simulateDelay({ ...mockStore.user });
+    return simulateDelay(normalizeUser(mockStore.user, getAuthenticatedUserCandidate() || {}));
   }
 
   try {
@@ -494,7 +515,7 @@ export async function getMe() {
 export async function getDashboardResumen() {
   if (USE_MOCKS) {
     return simulateDelay({
-      usuario: { id: mockStore.user.id, nombre: mockStore.user.name },
+      usuario: normalizeUser(mockStore.user, getAuthenticatedUserCandidate() || {}),
       metricas: getMetrics(),
       proximasAudiencias: mapUpcomingHearings(),
     });
@@ -559,11 +580,20 @@ export async function getCaseById(id) {
 }
 
 function normalizeCasePayload(data = {}) {
+  const title = safeString(data.title ?? data.titulo, '').trim();
+  const description = safeString(data.description ?? data.descripcion, '').trim();
+  const court = safeString(data.court ?? data.juzgado, '').trim();
+  const status = safeString(data.status ?? data.estado, 'Activa').trim();
+
   return {
-    title: safeString(data.title ?? data.titulo, '').trim(),
-    description: safeString(data.description ?? data.descripcion, '').trim(),
-    court: safeString(data.court ?? data.juzgado, '').trim(),
-    status: safeString(data.status ?? data.estado, 'Activa').trim(),
+    title,
+    titulo: title,
+    description,
+    descripcion: description,
+    court,
+    juzgado: court,
+    status,
+    estado: status,
   };
 }
 
@@ -634,7 +664,7 @@ export async function getHearings() {
       normalizeHearing({
         ...item,
         caseTitle: caseMap[item.caseId]?.title || 'Causa sin referencia',
-        court: caseMap[item.caseId]?.court || 'Sin juzgado cargado',
+        court: caseMap[item.caseId]?.court || 'Juzgado a confirmar',
       })
     );
 
@@ -655,12 +685,25 @@ export async function getUpcomingHearings() {
 }
 
 function normalizeHearingPayload(data = {}) {
+  const title = safeString(data.title ?? data.titulo, '').trim();
+  const normalizedDate = combineDateTime(data.date ?? data.fecha, data.time ?? data.hora);
+  const caseId = toNumber(data.caseId ?? data.causaId);
+  const modality = safeString(data.modality ?? data.modalidad, '').trim();
+  const location = safeString(data.location ?? data.ubicacion, '').trim();
+
   return {
-    title: safeString(data.title ?? data.titulo, '').trim(),
-    date: combineDateTime(data.date ?? data.fecha, data.time ?? data.hora),
-    caseId: toNumber(data.caseId ?? data.causaId),
-    modality: safeString(data.modality ?? data.modalidad, '').trim(),
-    location: safeString(data.location ?? data.ubicacion, '').trim(),
+    title,
+    titulo: title,
+    date: normalizedDate,
+    fechaHora: normalizedDate,
+    fecha: safeString(data.date ?? data.fecha, '').trim(),
+    hora: safeString(data.time ?? data.hora, '').trim(),
+    caseId,
+    causaId: caseId,
+    modality,
+    modalidad: modality,
+    location,
+    ubicacion: location,
   };
 }
 
@@ -715,12 +758,19 @@ export async function getDocuments() {
 
 function normalizeDocumentPayload(data = {}) {
   const fileName = safeString(data.fileName ?? data.nombreArchivo, '').trim();
+  const hearingId = toNumber(data.hearingId ?? data.audienciaId);
+  const documentType = safeString(data.documentType ?? data.tipo, '').trim();
+  const path = safeString(data.path ?? data.ruta, '/uploads/' + (fileName || 'documento-simulado.pdf'));
 
   return {
     fileName,
-    path: safeString(data.path ?? data.ruta, '/uploads/' + (fileName || 'documento-simulado.pdf')),
-    hearingId: toNumber(data.hearingId ?? data.audienciaId),
-    documentType: safeString(data.documentType ?? data.tipo, '').trim(),
+    nombreArchivo: fileName,
+    path,
+    ruta: path,
+    hearingId,
+    audienciaId: hearingId,
+    documentType,
+    tipo: documentType,
   };
 }
 

@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import EmptyState from '../components/EmptyState';
@@ -9,10 +9,15 @@ import HearingTimelineCard from '../components/HearingTimelineCard';
 import LoadingState from '../components/LoadingState';
 import MetricCard from '../components/MetricCard';
 import QuickActionButton from '../components/QuickActionButton';
-import colors from '../constants/colors';
+import { useAppTheme } from '../context/ThemeContext';
+import { useAuth } from '../context/AuthContext';
 import { getDashboardResumen, getNotifications } from '../services/api';
+import { getUserDisplayName } from '../utils/userDisplay';
 
 export default function DashboardScreen({ navigation }) {
+  const { colors } = useAppTheme();
+  const { currentUser } = useAuth();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [dashboard, setDashboard] = useState(null);
   const [notificationCount, setNotificationCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -28,11 +33,19 @@ export default function DashboardScreen({ navigation }) {
       }
 
       setError('');
-      const [resumen, notifications] = await Promise.all([getDashboardResumen(), getNotifications()]);
+      const [resumen, notifications] = await Promise.all([
+        getDashboardResumen(),
+        getNotifications(),
+      ]);
       setDashboard(resumen);
-      setNotificationCount(notifications.filter((item) => !item.read).length);
+      setNotificationCount(notifications.filter((item) => !item?.read).length);
     } catch (loadError) {
-      setError(loadError.message);
+      console.error('[DashboardScreen] Error cargando metricas:', loadError);
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : 'No pudimos cargar la informacion del panel inicial.'
+      );
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -50,7 +63,7 @@ export default function DashboardScreen({ navigation }) {
   }, [loadDashboard]);
 
   const handleNotificationsPress = useCallback(() => {
-    navigation.navigate('Más');
+    navigation.navigate('Mas');
   }, [navigation]);
 
   const handleOpenCalendar = useCallback(() => {
@@ -69,54 +82,87 @@ export default function DashboardScreen({ navigation }) {
     navigation.navigate('NewHearing');
   }, [navigation]);
 
-  const handleOpenHearing = useCallback((hearing) => {
-    if (hearing?.caseId) {
-      navigation.navigate('CaseDetail', { caseId: hearing.caseId });
-      return;
-    }
+  const handleOpenHearing = useCallback(
+    (hearing) => {
+      if (hearing?.caseId) {
+        navigation.navigate('CaseDetail', { caseId: hearing.caseId });
+        return;
+      }
 
-    navigation.navigate('Calendario');
-  }, [navigation]);
+      navigation.navigate('Calendario');
+    },
+    [navigation]
+  );
 
-  if (loading && !dashboard) {
-    return <LoadingState />;
-  }
-
-  if (error && !dashboard) {
-    return <ErrorState message={error} onRetry={loadDashboard} />;
-  }
+  const dashboardData = dashboard ?? null;
+  const metricas = dashboardData?.metricas || {
+    causasActivas: 0,
+    audienciasHoy: 0,
+    documentos: 0,
+    tareasPendientes: 0,
+  };
+  const proximasAudiencias = dashboardData?.proximasAudiencias || [];
+  const displayName = useMemo(() => {
+    const fullName = getUserDisplayName(currentUser, dashboardData?.usuario);
+    return fullName.split(/\s+/).filter(Boolean)[0] || 'Usuario';
+  }, [currentUser, dashboardData?.usuario]);
 
   const metricCards = [
     {
       label: 'Causas activas',
-      value: dashboard.metricas.causasActivas,
+      value: metricas?.causasActivas ?? 0,
       icon: 'briefcase-variant-outline',
       accentColor: colors.primary,
     },
     {
       label: 'Audiencias de hoy',
-      value: dashboard.metricas.audienciasHoy,
+      value: metricas?.audienciasHoy ?? 0,
       icon: 'calendar-clock',
       accentColor: colors.success,
     },
     {
-      label: 'Documentos',
-      value: dashboard.metricas.documentos,
+      label: 'Documentos registrados',
+      value: metricas?.documentos ?? 0,
       icon: 'file-document-outline',
       accentColor: colors.warning,
     },
     {
       label: 'Tareas pendientes',
-      value: dashboard.metricas.tareasPendientes,
+      value: metricas?.tareasPendientes ?? 0,
       icon: 'clipboard-text-clock-outline',
       accentColor: colors.danger,
     },
   ];
 
+  if (loading && !dashboard) {
+    return (
+      <LoadingState
+        title="Cargando panel principal"
+        message="Estamos actualizando tus causas, audiencias y documentos."
+      />
+    );
+  }
+
+  if (error && !dashboard) {
+    return (
+      <ErrorState
+        title="No pudimos cargar el panel principal"
+        message={error}
+        onRetry={loadDashboard}
+      />
+    );
+  }
+
   return (
     <ScrollView
       contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl onRefresh={handleRefresh} refreshing={refreshing} tintColor={colors.primary} />}
+      refreshControl={
+        <RefreshControl
+          onRefresh={handleRefresh}
+          refreshing={refreshing}
+          tintColor={colors.primary}
+        />
+      }
       showsVerticalScrollIndicator={false}
       style={styles.screen}
     >
@@ -128,7 +174,7 @@ export default function DashboardScreen({ navigation }) {
           <Text style={styles.brand}>LUXIA</Text>
 
           <Pressable onPress={handleNotificationsPress} style={styles.notificationButton}>
-            <MaterialCommunityIcons color={colors.card} name="bell-outline" size={24} />
+            <MaterialCommunityIcons color={colors.textOnPrimary} name="bell-outline" size={24} />
             {notificationCount > 0 ? (
               <View style={styles.notificationBadge}>
                 <Text style={styles.notificationBadgeText}>{notificationCount}</Text>
@@ -137,8 +183,10 @@ export default function DashboardScreen({ navigation }) {
           </Pressable>
         </View>
 
-        <Text style={styles.greeting}>Hola, {dashboard.usuario.nombre} 👋</Text>
-        <Text style={styles.subtitle}>Resumen de tus juicios y próximas tareas</Text>
+        <Text style={styles.greeting}>Hola, {displayName}</Text>
+        <Text style={styles.subtitle}>
+          Gestiona tus causas, audiencias y documentos desde un solo lugar.
+        </Text>
       </View>
 
       <View style={styles.metricGrid}>
@@ -150,51 +198,54 @@ export default function DashboardScreen({ navigation }) {
       </View>
 
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionEyebrow}>PRÓXIMAS AUDIENCIAS</Text>
+        <Text style={styles.sectionEyebrow}>PROXIMAS AUDIENCIAS</Text>
         <Pressable onPress={handleOpenCalendar}>
-          <Text style={styles.sectionLink}>Ver calendario →</Text>
+          <Text style={styles.sectionLink}>Ver calendario</Text>
         </Pressable>
       </View>
 
-      {dashboard.proximasAudiencias.length ? (
-        dashboard.proximasAudiencias.map((hearing, index) => (
+      {proximasAudiencias.length ? (
+        proximasAudiencias.map((hearing, index) => (
           <HearingTimelineCard
             hearing={hearing}
-            isLast={index === dashboard.proximasAudiencias.length - 1}
-            key={hearing.id}
+            isLast={index === proximasAudiencias.length - 1}
+            key={hearing?.id ?? `${hearing?.title}-${index}`}
             onPressAction={() => handleOpenHearing(hearing)}
           />
         ))
       ) : (
         <EmptyState
+          actionLabel="Programar audiencia"
           icon="calendar-blank"
-          message="Todavía no hay audiencias futuras cargadas. Cuando existan, las vas a ver acá mismo."
-          title="Sin audiencias próximas"
+          message="No hay audiencias programadas para los proximos dias."
+          onAction={handleCreateHearing}
+          title="Agenda sin actividad proxima"
         />
       )}
 
       <View style={[styles.sectionHeader, styles.quickActionsHeader]}>
-        <Text style={styles.sectionEyebrow}>ACCIONES RÁPIDAS</Text>
+        <Text style={styles.sectionEyebrow}>ACCIONES PRINCIPALES</Text>
       </View>
 
       <View style={styles.quickActionsGrid}>
         <QuickActionButton
           icon="plus-box-outline"
           onPress={handleCreateCase}
-          subtitle="Alta rápida de expediente"
-          title="Nueva Causa"
+          subtitle="Registra un nuevo expediente con sus datos principales."
+          title="Nueva causa"
         />
         <QuickActionButton
           icon="tray-arrow-up"
           onPress={handleUploadDocument}
-          subtitle="Adjuntar pieza procesal"
-          title="Subir Documento"
+          subtitle="Incorpora escritos, anexos o prueba documental."
+          title="Subir documento"
         />
         <QuickActionButton
           icon="calendar-plus"
+          fullWidth
           onPress={handleCreateHearing}
-          subtitle="Agenda una audiencia"
-          title="Programar Audiencia"
+          subtitle="Agenda una audiencia y vinculala a una causa."
+          title="Registrar audiencia"
         />
       </View>
 
@@ -208,7 +259,7 @@ export default function DashboardScreen({ navigation }) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors) => StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
@@ -217,7 +268,7 @@ const styles = StyleSheet.create({
     paddingBottom: 34,
   },
   hero: {
-    backgroundColor: colors.primary,
+    backgroundColor: colors.primaryDeep,
     borderBottomLeftRadius: 34,
     borderBottomRightRadius: 34,
     paddingTop: 62,
@@ -249,7 +300,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   brand: {
-    color: colors.card,
+    color: colors.textOnPrimary,
     fontSize: 28,
     fontWeight: '800',
     letterSpacing: 1.6,
@@ -269,18 +320,18 @@ const styles = StyleSheet.create({
     minWidth: 18,
     height: 18,
     borderRadius: 9,
-    backgroundColor: '#F0A500',
+    backgroundColor: colors.warning,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 4,
   },
   notificationBadgeText: {
-    color: colors.card,
+    color: colors.textOnPrimary,
     fontSize: 10,
     fontWeight: '700',
   },
   greeting: {
-    color: colors.card,
+    color: colors.textOnPrimary,
     fontSize: 30,
     fontWeight: '700',
     marginTop: 28,
@@ -333,7 +384,7 @@ const styles = StyleSheet.create({
   inlineAlert: {
     marginTop: 18,
     marginHorizontal: 22,
-    backgroundColor: '#FCEBEC',
+    backgroundColor: colors.dangerSoft,
     borderRadius: 16,
     paddingHorizontal: 14,
     paddingVertical: 12,

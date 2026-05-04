@@ -1,8 +1,15 @@
+import { useMemo } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
-import colors from '../constants/colors';
+import { useAppTheme } from '../context/ThemeContext';
 
-export default function LoadingState({ title = 'Cargando panel', message = 'Estamos preparando la información de LUXIA.' }) {
+export default function LoadingState({
+  title = 'Cargando informacion',
+  message = 'Estamos preparando la informacion de Luxia.',
+}) {
+  const { colors } = useAppTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   return (
     <View style={styles.container}>
       <ActivityIndicator color={colors.primary} size="large" />
@@ -12,7 +19,7 @@ export default function LoadingState({ title = 'Cargando panel', message = 'Esta
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors) => StyleSheet.create({
   container: {
     flex: 1,
     alignItems: 'center',
