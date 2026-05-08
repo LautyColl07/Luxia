@@ -7,6 +7,7 @@ import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
 import HearingRecordingPanel from '../components/HearingRecordingPanel';
 import LoadingState from '../components/LoadingState';
+import CaseScopeBadge from '../components/CaseScopeBadge';
 import StatusBadge from '../components/StatusBadge';
 import { useAppTheme } from '../context/ThemeContext';
 import { getCaseById } from '../services/api';
@@ -90,13 +91,26 @@ export default function CaseDetailScreen({ navigation, route }) {
           <Text style={styles.metaText}>Fecha de alta: {formatDate(caseDetail?.createdAt)}</Text>
         </View>
 
-        <Pressable
-          onPress={() => navigation.navigate('NewHearing', { caseId: caseDetail?.id })}
-          style={styles.primaryButton}
-        >
-          <Text style={styles.primaryButtonText}>Registrar audiencia</Text>
-          <MaterialCommunityIcons color={colors.textOnPrimary} name="arrow-right" size={18} />
-        </Pressable>
+        <CaseScopeBadge
+          isReadOnly={caseDetail?.permissions?.isReadOnly}
+          legalStudyName={caseDetail?.legalStudyName}
+          scope={caseDetail?.scope}
+        />
+
+        {caseDetail?.permissions?.canEdit ? (
+          <Pressable
+            onPress={() => navigation.navigate('NewHearing', { caseId: caseDetail?.id })}
+            style={styles.primaryButton}
+          >
+            <Text style={styles.primaryButtonText}>Registrar audiencia</Text>
+            <MaterialCommunityIcons color={colors.textOnPrimary} name="arrow-right" size={18} />
+          </Pressable>
+        ) : (
+          <View style={styles.readOnlyCard}>
+            <MaterialCommunityIcons color={colors.warning} name="eye-outline" size={18} />
+            <Text style={styles.readOnlyText}>Tu rol actual es de solo lectura.</Text>
+          </View>
+        )}
       </View>
 
       <Section styles={styles} title="Audiencias">
@@ -270,6 +284,24 @@ const createStyles = (colors) => StyleSheet.create({
     color: colors.textOnPrimary,
     fontSize: 14,
     fontWeight: '700',
+  },
+  readOnlyCard: {
+    marginTop: 18,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    backgroundColor: colors.warningSoft,
+    borderWidth: 1,
+    borderColor: colors.warning,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  readOnlyText: {
+    color: colors.warning,
+    fontSize: 13,
+    fontWeight: '700',
+    flex: 1,
   },
   section: {
     gap: 12,

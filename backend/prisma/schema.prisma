@@ -1,0 +1,100 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum LegalStudyRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum MemberStatus {
+  ACTIVE
+  PENDING
+  REMOVED
+}
+
+enum CaseScope {
+  PRIVATE
+  LEGAL_STUDY
+}
+
+model User {
+  id                    Int                @id @default(autoincrement())
+  name                  String?
+  firebaseUid           String?            @unique
+  email                 String             @unique
+  displayName           String?
+  firstName             String?
+  lastName              String?
+  role                  String             @default("user")
+  ownedLegalStudies     LegalStudy[]       @relation("OwnedLegalStudies")
+  legalStudyMemberships LegalStudyMember[]
+  ownedCases            Case[]             @relation("OwnedCases")
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  @@map("User")
+}
+
+model LegalStudy {
+  id          String             @id @default(cuid())
+  name        String
+  description String?
+  ownerId     Int
+  deletedAt   DateTime?
+  owner       User               @relation("OwnedLegalStudies", fields: [ownerId], references: [id])
+  members     LegalStudyMember[]
+  cases       Case[]
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  @@index([ownerId])
+  @@index([deletedAt])
+  @@map("LegalStudy")
+}
+
+model LegalStudyMember {
+  id           String         @id @default(cuid())
+  userId       Int
+  legalStudyId String
+  role         LegalStudyRole @default(MEMBER)
+  status       MemberStatus   @default(ACTIVE)
+  user         User           @relation(fields: [userId], references: [id])
+  legalStudy   LegalStudy     @relation(fields: [legalStudyId], references: [id])
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@unique([userId, legalStudyId])
+  @@index([legalStudyId, status])
+  @@map("LegalStudyMember")
+}
+
+model Case {
+  id          Int         @id @default(autoincrement())
+  title       String
+  description String?
+  court       String?
+  status      String      @default("Activa")
+  createdById Int
+  ownerUserId String
+  legalStudyId String?
+  scope       CaseScope   @default(PRIVATE)
+  deletedAt   DateTime?
+  ownerUser   User        @relation("OwnedCases", fields: [createdById], references: [id])
+  legalStudy  LegalStudy? @relation(fields: [legalStudyId], references: [id])
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([createdById])
+  @@index([ownerUserId, scope])
+  @@index([legalStudyId, scope])
+  @@index([deletedAt])
+  @@map("Case")
+}

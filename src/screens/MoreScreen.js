@@ -261,6 +261,23 @@ export default function MoreScreen({ navigation }) {
 
       <CardSection
         colors={colors}
+        icon="office-building-outline"
+        styles={styles}
+        subtitle="Administra workspaces juridicos, miembros y roles."
+        title="Estudios Juridicos"
+      >
+        <ActionRow
+          colors={colors}
+          description="Crea estudios, invita miembros y revisa permisos del equipo."
+          icon="account-group-outline"
+          onPress={() => navigation.navigate('LegalStudies')}
+          styles={styles}
+          title="Gestionar Estudios Juridicos"
+        />
+      </CardSection>
+
+      <CardSection
+        colors={colors}
         icon="lock-outline"
         styles={styles}
         subtitle="Acciones rapidas para proteger tu acceso."

@@ -9,6 +9,7 @@ import CaseDetailScreen from '../screens/CaseDetailScreen';
 import CasesScreen from '../screens/CasesScreen';
 import DashboardScreen from '../screens/DashboardScreen';
 import DocumentsScreen from '../screens/DocumentsScreen';
+import LegalStudiesScreen from '../screens/LegalStudiesScreen';
 import MoreScreen from '../screens/MoreScreen';
 import NewCaseScreen from '../screens/NewCaseScreen';
 import NewHearingScreen from '../screens/NewHearingScreen';
@@ -90,6 +91,7 @@ export default function DashboardNavigator() {
     >
       <Stack.Screen component={DashboardTabs} name="MainTabs" options={{ headerShown: false }} />
       <Stack.Screen component={CaseDetailScreen} name="CaseDetail" options={{ title: 'Detalle de causa' }} />
+      <Stack.Screen component={LegalStudiesScreen} name="LegalStudies" options={{ title: 'Estudios Juridicos' }} />
       <Stack.Screen component={NewCaseScreen} name="NewCase" options={{ title: 'Nueva causa' }} />
       <Stack.Screen component={NewHearingScreen} name="NewHearing" options={{ title: 'Registrar audiencia' }} />
       <Stack.Screen

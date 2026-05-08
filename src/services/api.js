@@ -6,6 +6,26 @@ import { normalizeStatusLabel } from '../utils/status';
 import { getUserDisplayName, getUserEmail, getUserRole } from '../utils/userDisplay';
 
 export const USE_MOCKS = false;
+export const CASE_SCOPES = {
+  PRIVATE: 'PRIVATE',
+  LEGAL_STUDY: 'LEGAL_STUDY',
+};
+export const LEGAL_STUDY_ROLES = {
+  OWNER: 'OWNER',
+  ADMIN: 'ADMIN',
+  MEMBER: 'MEMBER',
+  VIEWER: 'VIEWER',
+};
+export const MEMBER_STATUSES = {
+  ACTIVE: 'ACTIVE',
+  PENDING: 'PENDING',
+  REMOVED: 'REMOVED',
+};
+export const WORK_CONTEXT_TYPES = {
+  PERSONAL: 'PERSONAL',
+  LEGAL_STUDY: 'LEGAL_STUDY',
+  ALL: 'ALL',
+};
 
 const DEFAULT_API_BASE_URL = 'http://172.16.4.48:3000/api/v1';
 const DASHBOARD_RESUMEN_ENDPOINT = '/dashboard/resumen';
@@ -23,7 +43,15 @@ let mockStore = JSON.parse(JSON.stringify(mockData));
 const REQUEST_TIMEOUT_MS = 8000;
 const EXPIRED_SESSION_MESSAGE = 'Tu sesión expiró. Iniciá sesión nuevamente.';
 const MISSING_SESSION_MESSAGE = 'No hay una sesión activa. Iniciá sesión nuevamente.';
-const PROTECTED_ENDPOINT_PREFIXES = ['/dashboard/resumen', '/causas', '/audiencias', '/documentos'];
+const PROTECTED_ENDPOINT_PREFIXES = [
+  '/dashboard/resumen',
+  '/auth/me',
+  '/causas',
+  '/cases',
+  '/audiencias',
+  '/documentos',
+  '/legal-studies',
+];
 
 function simulateDelay(result, ms = 450) {
   return new Promise((resolve) => {
@@ -143,6 +171,252 @@ function sortByDateAsc(items, key) {
   });
 }
 
+function buildQueryString(params = {}) {
+  const searchParams = new URLSearchParams();
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') {
+      return;
+    }
+
+    searchParams.append(key, String(value));
+  });
+
+  const serialized = searchParams.toString();
+  return serialized ? `?${serialized}` : '';
+}
+
+function getCurrentAppUserId() {
+  if (USE_MOCKS) {
+    const authUser = getAuthenticatedUserCandidate();
+    const mappedUser =
+      getMockUserById(authUser?.id) ||
+      mockStore.users.find((item) => safeString(item?.email).toLowerCase() === safeString(authUser?.email).toLowerCase()) ||
+      null;
+
+    return mappedUser?.id || mockStore.user?.id || authUser?.id || null;
+  }
+
+  return auth?.currentUser?.uid || mockStore.user?.id || null;
+}
+
+function getMockUserById(userId) {
+  return mockStore.users.find((item) => String(item?.id) === String(userId)) || null;
+}
+
+function getCurrentMockUser() {
+  const authUser = getAuthenticatedUserCandidate();
+  const currentUserId = getCurrentAppUserId();
+  const existingUser =
+    getMockUserById(currentUserId) ||
+    mockStore.users.find((item) => safeString(item?.email).toLowerCase() === safeString(authUser?.email).toLowerCase()) ||
+    null;
+
+  if (existingUser) {
+    return {
+      ...existingUser,
+      id: currentUserId || existingUser.id,
+      firebaseUid: authUser?.id || existingUser.firebaseUid || existingUser.id,
+      displayName: authUser?.displayName || existingUser.name,
+      email: authUser?.email || existingUser.email,
+    };
+  }
+
+  return {
+    ...mockStore.user,
+    id: currentUserId || mockStore.user?.id,
+    firebaseUid: authUser?.id || mockStore.user?.firebaseUid,
+    email: authUser?.email || mockStore.user?.email,
+    name: authUser?.displayName || mockStore.user?.name,
+  };
+}
+
+function getCurrentUserReference() {
+  return normalizeUser(getCurrentMockUser(), getAuthenticatedUserCandidate() || {});
+}
+
+function getLegalStudyMap() {
+  return mockStore.legalStudies.reduce((accumulator, item) => {
+    accumulator[item.id] = item;
+    return accumulator;
+  }, {});
+}
+
+function normalizeMemberStatus(value) {
+  const normalized = safeString(value, MEMBER_STATUSES.ACTIVE).toUpperCase();
+  return MEMBER_STATUSES[normalized] || MEMBER_STATUSES.ACTIVE;
+}
+
+function normalizeLegalStudyRole(value) {
+  const normalized = safeString(value, LEGAL_STUDY_ROLES.MEMBER).toUpperCase();
+  return LEGAL_STUDY_ROLES[normalized] || LEGAL_STUDY_ROLES.MEMBER;
+}
+
+function getRoleLabel(role) {
+  switch (normalizeLegalStudyRole(role)) {
+    case LEGAL_STUDY_ROLES.OWNER:
+      return 'Owner';
+    case LEGAL_STUDY_ROLES.ADMIN:
+      return 'Admin';
+    case LEGAL_STUDY_ROLES.VIEWER:
+      return 'Solo lectura';
+    default:
+      return 'Miembro';
+  }
+}
+
+function getScopeLabel(scope) {
+  return scope === CASE_SCOPES.LEGAL_STUDY ? 'Estudio Juridico' : 'Privada';
+}
+
+function getMemberPriority(role) {
+  switch (normalizeLegalStudyRole(role)) {
+    case LEGAL_STUDY_ROLES.OWNER:
+      return 0;
+    case LEGAL_STUDY_ROLES.ADMIN:
+      return 1;
+    case LEGAL_STUDY_ROLES.MEMBER:
+      return 2;
+    default:
+      return 3;
+  }
+}
+
+function getActiveMembership(userId, legalStudyId) {
+  return (
+    mockStore.legalStudyMembers.find(
+      (item) =>
+        String(item?.userId) === String(userId) &&
+        String(item?.legalStudyId) === String(legalStudyId) &&
+        normalizeMemberStatus(item?.status) === MEMBER_STATUSES.ACTIVE
+    ) || null
+  );
+}
+
+function getMembershipForStudy(userId, legalStudyId) {
+  return (
+    mockStore.legalStudyMembers.find(
+      (item) =>
+        String(item?.userId) === String(userId) &&
+        String(item?.legalStudyId) === String(legalStudyId)
+    ) || null
+  );
+}
+
+function getActiveMembershipsForUser(userId = getCurrentAppUserId()) {
+  return mockStore.legalStudyMembers.filter(
+    (item) =>
+      String(item?.userId) === String(userId) &&
+      normalizeMemberStatus(item?.status) === MEMBER_STATUSES.ACTIVE
+  );
+}
+
+function canViewStudyMembership(membership) {
+  return normalizeMemberStatus(membership?.status) === MEMBER_STATUSES.ACTIVE;
+}
+
+function canManageMembershipRole(role) {
+  const normalizedRole = normalizeLegalStudyRole(role);
+  return normalizedRole === LEGAL_STUDY_ROLES.OWNER || normalizedRole === LEGAL_STUDY_ROLES.ADMIN;
+}
+
+function canInviteFromMembership(membership) {
+  return canManageMembershipRole(membership?.role);
+}
+
+function canCreateStudyCaseFromMembership(membership) {
+  const normalizedRole = normalizeLegalStudyRole(membership?.role);
+  return canViewStudyMembership(membership) && normalizedRole !== LEGAL_STUDY_ROLES.VIEWER;
+}
+
+function normalizeCaseScope(scope) {
+  const normalized = safeString(scope, CASE_SCOPES.PRIVATE).toUpperCase();
+  return CASE_SCOPES[normalized] || CASE_SCOPES.PRIVATE;
+}
+
+function getStudyCapabilitiesForUser(userId, legalStudyId) {
+  const membership = getActiveMembership(userId, legalStudyId);
+  const normalizedRole = normalizeLegalStudyRole(membership?.role);
+
+  return {
+    canView: Boolean(membership),
+    canManage: canManageMembershipRole(normalizedRole),
+    canInvite: canInviteFromMembership(membership),
+    canCreateCase: canCreateStudyCaseFromMembership(membership),
+    isReadOnly: normalizedRole === LEGAL_STUDY_ROLES.VIEWER,
+    role: membership ? normalizedRole : null,
+    membership,
+  };
+}
+
+function canEditCaseRecord(caseItem, userId = getCurrentAppUserId()) {
+  if (!caseItem) {
+    return false;
+  }
+
+  const normalizedScope = normalizeCaseScope(caseItem.scope ?? caseItem.caseScope);
+
+  if (normalizedScope === CASE_SCOPES.PRIVATE) {
+    return String(caseItem.ownerUserId) === String(userId);
+  }
+
+  const capabilities = getStudyCapabilitiesForUser(userId, caseItem.legalStudyId);
+
+  if (capabilities.role === LEGAL_STUDY_ROLES.OWNER || capabilities.role === LEGAL_STUDY_ROLES.ADMIN) {
+    return true;
+  }
+
+  return capabilities.role === LEGAL_STUDY_ROLES.MEMBER && String(caseItem.ownerUserId) === String(userId);
+}
+
+function canDeleteCaseRecord(caseItem, userId = getCurrentAppUserId()) {
+  return canEditCaseRecord(caseItem, userId);
+}
+
+function isCaseVisibleToUser(caseItem, userId = getCurrentAppUserId()) {
+  if (!caseItem) {
+    return false;
+  }
+
+  const normalizedScope = normalizeCaseScope(caseItem.scope ?? caseItem.caseScope);
+
+  if (normalizedScope === CASE_SCOPES.PRIVATE) {
+    return String(caseItem.ownerUserId) === String(userId);
+  }
+
+  return Boolean(getActiveMembership(userId, caseItem.legalStudyId));
+}
+
+function filterMockCasesByScope(caseItems, filters = {}, userId = getCurrentAppUserId()) {
+  const scope = safeString(filters.scope, 'all').toLowerCase();
+  const legalStudyId = filters.legalStudyId ? String(filters.legalStudyId) : null;
+  const activeMemberships = getActiveMembershipsForUser(userId);
+  const activeStudyIds = new Set(activeMemberships.map((item) => String(item.legalStudyId)));
+
+  return caseItems.filter((item) => {
+    const normalizedScope = normalizeCaseScope(item.scope ?? item.caseScope);
+    const isPrivateCase = normalizedScope === CASE_SCOPES.PRIVATE && String(item.ownerUserId) === String(userId);
+    const isStudyCase =
+      normalizedScope === CASE_SCOPES.LEGAL_STUDY &&
+      item.legalStudyId &&
+      activeStudyIds.has(String(item.legalStudyId));
+
+    if (scope === 'private') {
+      return isPrivateCase;
+    }
+
+    if (scope === 'legal_study') {
+      if (!legalStudyId) {
+        return false;
+      }
+
+      return isStudyCase && String(item.legalStudyId) === legalStudyId;
+    }
+
+    return isPrivateCase || isStudyCase;
+  });
+}
+
 function getCaseMap() {
   return mockStore.cases.reduce((accumulator, item) => {
     accumulator[item.id] = item;
@@ -159,15 +433,18 @@ function getHearingMap() {
 
 function getMetrics() {
   const now = new Date();
+  const currentUserId = getCurrentAppUserId();
+  const visibleCases = mockStore.cases.filter((item) => isCaseVisibleToUser(item, currentUserId));
+  const visibleCaseIds = new Set(visibleCases.map((item) => item.id));
 
   return {
-    causasActivas: mockStore.cases.filter((item) => {
+    causasActivas: visibleCases.filter((item) => {
       const normalizedStatus = normalizeStatusLabel(item?.status, 'Activa');
       return normalizedStatus !== 'Finalizada' && normalizedStatus !== 'Archivada';
     }).length,
-    audienciasHoy: mockStore.hearings.filter((item) => new Date(item.date).toDateString() === now.toDateString()).length,
-    documentos: mockStore.documents.length,
-    tareasPendientes: mockStore.tasks.filter((item) => !item.completed).length,
+    audienciasHoy: mockStore.hearings.filter((item) => visibleCaseIds.has(item.caseId) && new Date(item.date).toDateString() === now.toDateString()).length,
+    documentos: mockStore.documents.filter((item) => visibleCaseIds.has(item.caseId)).length,
+    tareasPendientes: mockStore.tasks.filter((item) => visibleCaseIds.has(item.caseId) && !item.completed).length,
   };
 }
 
@@ -187,6 +464,87 @@ function normalizeUser(user, fallback = {}) {
     correo: normalizedEmail,
     role: normalizedRole,
     rol: normalizedRole,
+  };
+}
+
+function normalizeLegalStudyMember(member, context = {}) {
+  const source = member || {};
+  const relatedUser = source.user || getMockUserById(source.userId) || {};
+  const user = normalizeUser(relatedUser);
+  const role = normalizeLegalStudyRole(source.role);
+  const status = normalizeMemberStatus(source.status);
+
+  return {
+    ...source,
+    id: safeString(source.id),
+    userId: safeString(source.userId ?? user.id),
+    legalStudyId: safeString(source.legalStudyId ?? context.legalStudyId),
+    role,
+    roleLabel: getRoleLabel(role),
+    status,
+    statusLabel:
+      status === MEMBER_STATUSES.PENDING
+        ? 'Pendiente'
+        : status === MEMBER_STATUSES.REMOVED
+          ? 'Removido'
+          : 'Activo',
+    user,
+    createdAt: normalizeDateValue(source.createdAt),
+    updatedAt: normalizeDateValue(source.updatedAt),
+  };
+}
+
+function normalizeLegalStudy(legalStudy, context = {}) {
+  const source = legalStudy || {};
+  const currentUserId = context.currentUserId || getCurrentAppUserId();
+  const members = toArray(source.members).length
+    ? toArray(source.members).map((item) => normalizeLegalStudyMember(item, { legalStudyId: source.id }))
+    : mockStore.legalStudyMembers
+        .filter((item) => String(item?.legalStudyId) === String(source.id))
+        .map((item) => normalizeLegalStudyMember(item, { legalStudyId: source.id }));
+  const owner = normalizeUser(source.owner || getMockUserById(source.ownerId));
+  const membership =
+    normalizeLegalStudyMember(
+      source.currentMembership ||
+        source.membership ||
+        members.find((item) => String(item?.userId) === String(currentUserId)) ||
+        {},
+      { legalStudyId: source.id }
+    ) || null;
+  const resolvedRole = membership?.role || (source.currentUserRole ? normalizeLegalStudyRole(source.currentUserRole) : null);
+  const fallbackCapabilities = getStudyCapabilitiesForUser(currentUserId, source.id);
+  const capabilities = {
+    canView: source.capabilities?.canView ?? Boolean(membership?.id || fallbackCapabilities.canView),
+    canManage:
+      source.capabilities?.canManage ??
+      [LEGAL_STUDY_ROLES.OWNER, LEGAL_STUDY_ROLES.ADMIN].includes(resolvedRole || ''),
+    canInvite:
+      source.capabilities?.canInvite ??
+      [LEGAL_STUDY_ROLES.OWNER, LEGAL_STUDY_ROLES.ADMIN].includes(resolvedRole || ''),
+    canCreateCase:
+      source.capabilities?.canCreateCase ??
+      [LEGAL_STUDY_ROLES.OWNER, LEGAL_STUDY_ROLES.ADMIN, LEGAL_STUDY_ROLES.MEMBER].includes(resolvedRole || ''),
+    isReadOnly: source.capabilities?.isReadOnly ?? resolvedRole === LEGAL_STUDY_ROLES.VIEWER,
+    role: resolvedRole || fallbackCapabilities.role || null,
+    membership: membership?.id ? membership : fallbackCapabilities.membership || null,
+  };
+
+  return {
+    ...source,
+    id: safeString(source.id),
+    name: safeString(source.name, 'Estudio Juridico'),
+    description: safeOptionalString(source.description),
+    ownerId: safeString(source.ownerId ?? owner.id),
+    owner,
+    members: members.sort((first, second) => getMemberPriority(first.role) - getMemberPriority(second.role)),
+    membersCount: members.filter((item) => item.status === MEMBER_STATUSES.ACTIVE).length,
+    pendingMembersCount: members.filter((item) => item.status === MEMBER_STATUSES.PENDING).length,
+    currentMembership: membership?.id ? membership : null,
+    currentUserRole: capabilities.role,
+    currentUserRoleLabel: capabilities.role ? getRoleLabel(capabilities.role) : null,
+    capabilities,
+    createdAt: normalizeDateValue(source.createdAt),
+    updatedAt: normalizeDateValue(source.updatedAt),
   };
 }
 
@@ -296,6 +654,35 @@ function normalizeCase(caseItem) {
   const status = normalizeStatusLabel(source.status ?? source.estado, 'Activa');
   const court = safeString(source.court ?? source.juzgado ?? source.tribunal, 'Juzgado a confirmar');
   const createdAt = normalizeDateValue(source.createdAt ?? source.fechaCreacion ?? source.fechaAlta ?? source.fecha);
+  const updatedAt = normalizeDateValue(source.updatedAt ?? source.fechaActualizacion ?? source.modifiedAt ?? createdAt);
+  const scope = normalizeCaseScope(source.scope ?? source.caseScope);
+  const legalStudyRef = source.legalStudy ?? source.estudioJuridico ?? getLegalStudyMap()[source.legalStudyId];
+  const legalStudy = legalStudyRef ? normalizeLegalStudy(legalStudyRef) : null;
+  const legalStudyId = legalStudy?.id || safeOptionalString(source.legalStudyId ?? source.estudioJuridicoId);
+  const ownerUserId = safeString(source.ownerUserId ?? source.ownerId ?? source.usuarioCreadorId, getCurrentUserReference()?.id);
+  const currentUserId = getCurrentAppUserId();
+  const roleFromSource = safeOptionalString(source.currentUserRole ?? source.roleInStudy);
+  const fallbackStudyCapabilities = legalStudyId ? getStudyCapabilitiesForUser(currentUserId, legalStudyId) : null;
+  const studyCapabilities = legalStudyId
+    ? {
+        ...fallbackStudyCapabilities,
+        role: roleFromSource || fallbackStudyCapabilities?.role || null,
+        isReadOnly:
+          typeof source.isReadOnly === 'boolean'
+            ? source.isReadOnly
+            : roleFromSource === LEGAL_STUDY_ROLES.VIEWER ||
+              fallbackStudyCapabilities?.isReadOnly,
+      }
+    : null;
+  const permissionSource = source.permissions || {};
+  const canEdit = typeof permissionSource.canEdit === 'boolean' ? permissionSource.canEdit : canEditCaseRecord(source, currentUserId);
+  const canDelete = typeof permissionSource.canDelete === 'boolean' ? permissionSource.canDelete : canDeleteCaseRecord(source, currentUserId);
+  const isReadOnly =
+    typeof permissionSource.isReadOnly === 'boolean'
+      ? permissionSource.isReadOnly
+      : typeof source.isReadOnly === 'boolean'
+        ? source.isReadOnly
+        : Boolean(studyCapabilities?.isReadOnly && scope === CASE_SCOPES.LEGAL_STUDY);
   const defaultCase = { id: source.id, title, court };
   const rawHearings = toArray(source.hearings ?? source.audiencias);
   const hearings = rawHearings.map((item) => normalizeHearing(item, { defaultCase }));
@@ -328,7 +715,24 @@ function normalizeCase(caseItem) {
     estado: status,
     court,
     juzgado: court,
+    scope,
+    caseScope: scope,
+    scopeLabel: getScopeLabel(scope),
+    ownerUserId,
+    legalStudyId: scope === CASE_SCOPES.LEGAL_STUDY ? legalStudyId : null,
+    legalStudy,
+    legalStudyName: legalStudy?.name || safeOptionalString(source.legalStudyName ?? source.estudioJuridicoNombre),
+    currentUserRole: studyCapabilities?.role || safeOptionalString(source.currentUserRole),
+    currentUserRoleLabel: studyCapabilities?.role ? getRoleLabel(studyCapabilities.role) : null,
+    permissions: {
+      canEdit,
+      canDelete,
+      canView: typeof permissionSource.canView === 'boolean' ? permissionSource.canView : true,
+      isReadOnly,
+    },
+    isReadOnly,
     createdAt,
+    updatedAt,
     fecha: createdAt,
     hearings,
     audiencias: hearings,
@@ -372,8 +776,10 @@ function normalizeNotification(notification) {
 
 function mapUpcomingHearings(limit = 5) {
   const caseMap = getCaseMap();
+  const currentUserId = getCurrentAppUserId();
 
   return mockStore.hearings
+    .filter((item) => isCaseVisibleToUser(caseMap[item.caseId], currentUserId))
     .filter((item) => new Date(item.date).getTime() >= Date.now())
     .sort((first, second) => new Date(first.date) - new Date(second.date))
     .slice(0, limit)
@@ -388,10 +794,14 @@ function mapUpcomingHearings(limit = 5) {
 }
 
 function getCaseDetailMock(id) {
-  const caseItem = mockStore.cases.find((item) => item.id === Number(id));
+  const caseItem = mockStore.cases.find((item) => String(item.id) === String(id));
 
   if (!caseItem) {
     throw new Error('No encontramos la causa solicitada.');
+  }
+
+  if (!isCaseVisibleToUser(caseItem, getCurrentAppUserId())) {
+    throw createRequestError('No tenes permisos para realizar esta accion.', 403);
   }
 
   const caseHearings = mockStore.hearings
@@ -556,6 +966,20 @@ export async function request(endpoint, options = {}) {
   return data;
 }
 
+async function requestWithFallback(paths, options = {}) {
+  let lastError = null;
+
+  for (const path of paths) {
+    try {
+      return await request(path, options);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || createRequestError('No pudimos completar la solicitud.', 0);
+}
+
 export function setAuthToken(token) {
   authToken = token;
 }
@@ -592,7 +1016,7 @@ export async function getCurrentIdToken() {
 
 export async function getMe() {
   if (USE_MOCKS) {
-    return simulateDelay(normalizeUser(mockStore.user, getAuthenticatedUserCandidate() || {}));
+    return simulateDelay(getCurrentUserReference());
   }
 
   try {
@@ -612,7 +1036,7 @@ export async function getMe() {
 export async function getDashboardResumen() {
   if (USE_MOCKS) {
     return simulateDelay({
-      usuario: normalizeUser(mockStore.user, getAuthenticatedUserCandidate() || {}),
+      usuario: getCurrentUserReference(),
       metricas: getMetrics(),
       proximasAudiencias: mapUpcomingHearings(),
     });
@@ -622,13 +1046,285 @@ export async function getDashboardResumen() {
   return normalizeDashboardResumen(data);
 }
 
-export async function getCases() {
+export async function getLegalStudies() {
   if (USE_MOCKS) {
-    const cases = sortByDateDesc(mockStore.cases, 'createdAt').map((item) => normalizeCase(item));
+    const userId = getCurrentAppUserId();
+    const studies = mockStore.legalStudies
+      .filter((item) => Boolean(getActiveMembership(userId, item.id)))
+      .map((item) => normalizeLegalStudy(item, { currentUserId: userId }))
+      .sort((first, second) => String(first.name).localeCompare(String(second.name)));
+
+    return simulateDelay(studies);
+  }
+
+  const data = await request('/legal-studies/my');
+  return toArray(data).map((item) => normalizeLegalStudy(item));
+}
+
+export async function getLegalStudyById(id) {
+  if (USE_MOCKS) {
+    const userId = getCurrentAppUserId();
+    const study = mockStore.legalStudies.find((item) => String(item.id) === String(id));
+
+    if (!study || !getActiveMembership(userId, id)) {
+      throw createRequestError('Estudio Juridico no encontrado.', 404);
+    }
+
+    return simulateDelay(normalizeLegalStudy(study, { currentUserId: userId }));
+  }
+
+  const data = await request(`/legal-studies/${id}`);
+  return normalizeLegalStudy(data);
+}
+
+export async function createLegalStudy(data = {}) {
+  const payload = {
+    name: safeString(data.name, '').trim(),
+    description: safeString(data.description, '').trim(),
+  };
+
+  if (!payload.name) {
+    throw createRequestError('Datos invalidos.', 400);
+  }
+
+  if (USE_MOCKS) {
+    const currentUser = getCurrentUserReference();
+    const legalStudyId = `ls-${Date.now()}`;
+    const createdAt = new Date().toISOString();
+    const legalStudy = {
+      id: legalStudyId,
+      name: payload.name,
+      description: payload.description || null,
+      ownerId: currentUser.id,
+      createdAt,
+      updatedAt: createdAt,
+    };
+    const membership = {
+      id: `lsm-${Date.now()}`,
+      userId: currentUser.id,
+      legalStudyId,
+      role: LEGAL_STUDY_ROLES.OWNER,
+      status: MEMBER_STATUSES.ACTIVE,
+      createdAt,
+      updatedAt: createdAt,
+    };
+
+    mockStore.legalStudies = [legalStudy, ...mockStore.legalStudies];
+    mockStore.legalStudyMembers = [membership, ...mockStore.legalStudyMembers];
+    return simulateDelay(normalizeLegalStudy(legalStudy, { currentUserId: currentUser.id }));
+  }
+
+  const response = await request('/legal-studies', { method: 'POST', body: payload });
+  return normalizeLegalStudy(response);
+}
+
+export async function updateLegalStudy(id, data = {}) {
+  const payload = {
+    name: safeString(data.name, '').trim(),
+    description: safeString(data.description, '').trim(),
+  };
+
+  if (USE_MOCKS) {
+    const currentUserId = getCurrentAppUserId();
+    const capabilities = getStudyCapabilitiesForUser(currentUserId, id);
+
+    if (!capabilities.canManage) {
+      throw createRequestError('No tenes permisos para realizar esta accion.', 403);
+    }
+
+    mockStore.legalStudies = mockStore.legalStudies.map((item) =>
+      String(item.id) === String(id)
+        ? {
+            ...item,
+            name: payload.name || item.name,
+            description: payload.description || null,
+            updatedAt: new Date().toISOString(),
+          }
+        : item
+    );
+
+    const updatedStudy = mockStore.legalStudies.find((item) => String(item.id) === String(id));
+    return simulateDelay(normalizeLegalStudy(updatedStudy, { currentUserId }));
+  }
+
+  const response = await request(`/legal-studies/${id}`, { method: 'PATCH', body: payload });
+  return normalizeLegalStudy(response);
+}
+
+export async function getLegalStudyMembers(id) {
+  if (USE_MOCKS) {
+    const currentUserId = getCurrentAppUserId();
+
+    if (!getActiveMembership(currentUserId, id)) {
+      throw createRequestError('No tenes permisos para realizar esta accion.', 403);
+    }
+
+    const members = mockStore.legalStudyMembers
+      .filter((item) => String(item.legalStudyId) === String(id))
+      .map((item) => normalizeLegalStudyMember(item, { legalStudyId: id }))
+      .sort((first, second) => getMemberPriority(first.role) - getMemberPriority(second.role));
+
+    return simulateDelay(members);
+  }
+
+  const data = await request(`/legal-studies/${id}/members`);
+  return toArray(data).map((item) => normalizeLegalStudyMember(item, { legalStudyId: id }));
+}
+
+export async function inviteLegalStudyMember(id, data = {}) {
+  const email = safeString(data.email, '').trim().toLowerCase();
+  const role = normalizeLegalStudyRole(data.role);
+
+  if (!email) {
+    throw createRequestError('Datos invalidos.', 400);
+  }
+
+  if (USE_MOCKS) {
+    const currentUserId = getCurrentAppUserId();
+
+    if (!canInviteFromMembership(getActiveMembership(currentUserId, id))) {
+      throw createRequestError('No tenes permisos para realizar esta accion.', 403);
+    }
+
+    const existingUser =
+      mockStore.users.find((item) => safeString(item?.email).toLowerCase() === email) || null;
+    const userId = existingUser?.id || `mock-user-${Date.now()}`;
+    const existingMembership = getMembershipForStudy(userId, id);
+
+    if (existingMembership) {
+      throw createRequestError('El usuario ya pertenece a este Estudio Juridico.', 409);
+    }
+
+    if (!existingUser) {
+      mockStore.users = [
+        ...mockStore.users,
+        {
+          id: userId,
+          firebaseUid: userId,
+          name: email.split('@')[0],
+          email,
+          role: 'Invitado',
+        },
+      ];
+    }
+
+    const createdAt = new Date().toISOString();
+    const newMembership = {
+      id: `lsm-${Date.now()}`,
+      userId,
+      legalStudyId: id,
+      role,
+      status: existingUser ? MEMBER_STATUSES.ACTIVE : MEMBER_STATUSES.PENDING,
+      createdAt,
+      updatedAt: createdAt,
+    };
+
+    mockStore.legalStudyMembers = [newMembership, ...mockStore.legalStudyMembers];
+    return simulateDelay(normalizeLegalStudyMember(newMembership, { legalStudyId: id }));
+  }
+
+  const response = await request(`/legal-studies/${id}/members`, {
+    method: 'POST',
+    body: { email, role },
+  });
+
+  return normalizeLegalStudyMember(response, { legalStudyId: id });
+}
+
+export async function updateLegalStudyMember(legalStudyId, memberId, data = {}) {
+  const role = data.role ? normalizeLegalStudyRole(data.role) : undefined;
+  const status = data.status ? normalizeMemberStatus(data.status) : undefined;
+
+  if (USE_MOCKS) {
+    const currentUserId = getCurrentAppUserId();
+    const managerMembership = getActiveMembership(currentUserId, legalStudyId);
+
+    if (!canManageMembershipRole(managerMembership?.role)) {
+      throw createRequestError('No tenes permisos para realizar esta accion.', 403);
+    }
+
+    const targetMembership = mockStore.legalStudyMembers.find((item) => String(item.id) === String(memberId));
+
+    if (!targetMembership || String(targetMembership.legalStudyId) !== String(legalStudyId)) {
+      throw createRequestError('Estudio Juridico no encontrado.', 404);
+    }
+
+    if (normalizeLegalStudyRole(targetMembership.role) === LEGAL_STUDY_ROLES.OWNER) {
+      throw createRequestError('No tenes permisos para realizar esta accion.', 403);
+    }
+
+    mockStore.legalStudyMembers = mockStore.legalStudyMembers.map((item) =>
+      String(item.id) === String(memberId)
+        ? {
+            ...item,
+            role: role || item.role,
+            status: status || item.status,
+            updatedAt: new Date().toISOString(),
+          }
+        : item
+    );
+
+    const updatedMembership = mockStore.legalStudyMembers.find((item) => String(item.id) === String(memberId));
+    return simulateDelay(normalizeLegalStudyMember(updatedMembership, { legalStudyId }));
+  }
+
+  const response = await request(`/legal-studies/${legalStudyId}/members/${memberId}`, {
+    method: 'PATCH',
+    body: { role, status },
+  });
+
+  return normalizeLegalStudyMember(response, { legalStudyId });
+}
+
+export async function removeLegalStudyMember(legalStudyId, memberId) {
+  if (USE_MOCKS) {
+    const currentUserId = getCurrentAppUserId();
+    const managerMembership = getActiveMembership(currentUserId, legalStudyId);
+
+    if (!canManageMembershipRole(managerMembership?.role)) {
+      throw createRequestError('No tenes permisos para realizar esta accion.', 403);
+    }
+
+    const targetMembership = mockStore.legalStudyMembers.find((item) => String(item.id) === String(memberId));
+
+    if (!targetMembership || String(targetMembership.legalStudyId) !== String(legalStudyId)) {
+      throw createRequestError('Estudio Juridico no encontrado.', 404);
+    }
+
+    if (normalizeLegalStudyRole(targetMembership.role) === LEGAL_STUDY_ROLES.OWNER) {
+      throw createRequestError('No tenes permisos para realizar esta accion.', 403);
+    }
+
+    mockStore.legalStudyMembers = mockStore.legalStudyMembers.map((item) =>
+      String(item.id) === String(memberId)
+        ? {
+            ...item,
+            status: MEMBER_STATUSES.REMOVED,
+            updatedAt: new Date().toISOString(),
+          }
+        : item
+    );
+
+    return simulateDelay(null);
+  }
+
+  return request(`/legal-studies/${legalStudyId}/members/${memberId}`, { method: 'DELETE' });
+}
+
+export async function getCases(filters = {}) {
+  if (USE_MOCKS) {
+    const userId = getCurrentAppUserId();
+    const cases = sortByDateDesc(filterMockCasesByScope(mockStore.cases, filters, userId), 'updatedAt').map((item) =>
+      normalizeCase(item)
+    );
     return simulateDelay(cases);
   }
 
-  const data = await request('/causas');
+  const query = buildQueryString({
+    scope: filters.scope,
+    legalStudyId: filters.legalStudyId,
+  });
+  const data = await requestWithFallback([`/cases${query}`, `/causas${query}`]);
   return sortByDateDesc(toArray(data).map((item) => normalizeCase(item)), 'createdAt');
 }
 
@@ -637,7 +1333,7 @@ export async function getCaseById(id) {
     return simulateDelay(getCaseDetailMock(id));
   }
 
-  const data = await request(`/causas/${id}`);
+  const data = await requestWithFallback([`/cases/${id}`, `/causas/${id}`]);
   const normalizedCase = normalizeCase(data);
   const hasHearings = Array.isArray(data?.hearings) || Array.isArray(data?.audiencias);
   const hasDocuments =
@@ -688,6 +1384,9 @@ function normalizeCasePayload(data = {}) {
   const description = safeString(data.description ?? data.descripcion, '').trim();
   const court = safeString(data.court ?? data.juzgado, '').trim();
   const status = safeString(data.status ?? data.estado, 'Activa').trim();
+  const scope = normalizeCaseScope(data.scope ?? data.caseScope);
+  const legalStudyId =
+    scope === CASE_SCOPES.LEGAL_STUDY ? safeString(data.legalStudyId ?? data.estudioJuridicoId, '').trim() : null;
 
   return {
     title,
@@ -698,27 +1397,56 @@ function normalizeCasePayload(data = {}) {
     juzgado: court,
     status,
     estado: status,
+    scope,
+    legalStudyId,
   };
 }
 
 export async function createCase(data) {
+  const payload = normalizeCasePayload(data);
+
   if (USE_MOCKS) {
+    const currentUser = getCurrentUserReference();
+
+    if (!payload.title) {
+      throw createRequestError('Datos invalidos.', 400);
+    }
+
+    if (payload.scope === CASE_SCOPES.LEGAL_STUDY) {
+      const membership = getMembershipForStudy(currentUser.id, payload.legalStudyId);
+
+      if (!payload.legalStudyId || !membership) {
+        throw createRequestError('No tenes permisos para realizar esta accion.', 403);
+      }
+
+      if (normalizeMemberStatus(membership.status) !== MEMBER_STATUSES.ACTIVE) {
+        throw createRequestError('No tenes permisos para realizar esta accion.', 403);
+      }
+
+      if (!canCreateStudyCaseFromMembership(membership)) {
+        throw createRequestError('Tu rol actual es de solo lectura.', 403);
+      }
+    }
+
     const nextId = Math.max(0, ...mockStore.cases.map((item) => item.id)) + 1;
     const newCase = normalizeCase({
       id: nextId,
-      title: data.title ?? data.titulo,
-      description: data.description ?? data.descripcion,
-      court: data.court ?? data.juzgado,
-      status: data.status ?? data.estado,
+      title: payload.title,
+      description: payload.description,
+      court: payload.court,
+      status: payload.status,
+      scope: payload.scope,
+      legalStudyId: payload.scope === CASE_SCOPES.LEGAL_STUDY ? payload.legalStudyId : null,
+      ownerUserId: currentUser.id,
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     });
 
     mockStore.cases = [newCase, ...mockStore.cases];
     return simulateDelay(newCase);
   }
 
-  const payload = normalizeCasePayload(data);
-  const response = await request('/causas', { method: 'POST', body: payload });
+  const response = await requestWithFallback(['/cases', '/causas'], { method: 'POST', body: payload });
   return normalizeCase({
     ...response,
     title: response?.title ?? payload.title,
@@ -730,27 +1458,33 @@ export async function createCase(data) {
 
 export async function updateCase(id, data) {
   if (USE_MOCKS) {
-    const caseIndex = mockStore.cases.findIndex((item) => item.id === Number(id));
+    const caseIndex = mockStore.cases.findIndex((item) => String(item.id) === String(id));
 
     if (caseIndex === -1) {
       throw new Error('No encontramos la causa solicitada.');
     }
 
     const currentCase = mockStore.cases[caseIndex];
+
+    if (!canEditCaseRecord(currentCase, getCurrentAppUserId())) {
+      throw createRequestError('No tenes permisos para realizar esta accion.', 403);
+    }
+
     const updatedCase = normalizeCase({
       ...currentCase,
       title: data.title ?? data.titulo ?? currentCase.title,
       description: data.description ?? data.descripcion ?? currentCase.description,
       court: data.court ?? data.juzgado ?? currentCase.court,
       status: data.status ?? data.estado ?? currentCase.status,
+      updatedAt: new Date().toISOString(),
     });
 
-    mockStore.cases = mockStore.cases.map((item) => (item.id === Number(id) ? updatedCase : item));
+    mockStore.cases = mockStore.cases.map((item) => (String(item.id) === String(id) ? updatedCase : item));
     return simulateDelay(updatedCase);
   }
 
   const payload = normalizeCasePayload(data);
-  const response = await request(`/causas/${id}`, { method: 'PUT', body: payload });
+  const response = await requestWithFallback([`/cases/${id}`, `/causas/${id}`], { method: 'PUT', body: payload });
   return normalizeCase({
     ...response,
     id,
@@ -761,16 +1495,39 @@ export async function updateCase(id, data) {
   });
 }
 
+export async function deleteCase(id) {
+  if (USE_MOCKS) {
+    const caseItem = mockStore.cases.find((item) => String(item.id) === String(id));
+
+    if (!caseItem) {
+      throw createRequestError('No encontramos la causa solicitada.', 404);
+    }
+
+    if (!canDeleteCaseRecord(caseItem, getCurrentAppUserId())) {
+      throw createRequestError('No tenes permisos para realizar esta accion.', 403);
+    }
+
+    mockStore.cases = mockStore.cases.filter((item) => String(item.id) !== String(id));
+    mockStore.hearings = mockStore.hearings.filter((item) => String(item.caseId) !== String(id));
+    mockStore.documents = mockStore.documents.filter((item) => String(item.caseId) !== String(id));
+    mockStore.tasks = mockStore.tasks.filter((item) => String(item.caseId) !== String(id));
+    return simulateDelay(null);
+  }
+
+  return requestWithFallback([`/cases/${id}`, `/causas/${id}`], { method: 'DELETE' });
+}
+
 export async function getHearings() {
   if (USE_MOCKS) {
     const caseMap = getCaseMap();
+    const currentUserId = getCurrentAppUserId();
     const items = sortByDateAsc(mockStore.hearings, 'date').map((item) =>
       normalizeHearing({
         ...item,
         caseTitle: caseMap[item.caseId]?.title || 'Causa sin referencia',
         court: caseMap[item.caseId]?.court || 'Juzgado a confirmar',
       })
-    );
+    ).filter((item) => isCaseVisibleToUser(caseMap[item.caseId], currentUserId));
 
     return simulateDelay(items);
   }
@@ -813,6 +1570,12 @@ function normalizeHearingPayload(data = {}) {
 
 export async function createHearing(data) {
   if (USE_MOCKS) {
+    const caseItem = mockStore.cases.find((item) => String(item.id) === String(data.caseId ?? data.causaId));
+
+    if (!caseItem || !canEditCaseRecord(caseItem, getCurrentAppUserId())) {
+      throw createRequestError('No tenes permisos para realizar esta accion.', 403);
+    }
+
     const nextId = Math.max(0, ...mockStore.hearings.map((item) => item.id)) + 1;
     const newHearing = normalizeHearing({
       id: nextId,
@@ -845,13 +1608,14 @@ export async function getDocuments() {
   if (USE_MOCKS) {
     const caseMap = getCaseMap();
     const hearingMap = getHearingMap();
+    const currentUserId = getCurrentAppUserId();
     const items = sortByDateDesc(mockStore.documents, 'uploadedAt').map((item) =>
       normalizeDocument({
         ...item,
         caseTitle: caseMap[item.caseId]?.title || 'Causa sin referencia',
         hearingTitle: hearingMap[item.hearingId]?.title || 'Audiencia sin referencia',
       })
-    );
+    ).filter((item) => isCaseVisibleToUser(caseMap[item.caseId], currentUserId));
 
     return simulateDelay(items);
   }
@@ -880,8 +1644,14 @@ function normalizeDocumentPayload(data = {}) {
 
 export async function uploadDocument(data) {
   if (USE_MOCKS) {
+    const hearing = mockStore.hearings.find((item) => String(item.id) === String(data.hearingId ?? data.audienciaId));
+    const caseItem = mockStore.cases.find((item) => String(item.id) === String(hearing?.caseId));
+
+    if (!hearing || !caseItem || !canEditCaseRecord(caseItem, getCurrentAppUserId())) {
+      throw createRequestError('No tenes permisos para realizar esta accion.', 403);
+    }
+
     const nextId = Math.max(0, ...mockStore.documents.map((item) => item.id)) + 1;
-    const hearing = mockStore.hearings.find((item) => item.id === Number(data.hearingId));
     const asset = data?.asset || null;
     const mockFileName =
       data.fileName ??

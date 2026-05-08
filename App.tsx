@@ -17,6 +17,7 @@ import RegisterScreen from "./src/screens/RegisterScreen";
 import { auth } from "./src/config/firebase";
 import { AuthProvider } from "./src/context/AuthContext";
 import { ThemeProvider, useAppTheme } from "./src/context/ThemeContext";
+import { WorkContextProvider } from "./src/context/WorkContextContext";
 import { preloadDashboardBootstrap, setAuthToken } from "./src/services/api";
 import { RootStackParamList } from "./src/types/navigation";
 
@@ -62,32 +63,34 @@ const AppContent = () => {
     <GestureHandlerRootView style={styles.root}>
       <SafeAreaProvider>
         <AuthProvider currentUser={currentUser} isAuthReady={isAuthReady}>
-          <StatusBar style={isDark ? "light" : "dark"} />
-          <NavigationContainer theme={navigationTheme}>
-            {!isAuthReady && !currentUser ? (
-              <View style={styles.loadingScreen}>
-                <ActivityIndicator color={colors.primary} size="large" />
-              </View>
-            ) : (
-              <Stack.Navigator
-                screenOptions={{
-                  headerShown: false,
-                  contentStyle: { backgroundColor: colors.background },
-                }}
-              >
-                {currentUser ? (
-                  <Stack.Screen name="MainApp" component={MainAppScreen} />
-                ) : (
-                  <>
-                    <Stack.Screen name="Login" component={LoginScreen} />
-                    <Stack.Screen name="Register" component={RegisterScreen} />
-                    <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
-                    <Stack.Screen name="HelpAccess" component={HelpAccessScreen} />
-                  </>
-                )}
-              </Stack.Navigator>
-            )}
-          </NavigationContainer>
+          <WorkContextProvider>
+            <StatusBar style={isDark ? "light" : "dark"} />
+            <NavigationContainer theme={navigationTheme}>
+              {!isAuthReady && !currentUser ? (
+                <View style={styles.loadingScreen}>
+                  <ActivityIndicator color={colors.primary} size="large" />
+                </View>
+              ) : (
+                <Stack.Navigator
+                  screenOptions={{
+                    headerShown: false,
+                    contentStyle: { backgroundColor: colors.background },
+                  }}
+                >
+                  {currentUser ? (
+                    <Stack.Screen name="MainApp" component={MainAppScreen} />
+                  ) : (
+                    <>
+                      <Stack.Screen name="Login" component={LoginScreen} />
+                      <Stack.Screen name="Register" component={RegisterScreen} />
+                      <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+                      <Stack.Screen name="HelpAccess" component={HelpAccessScreen} />
+                    </>
+                  )}
+                </Stack.Navigator>
+              )}
+            </NavigationContainer>
+          </WorkContextProvider>
         </AuthProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
