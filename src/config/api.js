@@ -1,5 +1,5 @@
 // Para cambiar de servidor, modificar solo SERVER_IP.
-export const SERVER_IP = "186.139.84.209";
+export const SERVER_IP = "172.16.4.48";
 
 export const API_PORT = "3000";
 export const AI_PORT = "5000";
