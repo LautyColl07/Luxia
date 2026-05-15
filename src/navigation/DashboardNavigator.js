@@ -9,6 +9,7 @@ import CaseDetailScreen from '../screens/CaseDetailScreen';
 import CasesScreen from '../screens/CasesScreen';
 import DashboardScreen from '../screens/DashboardScreen';
 import DocumentsScreen from '../screens/DocumentsScreen';
+import LiveTranscriptionScreen from '../screens/LiveTranscriptionScreen';
 import MoreScreen from '../screens/MoreScreen';
 import NewCaseScreen from '../screens/NewCaseScreen';
 import NewHearingScreen from '../screens/NewHearingScreen';
@@ -95,7 +96,12 @@ export default function DashboardNavigator() {
       <Stack.Screen
         component={TranscriptionTestScreen}
         name="TranscriptionTest"
-        options={{ title: 'Prueba de transcripción' }}
+        options={{ title: 'Transcripción de audiencia' }}
+      />
+      <Stack.Screen
+        component={LiveTranscriptionScreen}
+        name="LiveTranscription"
+        options={{ title: 'Transcripción en vivo' }}
       />
       <Stack.Screen component={UploadDocumentScreen} name="UploadDocument" options={{ title: 'Subir documento' }} />
     </Stack.Navigator>

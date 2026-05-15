@@ -1,0 +1,36 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model TranscriptSession {
+  id          String   @id @default(cuid())
+  title       String?
+  status      String   @default("recording")
+  caseId      String?
+  hearingId   String?
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  chunks TranscriptChunk[]
+}
+
+model TranscriptChunk {
+  id         String   @id @default(cuid())
+  sessionId  String
+  chunkIndex Int
+  startTime  Float?
+  endTime    Float?
+  text       String   @db.Text
+  createdAt  DateTime @default(now())
+
+  session TranscriptSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, chunkIndex])
+  @@index([sessionId])
+}
