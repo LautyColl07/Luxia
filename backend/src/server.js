@@ -1,7 +1,11 @@
-const app = require('./app');
-const luxRoutes = require('./routes/lux.routes');
 const fs = require('fs');
 const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../.env'), quiet: true });
+require('dotenv').config({ path: path.resolve(__dirname, '../../.env'), override: false, quiet: true });
+
+const app = require('./app');
+const luxRoutes = require('./routes/lux.routes');
+const transcriptionRoutes = require('./routes/transcription.routes');
 
 const PORT = Number(process.env.PORT || 3000);
 const apiConfigPath = path.resolve(__dirname, '../../src/config/api.js');
@@ -15,6 +19,7 @@ if (!serverIpMatch) {
 const PUBLIC_BACKEND_URL = `http://${serverIpMatch[1]}:${PORT}`;
 
 app.use('/api/v1/lux', luxRoutes);
+app.use('/api/v1/transcriptions', transcriptionRoutes);
 
 app.listen(PORT, () => {
   console.log(`Luxia backend escuchando en ${PUBLIC_BACKEND_URL}`);

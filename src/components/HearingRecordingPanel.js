@@ -1,5 +1,6 @@
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+import { useNavigation } from '@react-navigation/native';
 import {
   RecordingPresets,
   requestRecordingPermissionsAsync,
@@ -57,6 +58,7 @@ function buildTranscriptFileName(hearingTitle, audioDocument, audioDocumentsCoun
 }
 
 export default function HearingRecordingPanel({ hearing, documents = [], onDocumentsChanged }) {
+  const navigation = useNavigation();
   const { colors } = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
@@ -344,6 +346,19 @@ export default function HearingRecordingPanel({ hearing, documents = [], onDocum
           onPress={() => void handleDownloadTranscript()}
           styles={styles}
           variant="primary"
+        />
+        <ActionButton
+          disabled={!hearing?.id}
+          label="Iniciar transcripción en vivo"
+          onPress={() =>
+            navigation.navigate('LiveTranscription', {
+              caseId: hearing?.caseId,
+              hearingId: hearing?.id,
+              title: hearing?.title,
+            })
+          }
+          styles={styles}
+          variant="secondary"
         />
       </View>
 

@@ -18,7 +18,7 @@ const REQUEST_TIMEOUT_MS = 8000;
 const LUX_REQUEST_TIMEOUT_MS = 120000;
 const EXPIRED_SESSION_MESSAGE = 'Tu sesión expiró. Iniciá sesión nuevamente.';
 const MISSING_SESSION_MESSAGE = 'No hay una sesión activa. Iniciá sesión nuevamente.';
-const PROTECTED_ENDPOINT_PREFIXES = ['/dashboard/resumen', '/causas', '/audiencias', '/documentos', '/lux/chat'];
+const PROTECTED_ENDPOINT_PREFIXES = ['/dashboard/resumen', '/causas', '/audiencias', '/documentos', '/lux/chat', '/transcriptions'];
 const LUX_CONNECTION_ERROR_MESSAGE = 'No pude conectarme con LUX en este momento.';
 const LUX_TIMEOUT_ERROR_MESSAGE = 'LUX tardó demasiado en responder. Intentá de nuevo con una consulta más corta.';
 
@@ -561,6 +561,14 @@ function getErrorMessage(status, data) {
 
   if (data?.message) {
     return data.message;
+  }
+
+  if (status >= 500 && data?.details) {
+    return typeof data.details === 'string' ? data.details : JSON.stringify(data.details);
+  }
+
+  if (status >= 500 && data?.error) {
+    return data.error;
   }
 
   if (status >= 400 && status < 500 && data?.error) {
@@ -1106,6 +1114,149 @@ export async function transcribeDocument(documentId) {
   }
 
   return request(`/documentos/${documentId}/transcribir`, { method: 'POST' });
+}
+
+function getTranscriptTextFromResponse(data) {
+  return safeString(
+    data?.text ??
+      data?.texto ??
+      data?.transcript ??
+      data?.transcripcion ??
+      data?.fullText ??
+      data?.full_text ??
+      data?.result?.text ??
+      data?.result?.transcript ??
+      data?.data?.text ??
+      data?.data?.transcript,
+    ''
+  );
+}
+
+function normalizeLiveTranscriptionSession(data = {}) {
+  const chunks = toArray(data?.chunks ?? data?.items).map((chunk) => ({
+    ...chunk,
+    chunkIndex: toNumber(chunk?.chunkIndex ?? chunk?.index) ?? 0,
+    startTime: toNumber(chunk?.startTime) ?? 0,
+    endTime: toNumber(chunk?.endTime) ?? 0,
+    text: getTranscriptTextFromResponse(chunk),
+  }));
+  const fullText =
+    safeString(data?.fullText ?? data?.full_text ?? data?.transcript ?? data?.text, '') ||
+    chunks
+      .sort((first, second) => first.chunkIndex - second.chunkIndex)
+      .map((chunk) => chunk.text)
+      .filter(Boolean)
+      .join('\n');
+
+  return {
+    ...data,
+    chunks,
+    fullText,
+  };
+}
+
+export async function startLiveTranscription({ title, caseId, hearingId } = {}) {
+  const payload = await request('/transcriptions/start', {
+    method: 'POST',
+    body: {
+      title: safeOptionalString(title) || 'Transcripción en vivo',
+      caseId: safeOptionalString(caseId),
+      hearingId: safeOptionalString(hearingId),
+    },
+  });
+  const sessionId = payload?.sessionId ?? payload?.id;
+
+  if (!sessionId) {
+    throw createRequestError('El backend no devolvio sessionId.', 500, payload);
+  }
+
+  return sessionId;
+}
+
+export async function uploadLiveTranscriptionChunk({
+  sessionId,
+  audioUri,
+  chunkIndex,
+  startTime,
+  endTime,
+} = {}) {
+  if (!sessionId || !audioUri) {
+    throw createRequestError('No hay una sesion o archivo de audio valido para enviar.', 400);
+  }
+
+  const formData = new FormData();
+  formData.append('audio', {
+    uri: audioUri,
+    name: `chunk-${chunkIndex}.m4a`,
+    type: 'audio/m4a',
+  });
+  formData.append('chunkIndex', String(chunkIndex));
+  formData.append('startTime', String(startTime));
+  formData.append('endTime', String(endTime));
+
+  const payload = await request(`/transcriptions/${sessionId}/chunk`, {
+    method: 'POST',
+    timeout: 150000,
+    timeoutMessage: 'La transcripcion del bloque tardo demasiado. El siguiente bloque puede continuar.',
+    body: formData,
+  });
+
+  return {
+    ...payload,
+    chunkIndex: payload?.chunkIndex ?? chunkIndex,
+    startTime: payload?.startTime ?? startTime,
+    endTime: payload?.endTime ?? endTime,
+    text: getTranscriptTextFromResponse(payload),
+  };
+}
+
+export async function finishLiveTranscription(sessionId) {
+  if (!sessionId) {
+    throw createRequestError('No hay una sesion activa para finalizar.', 400);
+  }
+
+  const payload = await request(`/transcriptions/${sessionId}/finish`, {
+    method: 'POST',
+    timeout: 150000,
+    timeoutMessage: 'No pudimos finalizar la sesion de transcripcion dentro del tiempo esperado.',
+  });
+
+  return normalizeLiveTranscriptionSession(payload || {});
+}
+
+export async function getLiveTranscription(sessionId) {
+  if (!sessionId) {
+    throw createRequestError('No hay una sesion activa para consultar.', 400);
+  }
+
+  const payload = await request(`/transcriptions/${sessionId}`);
+  return normalizeLiveTranscriptionSession(payload || {});
+}
+
+export async function startTranscriptionSession(data = {}) {
+  const sessionId = await startLiveTranscription(data);
+
+  return {
+    sessionId,
+  };
+}
+
+export async function uploadTranscriptionChunk(sessionId, data = {}) {
+  return uploadLiveTranscriptionChunk({
+    sessionId,
+    audioUri: data?.audio?.uri,
+    chunkIndex: data?.chunkIndex,
+    startTime: data?.startTime,
+    endTime: data?.endTime,
+  });
+}
+
+export async function finishTranscriptionSession(sessionId) {
+  return finishLiveTranscription(sessionId);
+}
+
+export async function getTranscriptionSession(sessionId) {
+  return getLiveTranscription(sessionId);
 }
 
 export async function getNotifications() {

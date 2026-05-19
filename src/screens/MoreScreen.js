@@ -293,11 +293,19 @@ export default function MoreScreen({ navigation }) {
       >
         <ActionRow
           colors={colors}
-          description="Graba audio, prueba el servidor Whisper y revisa la transcripción devuelta."
+          description="Graba y envia bloques de 5 segundos al backend real mientras la audiencia sigue."
+          icon="waveform"
+          onPress={() => navigation.navigate('LiveTranscription')}
+          styles={styles}
+          title="Transcripción en vivo"
+        />
+        <ActionRow
+          colors={colors}
+          description="Graba una audiencia, transcribila y exportala como documento."
           icon="microphone-message"
           onPress={() => navigation.navigate('TranscriptionTest')}
           styles={styles}
-          title="Prueba de transcripción"
+          title="Transcripción de audiencia"
         />
       </CardSection>
 

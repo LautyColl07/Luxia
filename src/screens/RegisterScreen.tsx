@@ -1,6 +1,8 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
+  Easing,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -44,6 +46,15 @@ type RegisterErrors = Partial<Record<keyof RegisterForm, string>> & {
   general?: string;
 };
 
+type RegisterField = keyof RegisterForm;
+
+type RegisterStep = {
+  key: string;
+  title: string;
+  subtitle?: string;
+  fields: RegisterField[];
+};
+
 const initialForm: RegisterForm = {
   firstName: "",
   lastName: "",
@@ -56,57 +67,178 @@ const initialForm: RegisterForm = {
   acceptedTerms: false,
 };
 
+const steps: RegisterStep[] = [
+  {
+    key: "identity",
+    title: "Empecemos por tus datos",
+    subtitle: "Necesitamos identificar tu cuenta dentro de Luxia.",
+    fields: ["firstName", "lastName"],
+  },
+  {
+    key: "email",
+    title: "¿Cuál es tu correo?",
+    subtitle: "Usaremos este email para el acceso y las comunicaciones de la cuenta.",
+    fields: ["email"],
+  },
+  {
+    key: "professional",
+    title: "Datos profesionales",
+    subtitle: "Estos datos son opcionales, pero ayudan a completar tu perfil institucional.",
+    fields: ["enrollment", "lawFirm"],
+  },
+  {
+    key: "username",
+    title: "Elegí tu usuario",
+    subtitle: "Será tu identificador dentro de la plataforma.",
+    fields: ["username"],
+  },
+  {
+    key: "password",
+    title: "Creá una contraseña segura",
+    subtitle: "Debe tener al menos 8 caracteres.",
+    fields: ["password", "confirmPassword"],
+  },
+  {
+    key: "terms",
+    title: "Último paso",
+    subtitle: "Revisá los datos principales y aceptá las condiciones para crear la cuenta.",
+    fields: ["acceptedTerms"],
+  },
+];
+
 const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
   const [form, setForm] = useState<RegisterForm>(initialForm);
+  const [currentStep, setCurrentStep] = useState(0);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [errors, setErrors] = useState<RegisterErrors>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isAnimating, setIsAnimating] = useState(false);
+  const fadeAnim = useRef(new Animated.Value(1)).current;
+  const translateAnim = useRef(new Animated.Value(0)).current;
+
+  const activeStep = steps[currentStep];
+  const isFirstStep = currentStep === 0;
+  const isLastStep = currentStep === steps.length - 1;
+  const progressPercent = `${((currentStep + 1) / steps.length) * 100}%` as `${number}%`;
 
   const setField = <K extends keyof RegisterForm>(field: K, value: RegisterForm[K]) => {
     setForm((current) => ({ ...current, [field]: value }));
     setErrors((current) => ({ ...current, [field]: undefined, general: undefined }));
   };
 
-  const validateForm = () => {
+  const getFieldErrors = (fields: RegisterField[]) => {
     const nextErrors: RegisterErrors = {};
 
-    if (!form.firstName.trim()) {
+    if (fields.includes("firstName") && !form.firstName.trim()) {
       nextErrors.firstName = "Ingresá tu nombre";
     }
 
-    if (!form.lastName.trim()) {
+    if (fields.includes("lastName") && !form.lastName.trim()) {
       nextErrors.lastName = "Ingresá tu apellido";
     }
 
-    if (!form.email.trim()) {
+    if (fields.includes("email") && !form.email.trim()) {
       nextErrors.email = "Ingresá tu email";
-    } else if (!/\S+@\S+\.\S+/.test(form.email.trim())) {
+    } else if (fields.includes("email") && !/\S+@\S+\.\S+/.test(form.email.trim())) {
       nextErrors.email = "Ingresá un email válido";
     }
 
-    if (!form.username.trim()) {
+    if (fields.includes("username") && !form.username.trim()) {
       nextErrors.username = "Elegí un nombre de usuario";
     }
 
-    if (!form.password.trim()) {
+    if (fields.includes("password") && !form.password.trim()) {
       nextErrors.password = "Ingresá una contraseña";
-    } else if (form.password.length < 8) {
+    } else if (fields.includes("password") && form.password.length < 8) {
       nextErrors.password = "La contraseña debe tener al menos 8 caracteres";
     }
 
-    if (!form.confirmPassword.trim()) {
+    if (fields.includes("confirmPassword") && !form.confirmPassword.trim()) {
       nextErrors.confirmPassword = "Repetí tu contraseña";
-    } else if (form.confirmPassword !== form.password) {
+    } else if (
+      fields.includes("confirmPassword") &&
+      form.confirmPassword !== form.password
+    ) {
       nextErrors.confirmPassword = "Las contraseñas no coinciden";
     }
 
-    if (!form.acceptedTerms) {
+    if (fields.includes("acceptedTerms") && !form.acceptedTerms) {
       nextErrors.acceptedTerms = "Necesitás aceptar los términos para continuar";
     }
 
+    return nextErrors;
+  };
+
+  const validateCurrentStep = () => {
+    const nextErrors = getFieldErrors(activeStep.fields);
+    setErrors((current) => ({ ...current, ...nextErrors, general: undefined }));
+    return Object.keys(nextErrors).length === 0;
+  };
+
+  const validateForm = () => {
+    const nextErrors = getFieldErrors(steps.flatMap((step) => step.fields));
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
+  };
+
+  const transitionToStep = (nextStep: number) => {
+    if (isAnimating || nextStep < 0 || nextStep >= steps.length) {
+      return;
+    }
+
+    const direction = nextStep > currentStep ? 1 : -1;
+    setIsAnimating(true);
+
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 0,
+        duration: 150,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(translateAnim, {
+        toValue: -16 * direction,
+        duration: 150,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      setCurrentStep(nextStep);
+      translateAnim.setValue(16 * direction);
+
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 220,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(translateAnim, {
+          toValue: 0,
+          duration: 220,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]).start(() => setIsAnimating(false));
+    });
+  };
+
+  const goNext = () => {
+    if (isSubmitting || isAnimating || !validateCurrentStep()) {
+      return;
+    }
+
+    transitionToStep(currentStep + 1);
+  };
+
+  const goBack = () => {
+    if (isSubmitting || isAnimating || isFirstStep) {
+      return;
+    }
+
+    setErrors((current) => ({ ...current, general: undefined }));
+    transitionToStep(currentStep - 1);
   };
 
   const handleRegister = async () => {
@@ -155,122 +287,177 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
             <View style={styles.card}>
               <Text style={styles.title}>Crear cuenta</Text>
               <Text style={styles.subtitle}>
-                Completa tus datos para acceder a la plataforma de gestion judicial.
+                Completa tus datos para acceder a la plataforma de gestión judicial.
               </Text>
 
-              <View style={styles.row}>
-                <View style={styles.halfWidth}>
-                  <Field
-                    error={errors.firstName}
-                    icon={<User size={18} color={COLORS.textSecondary} />}
-                    label="Nombre *"
-                    onChangeText={(value) => setField("firstName", value)}
-                    placeholder="Tu nombre"
-                    value={form.firstName}
-                  />
-                </View>
-                <View style={styles.halfWidth}>
-                  <Field
-                    error={errors.lastName}
-                    icon={<User size={18} color={COLORS.textSecondary} />}
-                    label="Apellido *"
-                    onChangeText={(value) => setField("lastName", value)}
-                    placeholder="Tu apellido"
-                    value={form.lastName}
-                  />
-                </View>
-              </View>
-
-              <Field
-                error={errors.email}
-                icon={<Mail size={18} color={COLORS.textSecondary} />}
-                keyboardType="email-address"
-                label="Email *"
-                onChangeText={(value) => setField("email", value)}
-                placeholder="tu.email@estudio.com"
-                value={form.email}
-              />
-
-              <View style={styles.row}>
-                <View style={styles.halfWidth}>
-                  <Field
-                    error={errors.enrollment}
-                    icon={<Briefcase size={18} color={COLORS.textSecondary} />}
-                    label="Matrícula"
-                    onChangeText={(value) => setField("enrollment", value)}
-                    placeholder="Número de matrícula"
-                    value={form.enrollment}
-                  />
-                </View>
-                <View style={styles.halfWidth}>
-                  <Field
-                    error={errors.lawFirm}
-                    icon={<Briefcase size={18} color={COLORS.textSecondary} />}
-                    label="Estudio jurídico"
-                    onChangeText={(value) => setField("lawFirm", value)}
-                    placeholder="Nombre del estudio"
-                    value={form.lawFirm}
-                  />
-                </View>
-              </View>
-
-              <Field
-                error={errors.username}
-                icon={<User size={18} color={COLORS.textSecondary} />}
-                label="Usuario *"
-                onChangeText={(value) => setField("username", value)}
-                placeholder="Elegí un nombre de usuario"
-                value={form.username}
-              />
-
-              <View style={styles.row}>
-                <View style={styles.halfWidth}>
-                  <PasswordField
-                    error={errors.password}
-                    isVisible={showPassword}
-                    label="Contraseña *"
-                    onChangeText={(value) => setField("password", value)}
-                    onToggleVisibility={() => setShowPassword((current) => !current)}
-                    placeholder="Mínimo 8 caracteres"
-                    value={form.password}
-                  />
-                </View>
-                <View style={styles.halfWidth}>
-                  <PasswordField
-                    error={errors.confirmPassword}
-                    isVisible={showConfirmPassword}
-                    label="Confirmar contraseña *"
-                    onChangeText={(value) => setField("confirmPassword", value)}
-                    onToggleVisibility={() =>
-                      setShowConfirmPassword((current) => !current)
-                    }
-                    placeholder="Repetí tu contraseña"
-                    value={form.confirmPassword}
-                  />
-                </View>
-              </View>
-
-              <Pressable
-                accessibilityRole="checkbox"
-                onPress={() => setField("acceptedTerms", !form.acceptedTerms)}
-                style={styles.checkboxRow}
-              >
-                <View
-                  style={[
-                    styles.checkboxBox,
-                    form.acceptedTerms ? styles.checkboxBoxActive : undefined,
-                  ]}
-                >
-                  {form.acceptedTerms ? <Text style={styles.checkboxMark}>✓</Text> : null}
-                </View>
-                <Text style={styles.checkboxText}>
-                  Acepto los <Text style={styles.checkboxLink}>términos y condiciones</Text> y la{" "}
-                  <Text style={styles.checkboxLink}>política de privacidad</Text>
+              <View style={styles.progressHeader}>
+                <Text style={styles.stepCounter}>
+                  Paso {currentStep + 1} de {steps.length}
                 </Text>
-              </Pressable>
-              {errors.acceptedTerms ? (
-                <Text style={styles.errorText}>{errors.acceptedTerms}</Text>
-              ) : null}
+                <View style={styles.progressTrack}>
+                  <View style={[styles.progressFill, { width: progressPercent }]} />
+                </View>
+              </View>
+
+              <Animated.View
+                style={[
+                  styles.stepContent,
+                  {
+                    opacity: fadeAnim,
+                    transform: [{ translateX: translateAnim }],
+                  },
+                ]}
+              >
+                <Text style={styles.stepTitle}>{activeStep.title}</Text>
+                {activeStep.subtitle ? (
+                  <Text style={styles.stepSubtitle}>{activeStep.subtitle}</Text>
+                ) : null}
+
+                {activeStep.key === "identity" ? (
+                  <View style={styles.row}>
+                    <View style={styles.halfWidth}>
+                      <Field
+                        error={errors.firstName}
+                        icon={<User size={18} color={COLORS.textSecondary} />}
+                        label="Nombre *"
+                        onChangeText={(value) => setField("firstName", value)}
+                        placeholder="Tu nombre"
+                        value={form.firstName}
+                      />
+                    </View>
+                    <View style={styles.halfWidth}>
+                      <Field
+                        error={errors.lastName}
+                        icon={<User size={18} color={COLORS.textSecondary} />}
+                        label="Apellido *"
+                        onChangeText={(value) => setField("lastName", value)}
+                        placeholder="Tu apellido"
+                        value={form.lastName}
+                      />
+                    </View>
+                  </View>
+                ) : null}
+
+                {activeStep.key === "email" ? (
+                  <Field
+                    error={errors.email}
+                    icon={<Mail size={18} color={COLORS.textSecondary} />}
+                    keyboardType="email-address"
+                    label="Email *"
+                    onChangeText={(value) => setField("email", value)}
+                    placeholder="tu.email@estudio.com"
+                    value={form.email}
+                  />
+                ) : null}
+
+                {activeStep.key === "professional" ? (
+                  <View style={styles.row}>
+                    <View style={styles.halfWidth}>
+                      <Field
+                        error={errors.enrollment}
+                        icon={<Briefcase size={18} color={COLORS.textSecondary} />}
+                        label="Matrícula"
+                        onChangeText={(value) => setField("enrollment", value)}
+                        placeholder="Número de matrícula"
+                        value={form.enrollment}
+                      />
+                    </View>
+                    <View style={styles.halfWidth}>
+                      <Field
+                        error={errors.lawFirm}
+                        icon={<Briefcase size={18} color={COLORS.textSecondary} />}
+                        label="Estudio jurídico"
+                        onChangeText={(value) => setField("lawFirm", value)}
+                        placeholder="Nombre del estudio"
+                        value={form.lawFirm}
+                      />
+                    </View>
+                  </View>
+                ) : null}
+
+                {activeStep.key === "username" ? (
+                  <Field
+                    error={errors.username}
+                    icon={<User size={18} color={COLORS.textSecondary} />}
+                    label="Usuario *"
+                    onChangeText={(value) => setField("username", value)}
+                    placeholder="Elegí un nombre de usuario"
+                    value={form.username}
+                  />
+                ) : null}
+
+                {activeStep.key === "password" ? (
+                  <View style={styles.row}>
+                    <View style={styles.halfWidth}>
+                      <PasswordField
+                        error={errors.password}
+                        isVisible={showPassword}
+                        label="Contraseña *"
+                        onChangeText={(value) => setField("password", value)}
+                        onToggleVisibility={() => setShowPassword((current) => !current)}
+                        placeholder="Mínimo 8 caracteres"
+                        value={form.password}
+                      />
+                    </View>
+                    <View style={styles.halfWidth}>
+                      <PasswordField
+                        error={errors.confirmPassword}
+                        isVisible={showConfirmPassword}
+                        label="Confirmar contraseña *"
+                        onChangeText={(value) => setField("confirmPassword", value)}
+                        onToggleVisibility={() =>
+                          setShowConfirmPassword((current) => !current)
+                        }
+                        placeholder="Repetí tu contraseña"
+                        value={form.confirmPassword}
+                      />
+                    </View>
+                  </View>
+                ) : null}
+
+                {activeStep.key === "terms" ? (
+                  <View style={styles.summaryBlock}>
+                    <View style={styles.summaryGrid}>
+                      <View style={styles.summaryItem}>
+                        <Text style={styles.summaryLabel}>Nombre</Text>
+                        <Text style={styles.summaryValue}>
+                          {[form.firstName, form.lastName].filter(Boolean).join(" ")}
+                        </Text>
+                      </View>
+                      <View style={styles.summaryItem}>
+                        <Text style={styles.summaryLabel}>Email</Text>
+                        <Text style={styles.summaryValue}>{form.email}</Text>
+                      </View>
+                      <View style={styles.summaryItem}>
+                        <Text style={styles.summaryLabel}>Usuario</Text>
+                        <Text style={styles.summaryValue}>{form.username}</Text>
+                      </View>
+                    </View>
+
+                    <Pressable
+                      accessibilityRole="checkbox"
+                      onPress={() => setField("acceptedTerms", !form.acceptedTerms)}
+                      style={styles.checkboxRow}
+                    >
+                      <View
+                        style={[
+                          styles.checkboxBox,
+                          form.acceptedTerms ? styles.checkboxBoxActive : undefined,
+                        ]}
+                      >
+                        {form.acceptedTerms ? <Text style={styles.checkboxMark}>✓</Text> : null}
+                      </View>
+                      <Text style={styles.checkboxText}>
+                        Acepto los <Text style={styles.checkboxLink}>términos y condiciones</Text> y la{" "}
+                        <Text style={styles.checkboxLink}>política de privacidad</Text>
+                      </Text>
+                    </Pressable>
+                    {errors.acceptedTerms ? (
+                      <Text style={styles.errorText}>{errors.acceptedTerms}</Text>
+                    ) : null}
+                  </View>
+                ) : null}
+              </Animated.View>
 
               {errors.general ? (
                 <View style={styles.messageBox}>
@@ -278,21 +465,43 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
                 </View>
               ) : null}
 
-              <TouchableOpacity
-                activeOpacity={0.9}
-                disabled={isSubmitting}
-                onPress={handleRegister}
-                style={[styles.primaryButton, isSubmitting ? styles.primaryButtonDisabled : undefined]}
-              >
-                {isSubmitting ? (
-                  <View style={styles.loadingRow}>
-                    <ActivityIndicator color={COLORS.white} size="small" />
-                    <Text style={styles.primaryButtonText}>Creando cuenta...</Text>
-                  </View>
-                ) : (
-                  <Text style={styles.primaryButtonText}>Crear cuenta</Text>
-                )}
-              </TouchableOpacity>
+              <View style={styles.actionsRow}>
+                {!isFirstStep ? (
+                  <TouchableOpacity
+                    activeOpacity={0.86}
+                    disabled={isSubmitting || isAnimating}
+                    onPress={goBack}
+                    style={[
+                      styles.secondaryButton,
+                      isSubmitting || isAnimating ? styles.secondaryButtonDisabled : undefined,
+                    ]}
+                  >
+                    <Text style={styles.secondaryButtonText}>Atrás</Text>
+                  </TouchableOpacity>
+                ) : null}
+
+                <TouchableOpacity
+                  activeOpacity={0.9}
+                  disabled={isSubmitting || isAnimating}
+                  onPress={isLastStep ? handleRegister : goNext}
+                  style={[
+                    styles.primaryButton,
+                    !isFirstStep ? styles.actionButtonExpanded : undefined,
+                    isSubmitting || isAnimating ? styles.primaryButtonDisabled : undefined,
+                  ]}
+                >
+                  {isSubmitting ? (
+                    <View style={styles.loadingRow}>
+                      <ActivityIndicator color={COLORS.white} size="small" />
+                      <Text style={styles.primaryButtonText}>Creando cuenta...</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.primaryButtonText}>
+                      {isLastStep ? "Crear cuenta" : "Continuar"}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
 
             <TouchableOpacity
@@ -419,7 +628,8 @@ const styles = StyleSheet.create({
   },
   card: {
     width: "100%",
-    maxWidth: 720,
+    maxWidth: 640,
+    minHeight: 520,
     backgroundColor: COLORS.card,
     borderWidth: 1.5,
     borderColor: COLORS.gold,
@@ -438,10 +648,48 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     marginTop: -4,
-    marginBottom: 10,
+    marginBottom: 2,
     color: COLORS.textSecondary,
     fontSize: 15,
     lineHeight: 22,
+    textAlign: "center",
+  },
+  progressHeader: {
+    gap: 8,
+  },
+  stepCounter: {
+    color: COLORS.textSecondary,
+    fontSize: 13,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+  progressTrack: {
+    height: 5,
+    overflow: "hidden",
+    borderRadius: 999,
+    backgroundColor: COLORS.divider,
+  },
+  progressFill: {
+    height: "100%",
+    borderRadius: 999,
+    backgroundColor: COLORS.primary,
+  },
+  stepContent: {
+    minHeight: 260,
+    justifyContent: "center",
+    gap: 16,
+  },
+  stepTitle: {
+    color: COLORS.text,
+    fontSize: 21,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+  stepSubtitle: {
+    marginTop: -8,
+    color: COLORS.textSecondary,
+    fontSize: 14,
+    lineHeight: 20,
     textAlign: "center",
   },
   row: {
@@ -480,6 +728,31 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     fontSize: 15,
     paddingVertical: Platform.OS === "ios" ? 14 : 10,
+  },
+  summaryBlock: {
+    gap: 18,
+  },
+  summaryGrid: {
+    gap: 10,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: COLORS.divider,
+    borderRadius: 14,
+    backgroundColor: COLORS.white,
+  },
+  summaryItem: {
+    gap: 3,
+  },
+  summaryLabel: {
+    color: COLORS.textSecondary,
+    fontSize: 12,
+    fontWeight: "700",
+    textTransform: "uppercase",
+  },
+  summaryValue: {
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: "700",
   },
   checkboxRow: {
     flexDirection: "row",
@@ -529,8 +802,13 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
   },
+  actionsRow: {
+    flexDirection: "row",
+    gap: 12,
+  },
   primaryButton: {
     minHeight: 54,
+    flex: 1,
     borderRadius: 14,
     backgroundColor: COLORS.primary,
     alignItems: "center",
@@ -538,12 +816,34 @@ const styles = StyleSheet.create({
     marginTop: 4,
     ...CARD_SHADOW,
   },
+  actionButtonExpanded: {
+    flex: 1.25,
+  },
   primaryButtonDisabled: {
     opacity: 0.82,
     backgroundColor: COLORS.primaryHover,
   },
   primaryButtonText: {
     color: COLORS.white,
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  secondaryButton: {
+    minHeight: 54,
+    flex: 1,
+    borderWidth: 1.5,
+    borderColor: COLORS.divider,
+    borderRadius: 14,
+    backgroundColor: COLORS.white,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 4,
+  },
+  secondaryButtonDisabled: {
+    opacity: 0.62,
+  },
+  secondaryButtonText: {
+    color: COLORS.primary,
     fontSize: 15,
     fontWeight: "700",
   },

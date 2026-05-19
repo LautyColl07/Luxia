@@ -4,13 +4,22 @@
   "private": true,
   "main": "src/server.js",
   "scripts": {
+    "prisma:generate": "prisma generate",
+    "prisma:push": "prisma db push",
     "start": "node src/server.js"
   },
   "dependencies": {
+    "@prisma/client": "6.19.0",
     "axios": "^1.6.8",
-    "express": "^4.19.2"
+    "dotenv": "^17.4.2",
+    "express": "^4.19.2",
+    "form-data": "^4.0.5",
+    "multer": "^2.1.1"
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "prisma": "^6.19.0"
   }
 }
