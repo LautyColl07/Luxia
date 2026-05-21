@@ -110,6 +110,10 @@ export default function DashboardScreen({ navigation }) {
     navigation.navigate('NewHearing');
   }, [navigation]);
 
+  const handleCreateTask = useCallback(() => {
+    navigation.navigate('NewTask');
+  }, [navigation]);
+
   const handleOpenHearing = useCallback(
     (hearing) => {
       if (hearing?.caseId) {
@@ -173,7 +177,7 @@ export default function DashboardScreen({ navigation }) {
       value: metricas?.tareasPendientes ?? 0,
       icon: 'clipboard-text-clock-outline',
       accentColor: colors.danger,
-      onPress: handleOpenCalendar,
+      onPress: handleCreateTask,
     },
   ];
 
@@ -294,6 +298,13 @@ export default function DashboardScreen({ navigation }) {
             onPress={handleCreateHearing}
             subtitle="Agenda una audiencia y vinculala a una causa."
             title="Registrar audiencia"
+          />
+          <QuickActionButton
+            icon="clipboard-plus-outline"
+            fullWidth
+            onPress={handleCreateTask}
+            subtitle="Registra una tarea o actividad y asociala a una causa."
+            title="Registrar tarea"
           />
         </View>
 

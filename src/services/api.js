@@ -1005,6 +1005,58 @@ export async function createHearing(data) {
   });
 }
 
+function normalizeTaskPayload(data = {}) {
+  const title = safeString(data.title ?? data.titulo, '').trim();
+  const description = safeString(data.description ?? data.descripcion ?? data.detail ?? data.detalle, '').trim();
+  const dueDate = safeString(data.dueDate ?? data.fechaVencimiento ?? data.fechaProgramada, '').trim();
+  const caseId = toNumber(data.caseId ?? data.causaId);
+  const status = safeString(data.status ?? data.estado, 'Pendiente').trim();
+  const completed =
+    typeof data.completed === 'boolean'
+      ? data.completed
+      : typeof data.completada === 'boolean'
+        ? data.completada
+        : normalizeStatusLabel(status, 'Pendiente') === 'Finalizada';
+
+  return {
+    title,
+    titulo: title,
+    description,
+    descripcion: description,
+    dueDate: dueDate || null,
+    fechaVencimiento: dueDate || null,
+    caseId,
+    causaId: caseId,
+    status,
+    estado: status,
+    completed,
+    completada: completed,
+  };
+}
+
+export async function createTask(data) {
+  const payload = normalizeTaskPayload(data);
+
+  if (USE_MOCKS) {
+    const nextId = Math.max(0, ...mockStore.tasks.map((item) => toNumber(item.id) || 0)) + 1;
+    const newTask = normalizeTask({
+      id: nextId,
+      title: payload.title,
+      description: payload.description,
+      dueDate: payload.dueDate,
+      caseId: payload.caseId,
+      status: payload.status,
+      completed: payload.completed,
+    });
+
+    mockStore.tasks = [newTask, ...mockStore.tasks];
+    return simulateDelay(newTask);
+  }
+
+  // TODO: conectar este payload con el endpoint real de tareas cuando el backend lo exponga.
+  throw createRequestError('La creacion de tareas todavia no esta conectada al backend.', 501, payload);
+}
+
 export async function getDocuments() {
   if (USE_MOCKS) {
     const caseMap = getCaseMap();
