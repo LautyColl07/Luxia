@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useMemo, useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
@@ -13,7 +13,8 @@ import MetricCard from '../components/MetricCard';
 import QuickActionButton from '../components/QuickActionButton';
 import { useAuth } from '../context/AuthContext';
 import { useAppTheme } from '../context/ThemeContext';
-import { getDashboardResumen, getNotifications } from '../services/api';
+import { getDashboardResumen, getHearings, getNotifications, getTasks } from '../services/api';
+import { normalizeStatusLabel } from '../utils/status';
 
 export default function DashboardScreen({ navigation }) {
   const { colors } = useAppTheme();
@@ -25,6 +26,7 @@ export default function DashboardScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [isLuxVisible, setIsLuxVisible] = useState(false);
+  const [navigationLoading, setNavigationLoading] = useState('');
 
   const loadDashboard = useCallback(async (isRefresh = false) => {
     if (!isAuthReady) {
@@ -114,6 +116,56 @@ export default function DashboardScreen({ navigation }) {
     navigation.navigate('NewTask');
   }, [navigation]);
 
+  const handleOpenHearings = useCallback(async () => {
+    if (navigationLoading) {
+      return;
+    }
+
+    try {
+      setNavigationLoading('audiencias');
+      const hearings = await getHearings();
+
+      if (Array.isArray(hearings) && hearings.length > 0) {
+        navigation.navigate('Calendario');
+        return;
+      }
+
+      navigation.navigate('NewHearing');
+    } catch (loadError) {
+      console.error('[DashboardScreen] Error resolviendo audiencias:', loadError);
+      Alert.alert('No pudimos cargar la información.', 'Intentá nuevamente.');
+    } finally {
+      setNavigationLoading('');
+    }
+  }, [navigation, navigationLoading]);
+
+  const handleOpenTasks = useCallback(async () => {
+    if (navigationLoading) {
+      return;
+    }
+
+    try {
+      setNavigationLoading('tareas');
+      const tasks = await getTasks();
+      const pendingTasks = (Array.isArray(tasks) ? tasks : []).filter((task) => {
+        const normalizedStatus = normalizeStatusLabel(task?.status ?? task?.estado, 'Pendiente');
+        return task?.completed !== true && task?.completada !== true && normalizedStatus !== 'Finalizada';
+      });
+
+      if (pendingTasks.length > 0) {
+        navigation.navigate('Tasks');
+        return;
+      }
+
+      navigation.navigate('NewTask');
+    } catch (loadError) {
+      console.error('[DashboardScreen] Error resolviendo tareas:', loadError);
+      Alert.alert('No pudimos cargar la información.', 'Intentá nuevamente.');
+    } finally {
+      setNavigationLoading('');
+    }
+  }, [navigation, navigationLoading]);
+
   const handleOpenHearing = useCallback(
     (hearing) => {
       if (hearing?.caseId) {
@@ -163,7 +215,7 @@ export default function DashboardScreen({ navigation }) {
       value: metricas?.audienciasHoy ?? 0,
       icon: 'calendar-clock',
       accentColor: colors.success,
-      onPress: handleOpenCalendar,
+      onPress: handleOpenHearings,
     },
     {
       label: 'Documentos registrados',
@@ -177,7 +229,7 @@ export default function DashboardScreen({ navigation }) {
       value: metricas?.tareasPendientes ?? 0,
       icon: 'clipboard-text-clock-outline',
       accentColor: colors.danger,
-      onPress: handleCreateTask,
+      onPress: handleOpenTasks,
     },
   ];
 
@@ -244,6 +296,13 @@ export default function DashboardScreen({ navigation }) {
             </View>
           ))}
         </View>
+
+        {navigationLoading ? (
+          <View style={styles.navigationLoaderCard}>
+            <ActivityIndicator color={colors.primary} size="small" />
+            <Text style={styles.navigationLoaderText}>Abriendo información...</Text>
+          </View>
+        ) : null}
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionEyebrow}>PROXIMAS AUDIENCIAS</Text>
@@ -428,6 +487,25 @@ const createStyles = (colors) => StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+  },
+  navigationLoaderCard: {
+    marginTop: 4,
+    marginHorizontal: 24,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  navigationLoaderText: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '600',
   },
   sectionEyebrow: {
     color: colors.text,

@@ -13,8 +13,9 @@ import {
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
+import QuickActionButton from '../components/QuickActionButton';
 import { useAppTheme } from '../context/ThemeContext';
-import { getCaseById, getCases, getHearings } from '../services/api';
+import { getCases, getHearings, getTasks } from '../services/api';
 import {
   addMonths,
   AREA_CONFIG,
@@ -52,7 +53,7 @@ export default function CalendarScreen({ navigation }) {
   const [calendarData, setCalendarData] = useState({
     hearings: [],
     cases: [],
-    caseDetails: [],
+    tasks: [],
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -62,22 +63,12 @@ export default function CalendarScreen({ navigation }) {
       setLoading(true);
       setError('');
 
-      const [hearings, cases] = await Promise.all([getHearings(), getCases()]);
-      const detailedCases = await Promise.all(
-        (Array.isArray(cases) ? cases : []).map(async (caseItem) => {
-          try {
-            return await getCaseById(caseItem?.id);
-          } catch (detailError) {
-            console.error('[CalendarScreen] Error cargando detalle de causa:', detailError);
-            return caseItem;
-          }
-        })
-      );
+      const [hearings, cases, tasks] = await Promise.all([getHearings(), getCases(), getTasks()]);
 
       setCalendarData({
         hearings: Array.isArray(hearings) ? hearings : [],
         cases: Array.isArray(cases) ? cases : [],
-        caseDetails: detailedCases.filter(Boolean),
+        tasks: Array.isArray(tasks) ? tasks : [],
       });
     } catch (loadError) {
       console.error('[CalendarScreen] Error cargando calendario:', loadError);
@@ -101,6 +92,7 @@ export default function CalendarScreen({ navigation }) {
   const eventsByDate = useMemo(() => groupEventsByDate(allEvents), [allEvents]);
   const monthDays = useMemo(() => getMonthMatrix(calendarMonth), [calendarMonth]);
   const weekdayLabels = useMemo(() => getWeekdayLabels(), []);
+  const hasActivities = allEvents.length > 0;
 
   const selectedDayEvents = useMemo(() => {
     const dayKey = getDateKey(selectedDate);
@@ -146,6 +138,14 @@ export default function CalendarScreen({ navigation }) {
     setSelectedArea('all');
     setShowFilters(false);
   }, [today]);
+
+  const handleCreateHearing = useCallback(() => {
+    navigation.navigate('NewHearing');
+  }, [navigation]);
+
+  const handleCreateTask = useCallback(() => {
+    navigation.navigate('NewTask');
+  }, [navigation]);
 
   const handleOpenEventMenu = useCallback((event) => {
     const buttons = [
@@ -336,6 +336,21 @@ export default function CalendarScreen({ navigation }) {
         </View>
       </View>
 
+      <View style={styles.quickActionsGrid}>
+        <QuickActionButton
+          icon="calendar-plus"
+          onPress={handleCreateHearing}
+          subtitle="Agenda una audiencia y vinculala a una causa."
+          title="Registrar audiencia"
+        />
+        <QuickActionButton
+          icon="clipboard-plus-outline"
+          onPress={handleCreateTask}
+          subtitle="Registra una tarea o actividad para el seguimiento del caso."
+          title="Registrar tarea"
+        />
+      </View>
+
       {showFilters ? (
         <View style={styles.filterPanel}>
           {CATEGORY_OPTIONS.filter((item) => item.key === 'all' || visibleAreas.some((area) => area.key === item.key)).map((item) => (
@@ -360,10 +375,17 @@ export default function CalendarScreen({ navigation }) {
         </View>
       ) : null}
 
-      {selectedDayEvents.length ? (
+      {!hasActivities ? (
+        <EmptyState
+          icon="calendar-remove-outline"
+          message="Todavia no hay audiencias ni tareas programadas."
+          title="Sin actividades programadas"
+        />
+      ) : selectedDayEvents.length ? (
         selectedDayEvents.map((event) => {
           const isFavorite = Boolean(favorites[event.id]);
           const isReviewed = Boolean(reviewed[event.id]);
+          const isTask = event?.type === 'task';
 
           return (
             <View key={event.id} style={styles.eventCard}>
@@ -377,13 +399,23 @@ export default function CalendarScreen({ navigation }) {
               </Pressable>
 
               <View style={styles.timeColumn}>
-                <Text style={styles.timeText}>{formatTime(event.date).replace(' hs', '')}</Text>
+                <Text style={styles.timeText}>
+                  {isTask ? 'Tarea' : formatTime(event.date).replace(' hs', '')}
+                </Text>
               </View>
 
               <View style={styles.eventContent}>
                 <Text style={[styles.eventTitle, isReviewed && styles.eventTitleReviewed]}>
                   {event.title}
                 </Text>
+                <View style={styles.eventTagRow}>
+                  <View style={[styles.eventTypeChip, isTask ? styles.eventTypeChipTask : styles.eventTypeChipHearing]}>
+                    <Text style={[styles.eventTypeChipText, isTask ? styles.eventTypeChipTextTask : styles.eventTypeChipTextHearing]}>
+                      {isTask ? 'Tarea' : 'Audiencia'}
+                    </Text>
+                  </View>
+                  <Text style={styles.eventStatusText}>{event?.status || (isTask ? 'Pendiente' : 'Programada')}</Text>
+                </View>
                 <View style={styles.eventAreaRow}>
                   <View style={[styles.eventAreaDot, { backgroundColor: event?.area?.color || colors.primary }]} />
                   <Text style={styles.eventAreaText}>
@@ -392,6 +424,7 @@ export default function CalendarScreen({ navigation }) {
                 </View>
                 <Text style={styles.eventMeta}>{event.caseTitle}</Text>
                 <Text style={styles.eventMeta}>{event.court}</Text>
+                {event?.meta ? <Text style={styles.eventMeta}>{event.meta}</Text> : null}
               </View>
 
               <View style={styles.eventActions}>
@@ -411,10 +444,10 @@ export default function CalendarScreen({ navigation }) {
         })
       ) : (
         <EmptyState
-          actionLabel="Registrar audiencia"
+          actionLabel="Registrar tarea"
           icon="calendar-remove-outline"
           message="No hay eventos registrados para la fecha seleccionada."
-          onAction={() => navigation.navigate('NewHearing')}
+          onAction={handleCreateTask}
           title="Agenda sin actividad"
         />
       )}
@@ -646,6 +679,11 @@ const createStyles = (colors) => StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
   },
+  quickActionsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
   filterChip: {
     borderRadius: 999,
     borderWidth: 1,
@@ -719,6 +757,39 @@ const createStyles = (colors) => StyleSheet.create({
   eventTitleReviewed: {
     color: colors.textMuted,
     textDecorationLine: 'line-through',
+  },
+  eventTagRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  eventTypeChip: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  eventTypeChipHearing: {
+    backgroundColor: colors.accentSoft,
+  },
+  eventTypeChipTask: {
+    backgroundColor: colors.warningSoft,
+  },
+  eventTypeChipText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  eventTypeChipTextHearing: {
+    color: colors.primary,
+  },
+  eventTypeChipTextTask: {
+    color: colors.warning,
+  },
+  eventStatusText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
   },
   eventAreaRow: {
     flexDirection: 'row',

@@ -152,7 +152,7 @@ export function getWeekdayLabels() {
   return WEEKDAY_LABELS;
 }
 
-export function buildCalendarEvents({ hearings = [], caseDetails = [], cases = [] }) {
+export function buildCalendarEvents({ hearings = [], tasks = [], caseDetails = [], cases = [] }) {
   const caseMap = new Map();
 
   [...cases, ...caseDetails].forEach((item) => {
@@ -182,24 +182,40 @@ export function buildCalendarEvents({ hearings = [], caseDetails = [], cases = [
       };
     });
 
-  const taskEvents = caseDetails.flatMap((caseItem) => {
-    const area = inferLegalArea(caseItem);
+  const taskSourceItems = tasks.length
+    ? tasks
+    : caseDetails.flatMap((caseItem) =>
+        (caseItem?.tasks || []).map((task) => ({
+          ...task,
+          caseId: task?.caseId ?? caseItem?.id,
+          caseTitle: task?.caseTitle ?? caseItem?.title,
+          court: task?.court ?? caseItem?.court,
+        }))
+      );
 
-    return (caseItem?.tasks || []).filter((task) => task?.dueDate).map((task) => ({
-      id: `task-${task?.id}`,
-      sourceId: task?.id,
-      type: 'task',
-      date: task?.dueDate,
-      title: task?.completed ? task?.title || 'Tarea sin titulo' : `Vencimiento: ${task?.title || 'Tarea sin titulo'}`,
-      caseId: caseItem?.id,
-      caseTitle: caseItem?.title || 'Causa sin referencia',
-      court: caseItem?.court || 'Juzgado a confirmar',
-      area,
-      status: task?.completed ? 'Finalizada' : 'Pendiente',
-      completed: Boolean(task?.completed),
-      meta: 'Seguimiento procesal',
-    }));
-  });
+  const taskEvents = taskSourceItems
+    .filter((task) => task?.dueDate || task?.fechaVencimiento)
+    .map((task) => {
+      const relatedCase = caseMap.get(String(task?.caseId)) || {};
+      const area = inferLegalArea(relatedCase, task?.caseTitle || task?.title);
+      const dueDate = task?.dueDate || task?.fechaVencimiento;
+      const isCompleted = Boolean(task?.completed ?? task?.completada);
+
+      return {
+        id: `task-${task?.id}`,
+        sourceId: task?.id,
+        type: 'task',
+        date: dueDate,
+        title: task?.title || task?.titulo || 'Tarea sin titulo',
+        caseId: task?.caseId ?? relatedCase?.id,
+        caseTitle: task?.caseTitle || relatedCase?.title || 'Causa sin referencia',
+        court: task?.court || relatedCase?.court || 'Juzgado a confirmar',
+        area,
+        status: task?.status || task?.estado || (isCompleted ? 'Finalizada' : 'Pendiente'),
+        completed: isCompleted,
+        meta: task?.description || task?.descripcion || 'Actividad programada',
+      };
+    });
 
   return [...hearingEvents, ...taskEvents].sort((first, second) => {
     const firstDate = toDate(first?.date);

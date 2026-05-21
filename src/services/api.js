@@ -18,10 +18,9 @@ const REQUEST_TIMEOUT_MS = 8000;
 const LUX_REQUEST_TIMEOUT_MS = 120000;
 const EXPIRED_SESSION_MESSAGE = 'Tu sesión expiró. Iniciá sesión nuevamente.';
 const MISSING_SESSION_MESSAGE = 'No hay una sesión activa. Iniciá sesión nuevamente.';
-const PROTECTED_ENDPOINT_PREFIXES = ['/dashboard/resumen', '/causas', '/audiencias', '/documentos', '/lux/chat', '/transcriptions'];
 const LUX_CONNECTION_ERROR_MESSAGE = 'No pude conectarme con LUX en este momento.';
 const LUX_TIMEOUT_ERROR_MESSAGE = 'LUX tardó demasiado en responder. Intentá de nuevo con una consulta más corta.';
-
+const PROTECTED_ENDPOINT_PREFIXES = ['/dashboard/resumen', '/causas', '/audiencias', '/documentos', '/lux/chat', '/transcriptions', '/tareas'];
 function simulateDelay(result, ms = 450) {
   return new Promise((resolve) => {
     setTimeout(() => resolve(result), ms);
@@ -186,6 +185,15 @@ function getHearingMap() {
   }, {});
 }
 
+function isTaskPending(task) {
+  const normalizedStatus = normalizeStatusLabel(task?.status ?? task?.estado, 'Pendiente');
+  return task?.completed !== true && task?.completada !== true && normalizedStatus !== 'Finalizada';
+}
+
+function countPendingTasks(tasks = []) {
+  return tasks.filter((task) => isTaskPending(task)).length;
+}
+
 function getMetrics() {
   const now = new Date();
 
@@ -196,7 +204,7 @@ function getMetrics() {
     }).length,
     audienciasHoy: mockStore.hearings.filter((item) => new Date(item.date).toDateString() === now.toDateString()).length,
     documentos: mockStore.documents.length,
-    tareasPendientes: mockStore.tasks.filter((item) => !item.completed).length,
+    tareasPendientes: countPendingTasks(mockStore.tasks),
   };
 }
 
@@ -222,14 +230,20 @@ function normalizeUser(user, fallback = {}) {
 function normalizeTask(task) {
   const source = task || {};
   const dueDate = normalizeDateValue(source.dueDate ?? source.fechaVencimiento);
+  const status = normalizeStatusLabel(source.status ?? source.estado, source.completed ? 'Finalizada' : 'Pendiente');
 
   return {
     ...source,
     id: getId(source.id),
     title: safeString(source.title ?? source.titulo, 'Tarea sin titulo'),
+    description: safeString(source.description ?? source.descripcion ?? source.detail ?? source.detalle, ''),
+    descripcion: safeString(source.descripcion ?? source.description ?? source.detail ?? source.detalle, ''),
     dueDate,
     fechaVencimiento: dueDate,
     completed: Boolean(source.completed ?? source.completada),
+    completada: Boolean(source.completed ?? source.completada),
+    status,
+    estado: status,
     caseId: getId(source.caseId ?? source.causaId),
   };
 }
@@ -403,6 +417,9 @@ function normalizeDashboardResumen(data) {
   const source = data || {};
   const metricas = source.metricas || source.metrics || {};
   const upcoming = toArray(source.proximasAudiencias ?? source.upcomingHearings).map((item) => normalizeHearing(item));
+  const tasks = toArray(source.tasks ?? source.tareas).map((item) => normalizeTask(item));
+  const normalizedPendingTasks = countPendingTasks(tasks);
+  const metricTasksValue = toNumber(metricas.tareasPendientes ?? metricas.pendingTasks);
 
   return {
     usuario: normalizeUser(source.usuario ?? source.user),
@@ -410,7 +427,7 @@ function normalizeDashboardResumen(data) {
       causasActivas: toNumber(metricas.causasActivas ?? metricas.activeCases) ?? 0,
       audienciasHoy: toNumber(metricas.audienciasHoy ?? metricas.hearingsToday) ?? 0,
       documentos: toNumber(metricas.documentos ?? metricas.documents) ?? 0,
-      tareasPendientes: toNumber(metricas.tareasPendientes ?? metricas.pendingTasks) ?? 0,
+      tareasPendientes: metricTasksValue ?? normalizedPendingTasks,
     },
     proximasAudiencias: sortByDateAsc(upcoming, 'date'),
   };
@@ -772,19 +789,30 @@ export async function getMe() {
 
 export async function getDashboardResumen() {
   if (USE_MOCKS) {
+    const tasks = await getTasks().catch(() => []);
+
     return simulateDelay({
       usuario: normalizeUser(mockStore.user, getAuthenticatedUserCandidate() || {}),
-      metricas: getMetrics(),
+      metricas: {
+        ...getMetrics(),
+        tareasPendientes: countPendingTasks(tasks),
+      },
       proximasAudiencias: mapUpcomingHearings(),
     });
   }
 
   const data = await request(DASHBOARD_RESUMEN_ENDPOINT);
-  toArray(data?.proximasAudiencias ?? data?.upcomingHearings).forEach((audiencia) => {
-    console.log('[DASHBOARD] Audiencia recibida:', JSON.stringify(audiencia, null, 2));
-  });
+  const resumen = normalizeDashboardResumen(data);
+  const tasks = await getTasks().catch(() => []);
+  const pendingTasks = countPendingTasks(tasks);
 
-  return enrichDashboardResumenWithCases(normalizeDashboardResumen(data));
+  return enrichDashboardResumenWithCases({
+    ...resumen,
+    metricas: {
+      ...resumen.metricas,
+      tareasPendientes: pendingTasks,
+    },
+  });
 }
 
 export async function getCases() {
@@ -1050,11 +1078,35 @@ export async function createTask(data) {
     });
 
     mockStore.tasks = [newTask, ...mockStore.tasks];
+
     return simulateDelay(newTask);
   }
 
-  // TODO: conectar este payload con el endpoint real de tareas cuando el backend lo exponga.
-  throw createRequestError('La creacion de tareas todavia no esta conectada al backend.', 501, payload);
+  const response = await request('/tareas', {
+    method: 'POST',
+    body: payload,
+  });
+
+  return normalizeTask({
+    ...response,
+    title: response?.title ?? payload.title,
+    description: response?.description ?? payload.description,
+    dueDate: response?.dueDate ?? payload.dueDate,
+    caseId: response?.caseId ?? payload.caseId,
+    status: response?.status ?? payload.status,
+    completed: response?.completed ?? payload.completed,
+  });
+}
+
+export async function getTasks() {
+  if (USE_MOCKS) {
+    return simulateDelay(
+      sortByDateAsc(mockStore.tasks.map((item) => normalizeTask(item)), 'dueDate')
+    );
+  }
+
+  const data = await request('/tareas');
+  return sortByDateAsc(toArray(data).map((item) => normalizeTask(item)), 'dueDate');
 }
 
 export async function getDocuments() {

@@ -14,6 +14,7 @@ import MoreScreen from '../screens/MoreScreen';
 import NewCaseScreen from '../screens/NewCaseScreen';
 import NewHearingScreen from '../screens/NewHearingScreen';
 import NewTaskScreen from '../screens/NewTaskScreen';
+import TasksScreen from '../screens/TasksScreen';
 import TranscriptionTestScreen from '../screens/TranscriptionTestScreen';
 import UploadDocumentScreen from '../screens/UploadDocumentScreen';
 
@@ -95,6 +96,7 @@ export default function DashboardNavigator() {
       <Stack.Screen component={NewCaseScreen} name="NewCase" options={{ title: 'Nueva causa' }} />
       <Stack.Screen component={NewHearingScreen} name="NewHearing" options={{ title: 'Registrar audiencia' }} />
       <Stack.Screen component={NewTaskScreen} name="NewTask" options={{ title: 'Registrar tarea' }} />
+      <Stack.Screen component={TasksScreen} name="Tasks" options={{ title: 'Tareas pendientes' }} />
       <Stack.Screen
         component={TranscriptionTestScreen}
         name="TranscriptionTest"
