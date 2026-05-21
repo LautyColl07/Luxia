@@ -7,10 +7,16 @@ import {
 } from "firebase/auth";
 import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 
+import { API_BASE_URL } from "../config/api";
 import { auth, db, isFirebaseConfigured, missingFirebaseKeys } from "../config/firebase";
+import {
+  getUsernameValidationError,
+  normalizeLoginIdentifier,
+  resolveRegisterUsername,
+} from "../utils/auth";
 
 export type LoginPayload = {
-  email: string;
+  identifier: string;
   password: string;
   rememberMe: boolean;
 };
@@ -25,23 +31,56 @@ export type RegisterPayload = {
   password: string;
 };
 
+const GENERIC_LOGIN_ERROR_MESSAGE = "Las credenciales ingresadas no son validas.";
+const GENERIC_PASSWORD_RESET_MESSAGE =
+  "Si el correo existe, te enviamos instrucciones para recuperar tu contraseña.";
+const GENERIC_PASSWORD_RESET_ERROR_MESSAGE =
+  "No pudimos procesar tu solicitud en este momento. Intenta nuevamente.";
+
 const getFirebaseSetupMessage = () =>
   `El cliente de Firebase no esta configurado. Completa EXPO_PUBLIC_FIREBASE_* en tu .env. Faltan: ${missingFirebaseKeys.join(", ")}.`;
+
+const resolveEmailForLogin = async (identifier: string) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/auth/resolve-login`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ identifier }),
+    });
+
+    const payload = await response.json().catch(() => null);
+
+    if (!response.ok || !payload?.success || typeof payload?.email !== "string") {
+      throw new Error(GENERIC_LOGIN_ERROR_MESSAGE);
+    }
+
+    return payload.email;
+  } catch (error) {
+    if (error instanceof Error && error.message === GENERIC_LOGIN_ERROR_MESSAGE) {
+      throw error;
+    }
+
+    throw new Error("No pudimos iniciar sesion. Intenta nuevamente.");
+  }
+};
 
 const mapFirebaseAuthError = (code: string) => {
   switch (code) {
     case "auth/invalid-email":
       return "El email ingresado no es valido.";
-    case "auth/user-not-found":
-      return "No existe una cuenta con este email.";
     case "auth/wrong-password":
-      return "La contrasena es incorrecta.";
+    case "auth/user-not-found":
+    case "auth/invalid-credential":
+      return GENERIC_LOGIN_ERROR_MESSAGE;
     case "auth/email-already-in-use":
       return "Ya existe una cuenta registrada con este email.";
     case "auth/weak-password":
       return "La contrasena es demasiado debil.";
-    case "auth/invalid-credential":
-      return "Las credenciales ingresadas no son validas.";
+    case "auth/too-many-requests":
+      return "Detectamos demasiados intentos. Espera unos minutos e intenta nuevamente.";
     default:
       return "No pudimos completar la operacion. Intenta nuevamente.";
   }
@@ -49,8 +88,8 @@ const mapFirebaseAuthError = (code: string) => {
 
 export const authClient = {
   async login(payload: LoginPayload) {
-    if (!payload.email || !payload.password) {
-      throw new Error("Completa el email y la contrasena para continuar.");
+    if (!payload.identifier || !payload.password) {
+      throw new Error("Completa tu email o usuario y la contrasena para continuar.");
     }
 
     if (!isFirebaseConfigured || !auth) {
@@ -58,9 +97,14 @@ export const authClient = {
     }
 
     try {
+      const normalizedIdentifier = normalizeLoginIdentifier(payload.identifier);
+      const emailForLogin = normalizedIdentifier.includes("@")
+        ? normalizedIdentifier
+        : await resolveEmailForLogin(normalizedIdentifier);
+
       const credential = await signInWithEmailAndPassword(
         auth,
-        payload.email.trim(),
+        emailForLogin,
         payload.password,
       );
 
@@ -74,7 +118,11 @@ export const authClient = {
         throw new Error(mapFirebaseAuthError(error.code));
       }
 
-      throw error;
+      if (error instanceof Error) {
+        throw error;
+      }
+
+      throw new Error("No pudimos iniciar sesion. Intenta nuevamente.");
     }
   },
 
@@ -88,9 +136,22 @@ export const authClient = {
     }
 
     try {
+      const normalizedEmail = payload.email.trim();
+      const resolvedUsername = resolveRegisterUsername({
+        firstName: payload.firstName,
+        lastName: payload.lastName,
+        email: normalizedEmail,
+        username: payload.username,
+      });
+      const usernameError = getUsernameValidationError(resolvedUsername);
+
+      if (usernameError) {
+        throw new Error(usernameError);
+      }
+
       const credential = await createUserWithEmailAndPassword(
         auth,
-        payload.email.trim(),
+        normalizedEmail,
         payload.password,
       );
 
@@ -103,13 +164,14 @@ export const authClient = {
       if (db) {
         await setDoc(doc(db, "users", credential.user.uid), {
           uid: credential.user.uid,
-          email: payload.email.trim(),
-          firstName: payload.firstName,
-          lastName: payload.lastName,
+          email: normalizedEmail,
+          firstName: payload.firstName.trim(),
+          lastName: payload.lastName.trim(),
           fullName,
-          username: payload.username,
-          enrollment: payload.enrollment || null,
-          lawFirm: payload.lawFirm || null,
+          username: resolvedUsername,
+          usernameLowercase: resolvedUsername,
+          enrollment: payload.enrollment.trim() || null,
+          lawFirm: payload.lawFirm.trim() || null,
           createdAt: serverTimestamp(),
         });
       }
@@ -124,7 +186,11 @@ export const authClient = {
         throw new Error(mapFirebaseAuthError(error.code));
       }
 
-      throw error;
+      if (error instanceof Error) {
+        throw error;
+      }
+
+      throw new Error("No se pudo crear la cuenta. Intenta nuevamente.");
     }
   },
 
@@ -144,13 +210,22 @@ export const authClient = {
       return {
         ok: true,
         mode: "firebase-auth",
+        message: GENERIC_PASSWORD_RESET_MESSAGE,
       };
     } catch (error) {
       if (error instanceof FirebaseError) {
-        throw new Error(mapFirebaseAuthError(error.code));
+        if (error.code === "auth/user-not-found") {
+          return {
+            ok: true,
+            mode: "firebase-auth",
+            message: GENERIC_PASSWORD_RESET_MESSAGE,
+          };
+        }
+
+        throw new Error(GENERIC_PASSWORD_RESET_ERROR_MESSAGE);
       }
 
-      throw error;
+      throw new Error(GENERIC_PASSWORD_RESET_ERROR_MESSAGE);
     }
   },
 };

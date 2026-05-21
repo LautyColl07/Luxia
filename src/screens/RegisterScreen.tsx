@@ -27,6 +27,10 @@ import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { authClient } from "../services/authClient";
 import { CARD_SHADOW, COLORS, TYPOGRAPHY } from "../theme/luxiaTheme";
 import { RootStackParamList } from "../types/navigation";
+import {
+  getUsernameValidationError,
+  resolveRegisterUsername,
+} from "../utils/auth";
 
 type RegisterScreenProps = NativeStackScreenProps<RootStackParamList, "Register">;
 
@@ -76,7 +80,7 @@ const steps: RegisterStep[] = [
   },
   {
     key: "email",
-    title: "¿Cuál es tu correo?",
+    title: "Cual es tu correo?",
     subtitle: "Usaremos este email para el acceso y las comunicaciones de la cuenta.",
     fields: ["email"],
   },
@@ -88,20 +92,20 @@ const steps: RegisterStep[] = [
   },
   {
     key: "username",
-    title: "Elegí tu usuario",
-    subtitle: "Será tu identificador dentro de la plataforma.",
+    title: "Elegi tu usuario",
+    subtitle: "Sera tu identificador dentro de la plataforma.",
     fields: ["username"],
   },
   {
     key: "password",
-    title: "Creá una contraseña segura",
+    title: "Crea una contrasena segura",
     subtitle: "Debe tener al menos 8 caracteres.",
     fields: ["password", "confirmPassword"],
   },
   {
     key: "terms",
-    title: "Último paso",
-    subtitle: "Revisá los datos principales y aceptá las condiciones para crear la cuenta.",
+    title: "Ultimo paso",
+    subtitle: "Revisa los datos principales y acepta las condiciones para crear la cuenta.",
     fields: ["acceptedTerms"],
   },
 ];
@@ -121,6 +125,12 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
   const isFirstStep = currentStep === 0;
   const isLastStep = currentStep === steps.length - 1;
   const progressPercent = `${((currentStep + 1) / steps.length) * 100}%` as `${number}%`;
+  const previewUsername = resolveRegisterUsername({
+    firstName: form.firstName,
+    lastName: form.lastName,
+    email: form.email,
+    username: form.username,
+  });
 
   const setField = <K extends keyof RegisterForm>(field: K, value: RegisterForm[K]) => {
     setForm((current) => ({ ...current, [field]: value }));
@@ -131,40 +141,44 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
     const nextErrors: RegisterErrors = {};
 
     if (fields.includes("firstName") && !form.firstName.trim()) {
-      nextErrors.firstName = "Ingresá tu nombre";
+      nextErrors.firstName = "Ingresa tu nombre";
     }
 
     if (fields.includes("lastName") && !form.lastName.trim()) {
-      nextErrors.lastName = "Ingresá tu apellido";
+      nextErrors.lastName = "Ingresa tu apellido";
     }
 
     if (fields.includes("email") && !form.email.trim()) {
-      nextErrors.email = "Ingresá tu email";
+      nextErrors.email = "Ingresa tu email";
     } else if (fields.includes("email") && !/\S+@\S+\.\S+/.test(form.email.trim())) {
-      nextErrors.email = "Ingresá un email válido";
+      nextErrors.email = "Ingresa un email valido";
     }
 
-    if (fields.includes("username") && !form.username.trim()) {
-      nextErrors.username = "Elegí un nombre de usuario";
+    if (fields.includes("username") && form.username.trim()) {
+      const usernameError = getUsernameValidationError(form.username);
+
+      if (usernameError) {
+        nextErrors.username = usernameError;
+      }
     }
 
     if (fields.includes("password") && !form.password.trim()) {
-      nextErrors.password = "Ingresá una contraseña";
+      nextErrors.password = "Ingresa una contrasena";
     } else if (fields.includes("password") && form.password.length < 8) {
-      nextErrors.password = "La contraseña debe tener al menos 8 caracteres";
+      nextErrors.password = "La contrasena debe tener al menos 8 caracteres";
     }
 
     if (fields.includes("confirmPassword") && !form.confirmPassword.trim()) {
-      nextErrors.confirmPassword = "Repetí tu contraseña";
+      nextErrors.confirmPassword = "Repite tu contrasena";
     } else if (
       fields.includes("confirmPassword") &&
       form.confirmPassword !== form.password
     ) {
-      nextErrors.confirmPassword = "Las contraseñas no coinciden";
+      nextErrors.confirmPassword = "Las contrasenas no coinciden";
     }
 
     if (fields.includes("acceptedTerms") && !form.acceptedTerms) {
-      nextErrors.acceptedTerms = "Necesitás aceptar los términos para continuar";
+      nextErrors.acceptedTerms = "Necesitas aceptar los terminos para continuar";
     }
 
     return nextErrors;
@@ -250,21 +264,27 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
     setErrors({});
 
     try {
+      const normalizedUsername = resolveRegisterUsername({
+        firstName: form.firstName,
+        lastName: form.lastName,
+        email: form.email,
+        username: form.username,
+      });
+
       await authClient.register({
         firstName: form.firstName.trim(),
         lastName: form.lastName.trim(),
         email: form.email.trim(),
         enrollment: form.enrollment.trim(),
         lawFirm: form.lawFirm.trim(),
-        username: form.username.trim(),
+        username: normalizedUsername,
         password: form.password,
       });
     } catch (error) {
-      console.error("[RegisterScreen] Error registrando usuario:", error);
       const message =
         error instanceof Error
           ? error.message
-          : "No se pudo crear la cuenta. Intentá nuevamente.";
+          : "No se pudo crear la cuenta. Intenta nuevamente.";
 
       setErrors({ general: message });
     } finally {
@@ -287,7 +307,7 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
             <View style={styles.card}>
               <Text style={styles.title}>Crear cuenta</Text>
               <Text style={styles.subtitle}>
-                Completa tus datos para acceder a la plataforma de gestión judicial.
+                Completa tus datos para acceder a la plataforma de gestion judicial.
               </Text>
 
               <View style={styles.progressHeader}>
@@ -356,9 +376,9 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
                       <Field
                         error={errors.enrollment}
                         icon={<Briefcase size={18} color={COLORS.textSecondary} />}
-                        label="Matrícula"
+                        label="Matricula"
                         onChangeText={(value) => setField("enrollment", value)}
-                        placeholder="Número de matrícula"
+                        placeholder="Numero de matricula"
                         value={form.enrollment}
                       />
                     </View>
@@ -366,7 +386,7 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
                       <Field
                         error={errors.lawFirm}
                         icon={<Briefcase size={18} color={COLORS.textSecondary} />}
-                        label="Estudio jurídico"
+                        label="Estudio juridico"
                         onChangeText={(value) => setField("lawFirm", value)}
                         placeholder="Nombre del estudio"
                         value={form.lawFirm}
@@ -376,14 +396,20 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
                 ) : null}
 
                 {activeStep.key === "username" ? (
-                  <Field
-                    error={errors.username}
-                    icon={<User size={18} color={COLORS.textSecondary} />}
-                    label="Usuario *"
-                    onChangeText={(value) => setField("username", value)}
-                    placeholder="Elegí un nombre de usuario"
-                    value={form.username}
-                  />
+                  <View style={styles.usernameStep}>
+                    <Field
+                      error={errors.username}
+                      icon={<User size={18} color={COLORS.textSecondary} />}
+                      label="Usuario"
+                      onChangeText={(value) => setField("username", value)}
+                      placeholder="Elige un nombre de usuario"
+                      value={form.username}
+                    />
+                    <Text style={styles.helperText}>
+                      Si no ingresas uno, generamos <Text style={styles.helperTextStrong}>@{previewUsername}</Text>{" "}
+                      automaticamente.
+                    </Text>
+                  </View>
                 ) : null}
 
                 {activeStep.key === "password" ? (
@@ -392,10 +418,10 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
                       <PasswordField
                         error={errors.password}
                         isVisible={showPassword}
-                        label="Contraseña *"
+                        label="Contrasena *"
                         onChangeText={(value) => setField("password", value)}
                         onToggleVisibility={() => setShowPassword((current) => !current)}
-                        placeholder="Mínimo 8 caracteres"
+                        placeholder="Minimo 8 caracteres"
                         value={form.password}
                       />
                     </View>
@@ -403,12 +429,12 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
                       <PasswordField
                         error={errors.confirmPassword}
                         isVisible={showConfirmPassword}
-                        label="Confirmar contraseña *"
+                        label="Confirmar contrasena *"
                         onChangeText={(value) => setField("confirmPassword", value)}
                         onToggleVisibility={() =>
                           setShowConfirmPassword((current) => !current)
                         }
-                        placeholder="Repetí tu contraseña"
+                        placeholder="Repite tu contrasena"
                         value={form.confirmPassword}
                       />
                     </View>
@@ -430,7 +456,7 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
                       </View>
                       <View style={styles.summaryItem}>
                         <Text style={styles.summaryLabel}>Usuario</Text>
-                        <Text style={styles.summaryValue}>{form.username}</Text>
+                        <Text style={styles.summaryValue}>{previewUsername}</Text>
                       </View>
                     </View>
 
@@ -445,11 +471,11 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
                           form.acceptedTerms ? styles.checkboxBoxActive : undefined,
                         ]}
                       >
-                        {form.acceptedTerms ? <Text style={styles.checkboxMark}>✓</Text> : null}
+                        {form.acceptedTerms ? <Text style={styles.checkboxMark}>X</Text> : null}
                       </View>
                       <Text style={styles.checkboxText}>
-                        Acepto los <Text style={styles.checkboxLink}>términos y condiciones</Text> y la{" "}
-                        <Text style={styles.checkboxLink}>política de privacidad</Text>
+                        Acepto los <Text style={styles.checkboxLink}>terminos y condiciones</Text> y la{" "}
+                        <Text style={styles.checkboxLink}>politica de privacidad</Text>
                       </Text>
                     </Pressable>
                     {errors.acceptedTerms ? (
@@ -476,7 +502,7 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
                       isSubmitting || isAnimating ? styles.secondaryButtonDisabled : undefined,
                     ]}
                   >
-                    <Text style={styles.secondaryButtonText}>Atrás</Text>
+                    <Text style={styles.secondaryButtonText}>Atras</Text>
                   </TouchableOpacity>
                 ) : null}
 
@@ -510,7 +536,7 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
               style={styles.footerLink}
             >
               <Text style={styles.footerText}>
-                ¿Ya tenés cuenta? <Text style={styles.footerLinkText}>Iniciá sesión</Text>
+                Ya tenes cuenta? <Text style={styles.footerLinkText}>Inicia sesion</Text>
               </Text>
             </TouchableOpacity>
           </View>
@@ -731,6 +757,18 @@ const styles = StyleSheet.create({
   },
   summaryBlock: {
     gap: 18,
+  },
+  usernameStep: {
+    gap: 8,
+  },
+  helperText: {
+    color: COLORS.textSecondary,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  helperTextStrong: {
+    color: COLORS.primary,
+    fontWeight: "700",
   },
   summaryGrid: {
     gap: 10,

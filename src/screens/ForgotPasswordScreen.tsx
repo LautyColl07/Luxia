@@ -11,7 +11,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { Mail, ArrowLeft } from "lucide-react-native";
+import { ArrowLeft, Mail } from "lucide-react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 
 import { authClient } from "../services/authClient";
@@ -49,15 +49,13 @@ const ForgotPasswordScreen = ({ navigation }: ForgotPasswordScreenProps) => {
       setError("");
       setMessage("");
 
-      await authClient.resetPassword(trimmedEmail);
-      setMessage("Te enviamos un correo con las instrucciones para restablecer tu contrasena.");
-    } catch (submitError) {
-      console.error("[ForgotPasswordScreen] Error enviando recuperacion:", submitError);
-      setError(
-        submitError instanceof Error
-          ? submitError.message
-          : "No pudimos enviar el email de recuperacion.",
+      const result = await authClient.resetPassword(trimmedEmail);
+      setMessage(
+        result.message ||
+          "Si el correo existe, te enviamos instrucciones para recuperar tu contraseña.",
       );
+    } catch {
+      setError("No pudimos procesar tu solicitud en este momento. Intenta nuevamente.");
     } finally {
       setIsSubmitting(false);
     }

@@ -14,7 +14,7 @@ router.post('/chat', async (req, res) => {
     });
   }
 
-  console.log('[LUX] Consulta recibida:', message);
+  console.log('[LUX] Consulta recibida');
 
   try {
     const reply = await sendMessageToLux(message, context);

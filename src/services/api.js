@@ -657,12 +657,7 @@ export async function request(endpoint, options = {}) {
     !(fetchOptions.body instanceof FormData) &&
     typeof fetchOptions.body !== 'string';
   const body = hasJsonBody ? JSON.stringify(fetchOptions.body) : fetchOptions.body;
-  console.log('[API] baseURL:', API_BASE_URL);
-  console.log('[API] endpoint:', endpoint);
-  console.log('[API] url:', url);
-  console.log('[API] currentUser uid:', auth.currentUser?.uid || null);
-  const { headers: authHeaders, token } = await getRequestAuthHeaders(path, fetchOptions.headers);
-  console.log('[API] token presente:', Boolean(token));
+  const { headers: authHeaders } = await getRequestAuthHeaders(path, fetchOptions.headers);
 
   let response;
   let responseText = '';
@@ -691,15 +686,11 @@ export async function request(endpoint, options = {}) {
   }
 
   if (response.status === 204) {
-    console.log('[API] status:', response.status);
-    console.log('[API] response:', responseText);
     return null;
   }
 
   const rawText = await response.text();
   responseText = rawText;
-  console.log('[API] status:', response.status);
-  console.log('[API] response:', responseText);
   let data = null;
 
   if (rawText) {
@@ -780,10 +771,6 @@ export async function getDashboardResumen() {
   }
 
   const data = await request(DASHBOARD_RESUMEN_ENDPOINT);
-  toArray(data?.proximasAudiencias ?? data?.upcomingHearings).forEach((audiencia) => {
-    console.log('[DASHBOARD] Audiencia recibida:', JSON.stringify(audiencia, null, 2));
-  });
-
   return enrichDashboardResumenWithCases(normalizeDashboardResumen(data));
 }
 
@@ -880,8 +867,6 @@ export async function createCase(data) {
 
   const endpoint = '/causas';
   const caseData = normalizeCasePayload(data);
-  console.log('[API] createCase payload:', JSON.stringify(caseData, null, 2));
-  console.log('[API] endpoint:', endpoint);
   const response = await request(endpoint, { method: 'POST', body: caseData });
   return normalizeCase({
     ...response,

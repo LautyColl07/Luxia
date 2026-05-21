@@ -1,3 +1,5 @@
+const { getFirebaseAdmin } = require('../lib/firebaseAdmin');
+
 function normalizeOptionalString(value) {
   if (value === undefined || value === null) {
     return null;
@@ -23,22 +25,7 @@ function decodeJwtPayload(token) {
 
 async function verifyWithFirebaseAdmin(token) {
   try {
-    const admin = require('firebase-admin');
-
-    if (!admin.apps.length) {
-      const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-
-      if (serviceAccountJson) {
-        admin.initializeApp({
-          credential: admin.credential.cert(JSON.parse(serviceAccountJson)),
-        });
-      } else {
-        admin.initializeApp({
-          credential: admin.credential.applicationDefault(),
-        });
-      }
-    }
-
+    const admin = getFirebaseAdmin();
     return admin.auth().verifyIdToken(token);
   } catch (error) {
     if (process.env.FIREBASE_AUTH_STRICT === 'true') {

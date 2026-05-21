@@ -16,7 +16,7 @@ import { User, Lock, Eye, EyeOff, HelpCircle } from "lucide-react-native";
 import { authClient } from "../services/authClient";
 
 export default function LoginScreen({ navigation }: any) {
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
@@ -30,7 +30,7 @@ export default function LoginScreen({ navigation }: any) {
     setEmailError("");
     setPasswordError("");
 
-    if (!email.trim()) {
+    if (!identifier.trim()) {
       setEmailError("Este campo es obligatorio");
       isValid = false;
     }
@@ -52,12 +52,11 @@ export default function LoginScreen({ navigation }: any) {
       setIsLoading(true);
 
       await authClient.login({
-        email: email.trim(),
+        identifier,
         password,
         rememberMe,
       });
     } catch (error) {
-      console.error("[LoginScreen] Error iniciando sesion:", error);
       Alert.alert(
         "No pudimos iniciar sesion",
         error instanceof Error
@@ -89,7 +88,7 @@ export default function LoginScreen({ navigation }: any) {
 
             <View style={styles.form}>
               <View style={styles.inputGroup}>
-                <Text style={styles.label}>Correo electronico</Text>
+                <Text style={styles.label}>Correo electronico o usuario</Text>
 
                 <View
                   style={[
@@ -100,11 +99,10 @@ export default function LoginScreen({ navigation }: any) {
                   <User size={20} color="#5B6776" style={styles.icon} />
 
                   <TextInput
-                    value={email}
-                    onChangeText={setEmail}
-                    placeholder="tu.email@estudio.com"
+                    value={identifier}
+                    onChangeText={setIdentifier}
+                    placeholder="tu.email@estudio.com o tuusuario"
                     placeholderTextColor="#5B6776"
-                    keyboardType="email-address"
                     autoCapitalize="none"
                     autoCorrect={false}
                     style={styles.input}
