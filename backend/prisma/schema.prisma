@@ -7,6 +7,95 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model User {
+  id        String   @id
+  email     String?
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  cases       LegalCase[]
+  files       File[]
+  hearings    Hearing[]
+  transcripts Transcript[]
+}
+
+model LegalCase {
+  id        String   @id
+  userId    String
+  title     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user        User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  files       File[]
+  hearings    Hearing[]
+  transcripts Transcript[]
+
+  @@index([userId])
+  @@map("Case")
+}
+
+model Hearing {
+  id        String    @id
+  caseId    String
+  userId    String
+  title     String?
+  date      DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  case        LegalCase    @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  files       File[]
+  transcripts Transcript[]
+
+  @@index([caseId])
+  @@index([userId])
+}
+
+model File {
+  id           String   @id @default(cuid())
+  hearingId    String
+  caseId       String
+  userId       String
+  fileName     String
+  mimeType     String?
+  path         String   @db.Text
+  documentType String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  case    LegalCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  hearing Hearing   @relation(fields: [hearingId], references: [id], onDelete: Cascade)
+  user    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([caseId])
+  @@index([hearingId])
+  @@index([userId])
+}
+
+model Transcript {
+  id        String   @id @default(cuid())
+  hearingId String
+  caseId    String
+  userId    String
+  text      String   @db.LongText
+  audioPath String?  @db.Text
+  pdfPath   String?  @db.Text
+  status    String   @default("recording")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  case    LegalCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  hearing Hearing   @relation(fields: [hearingId], references: [id], onDelete: Cascade)
+  user    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([hearingId, userId])
+  @@index([caseId])
+  @@index([userId])
+}
+
 model TranscriptSession {
   id          String   @id @default(cuid())
   title       String?

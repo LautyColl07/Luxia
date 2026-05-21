@@ -1116,6 +1116,203 @@ export async function transcribeDocument(documentId) {
   return request(`/documentos/${documentId}/transcribir`, { method: 'POST' });
 }
 
+function buildHearingTranscriptionPayload({ caseDetail, hearing } = {}) {
+  const hearingId = safeOptionalString(hearing?.id ?? hearing?.audienciaId);
+
+  return {
+    hearingId,
+    caseId: safeOptionalString(caseDetail?.id ?? hearing?.caseId ?? hearing?.causaId),
+    caseTitle: safeOptionalString(caseDetail?.title ?? caseDetail?.titulo ?? hearing?.caseTitle ?? hearing?.causa),
+    hearingDate: safeOptionalString(hearing?.date ?? hearing?.fechaHora ?? hearing?.fecha),
+    hearingTitle: safeOptionalString(hearing?.title ?? hearing?.titulo),
+    title: safeOptionalString(hearing?.title ?? hearing?.titulo) || (hearingId ? `Audiencia ${hearingId}` : null),
+  };
+}
+
+function normalizeHearingTranscription(data = {}, hearingId = null) {
+  const text = getTranscriptTextFromResponse(data);
+  const audioAvailable = Boolean(data?.audioAvailable ?? data?.audio_disponible ?? data?.hasAudio);
+  const downloadUrl =
+    safeOptionalString(data?.downloadUrl ?? data?.download_url) ||
+    (Boolean(data?.pdfAvailable ?? data?.pdf_disponible ?? data?.hasPdf) && hearingId
+      ? `/api/v1/audiencias/${hearingId}/transcripcion/pdf`
+      : null);
+  const pdfAvailable = Boolean(data?.pdfAvailable ?? data?.pdf_disponible ?? data?.hasPdf ?? downloadUrl);
+
+  return {
+    ...data,
+    audioAvailable,
+    downloadUrl,
+    pdfAvailable,
+    status: safeString(data?.status ?? data?.estado, text ? 'completed' : 'empty'),
+    text,
+    transcriptId: data?.transcriptId ?? data?.id ?? null,
+  };
+}
+
+function getTranscriptionSessionId(data = {}) {
+  return safeOptionalString(
+    data?.sessionId ??
+      data?.session_id ??
+      data?.session?.id ??
+      data?.data?.sessionId ??
+      data?.data?.session_id ??
+      data?.data?.session?.id ??
+      data?.id
+  );
+}
+
+export async function getHearingTranscription(hearingId) {
+  if (!hearingId) {
+    throw createRequestError('No hay una audiencia valida para consultar.', 400);
+  }
+
+  const payload = await request(`/audiencias/${hearingId}/transcripcion`);
+  return normalizeHearingTranscription(payload || {}, hearingId);
+}
+
+export async function uploadHearingAudio({ asset, caseDetail, hearing } = {}) {
+  const hearingId = safeString(hearing?.id ?? hearing?.audienciaId, '').trim();
+
+  if (!hearingId || !asset?.uri) {
+    throw createRequestError('No hay una audiencia o archivo de audio valido.', 400);
+  }
+
+  const formData = new FormData();
+  const metadata = buildHearingTranscriptionPayload({ caseDetail, hearing });
+
+  Object.entries(metadata).forEach(([key, value]) => {
+    if (value) {
+      formData.append(key, String(value));
+    }
+  });
+  formData.append('audio', {
+    uri: asset.uri,
+    name: asset.name || `audiencia-${hearingId}.m4a`,
+    type: asset.mimeType || 'audio/m4a',
+  });
+
+  return request(`/audiencias/${hearingId}/audio`, {
+    method: 'POST',
+    timeout: 150000,
+    timeoutMessage: 'La subida del audio tardo demasiado.',
+    body: formData,
+  });
+}
+
+export async function transcribeHearingAudio({ hearingId } = {}) {
+  if (!hearingId) {
+    throw createRequestError('No hay una audiencia valida para transcribir.', 400);
+  }
+
+  const payload = await request(`/audiencias/${hearingId}/transcripcion`, {
+    method: 'POST',
+    timeout: 180000,
+    timeoutMessage: 'La transcripcion de la audiencia tardo demasiado.',
+  });
+
+  return normalizeHearingTranscription(payload || {}, hearingId);
+}
+
+export async function startHearingLiveTranscription({ caseDetail, hearing } = {}) {
+  const hearingId = safeString(hearing?.id ?? hearing?.audienciaId, '').trim();
+
+  if (!hearingId) {
+    throw createRequestError('No hay una audiencia valida para iniciar.', 400);
+  }
+
+  const hearingCaseId = safeOptionalString(hearing?.caseId ?? hearing?.causaId ?? caseDetail?.id);
+  const payload = await request('/audiencias/start', {
+    method: 'POST',
+    body: {
+      hearingId,
+      caseId: hearingCaseId,
+      title: `Audiencia ${hearingId}`,
+    },
+  });
+  const sessionId = getTranscriptionSessionId(payload);
+
+  if (!sessionId) {
+    throw createRequestError('El backend no devolvio sessionId.', 500, payload);
+  }
+
+  return {
+    ...normalizeHearingTranscription(payload || {}, hearingId),
+    sessionId,
+  };
+}
+
+export async function uploadHearingLiveTranscriptionChunk({
+  audioUri,
+  chunkIndex,
+  endTime,
+  hearingId,
+  sessionId,
+  startTime,
+} = {}) {
+  const activeSessionId = safeString(sessionId, '').trim();
+
+  if (!activeSessionId || !audioUri) {
+    throw createRequestError('No hay una sesion o bloque de audio valido.', 400);
+  }
+
+  const formData = new FormData();
+  formData.append('audio', {
+    uri: audioUri,
+    name: `audiencia-${hearingId || activeSessionId}-chunk-${chunkIndex}.m4a`,
+    type: 'audio/m4a',
+  });
+  formData.append('chunkIndex', String(chunkIndex));
+  formData.append('startTime', String(startTime));
+  formData.append('endTime', String(endTime));
+
+  const payload = await request(`/audiencias/${activeSessionId}/chunk`, {
+    method: 'POST',
+    timeout: 150000,
+    timeoutMessage: 'La transcripcion del bloque tardo demasiado. El siguiente bloque puede continuar.',
+    body: formData,
+  });
+
+  return {
+    ...payload,
+    chunkIndex: payload?.chunkIndex ?? chunkIndex,
+    endTime: payload?.endTime ?? endTime,
+    fullText: safeString(payload?.fullText ?? payload?.full_text, ''),
+    startTime: payload?.startTime ?? startTime,
+    text: getTranscriptTextFromResponse(payload),
+  };
+}
+
+export async function finishHearingLiveTranscription({ hearingId, sessionId } = {}) {
+  const activeSessionId = safeString(sessionId, '').trim();
+
+  if (!activeSessionId) {
+    throw createRequestError('No hay una sesion activa para finalizar.', 400);
+  }
+
+  const payload = await request(`/audiencias/${activeSessionId}/finish`, {
+    method: 'POST',
+    timeout: 150000,
+    timeoutMessage: 'No pudimos finalizar la transcripcion dentro del tiempo esperado.',
+  });
+
+  return normalizeHearingTranscription(payload || {}, hearingId);
+}
+
+export async function generateHearingTranscriptionPdf({ hearingId } = {}) {
+  if (!hearingId) {
+    throw createRequestError('No hay una audiencia valida para generar PDF.', 400);
+  }
+
+  const payload = await request(`/audiencias/${hearingId}/transcripcion/pdf`, {
+    method: 'POST',
+    timeout: 120000,
+    timeoutMessage: 'La generacion del PDF tardo demasiado.',
+  });
+
+  return normalizeHearingTranscription(payload || {}, hearingId);
+}
+
 function getTranscriptTextFromResponse(data) {
   return safeString(
     data?.text ??
@@ -1156,15 +1353,18 @@ function normalizeLiveTranscriptionSession(data = {}) {
 }
 
 export async function startLiveTranscription({ title, caseId, hearingId } = {}) {
-  const payload = await request('/transcriptions/start', {
+  const normalizedHearingId = safeOptionalString(hearingId);
+  const normalizedTitle = safeOptionalString(title) || (normalizedHearingId ? `Audiencia ${normalizedHearingId}` : 'Transcripcion en vivo');
+  const payload = await request('/audiencias/start', {
     method: 'POST',
     body: {
       title: safeOptionalString(title) || 'Transcripción en vivo',
       caseId: safeOptionalString(caseId),
-      hearingId: safeOptionalString(hearingId),
+      hearingId: normalizedHearingId,
+      title: normalizedTitle,
     },
   });
-  const sessionId = payload?.sessionId ?? payload?.id;
+  const sessionId = getTranscriptionSessionId(payload);
 
   if (!sessionId) {
     throw createRequestError('El backend no devolvio sessionId.', 500, payload);
@@ -1194,7 +1394,7 @@ export async function uploadLiveTranscriptionChunk({
   formData.append('startTime', String(startTime));
   formData.append('endTime', String(endTime));
 
-  const payload = await request(`/transcriptions/${sessionId}/chunk`, {
+  const payload = await request(`/audiencias/${sessionId}/chunk`, {
     method: 'POST',
     timeout: 150000,
     timeoutMessage: 'La transcripcion del bloque tardo demasiado. El siguiente bloque puede continuar.',
@@ -1215,7 +1415,7 @@ export async function finishLiveTranscription(sessionId) {
     throw createRequestError('No hay una sesion activa para finalizar.', 400);
   }
 
-  const payload = await request(`/transcriptions/${sessionId}/finish`, {
+  const payload = await request(`/audiencias/${sessionId}/finish`, {
     method: 'POST',
     timeout: 150000,
     timeoutMessage: 'No pudimos finalizar la sesion de transcripcion dentro del tiempo esperado.',

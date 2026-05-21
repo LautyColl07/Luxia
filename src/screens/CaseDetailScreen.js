@@ -115,6 +115,7 @@ export default function CaseDetailScreen({ navigation, route }) {
                 {hearing?.location ? ` · ${hearing.location}` : ''}
               </Text>
               <HearingRecordingPanel
+                caseDetail={caseDetail}
                 documents={documents}
                 hearing={hearing}
                 onDocumentsChanged={loadCase}

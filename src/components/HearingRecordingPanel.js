@@ -1,103 +1,199 @@
+import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
-import { useNavigation } from '@react-navigation/native';
 import {
   RecordingPresets,
   requestRecordingPermissionsAsync,
   setAudioModeAsync,
-  useAudioPlayer,
-  useAudioPlayerStatus,
   useAudioRecorder,
   useAudioRecorderState,
 } from 'expo-audio';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useAppTheme } from '../context/ThemeContext';
-import { API_BASE_URL, getCurrentIdToken, transcribeDocument, uploadDocument } from '../services/api';
+import {
+  API_BASE_URL,
+  finishHearingLiveTranscription,
+  generateHearingTranscriptionPdf,
+  getCurrentIdToken,
+  getHearingTranscription,
+  startHearingLiveTranscription,
+  transcribeHearingAudio,
+  uploadHearingAudio,
+  uploadHearingLiveTranscriptionChunk,
+} from '../services/api';
 
-const AUDIO_MIME_TYPE = 'audio/mp4';
-const WORD_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const CHUNK_SECONDS = 5;
+const CHUNK_MILLIS = CHUNK_SECONDS * 1000;
+const PDF_MIME_TYPE = 'application/pdf';
 
-function slugify(value) {
-  return String(value ?? 'audiencia')
+function slugify(value, fallback = 'Audiencia') {
+  return String(value || fallback)
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-zA-Z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '')
-    .replace(/_+/g, '_')
-    .toLowerCase() || 'audiencia';
+    .replace(/_+/g, '_') || fallback;
 }
 
-function formatDuration(durationMillis) {
-  const totalSeconds = Math.max(0, Math.floor((Number(durationMillis) || 0) / 1000));
-  const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, '0');
-  const seconds = String(totalSeconds % 60).padStart(2, '0');
-  return `${minutes}:${seconds}`;
+function buildPdfFileName(caseDetail, hearing) {
+  const caseName = slugify(caseDetail?.title || caseDetail?.titulo || hearing?.caseTitle || 'Causa');
+  const hearingId = slugify(hearing?.number || hearing?.numero || hearing?.id || '1');
+  return `Transcripcion_${caseName}_Audiencia_${hearingId}.pdf`;
 }
 
-function isAudioDocument(document) {
-  const fileName = String(document?.fileName || '').toLowerCase();
-  const documentType = String(document?.documentType || document?.tipo || '').toLowerCase();
-
+function getErrorMessage(error, fallback) {
   return (
-    documentType === 'audio' ||
-    /\.(m4a|mp3|wav|aac|webm|ogg)$/i.test(fileName)
+    error?.data?.error ||
+    error?.data?.message ||
+    error?.message ||
+    fallback
   );
 }
 
-function getAudioSequence(fileName, fallbackIndex) {
-  const match = String(fileName || '').match(/_audio_(\d+)/i);
-  return match ? Number(match[1]) : fallbackIndex;
-}
-
-function buildTranscriptFileName(hearingTitle, audioDocument, audioDocumentsCount) {
-  const slug = slugify(hearingTitle);
-  const sequence = getAudioSequence(audioDocument?.fileName, audioDocumentsCount || 1);
-  return `${slug}_transcripcion_${sequence}.docx`;
-}
-
-export default function HearingRecordingPanel({ hearing, documents = [], onDocumentsChanged }) {
-  const navigation = useNavigation();
+export default function HearingRecordingPanel({ caseDetail, hearing, onDocumentsChanged }) {
   const { colors } = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder, 250);
-  const player = useAudioPlayer(null);
-  const playerStatus = useAudioPlayerStatus(player);
-  const [localRecording, setLocalRecording] = useState(null);
-  const [uploadedAudioDocument, setUploadedAudioDocument] = useState(null);
-  const [transcriptState, setTranscriptState] = useState(null);
-  const [saving, setSaving] = useState(false);
-  const [transcribing, setTranscribing] = useState(false);
-  const [downloadingTranscript, setDownloadingTranscript] = useState(false);
+  const [transcriptText, setTranscriptText] = useState('');
+  const [transcriptInfo, setTranscriptInfo] = useState(null);
+  const [statusText, setStatusText] = useState('Lista para grabar la audiencia.');
+  const [loadingTranscript, setLoadingTranscript] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isFinishing, setIsFinishing] = useState(false);
+  const [isUploadingAudio, setIsUploadingAudio] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const recordingRef = useRef(false);
+  const sessionIdRef = useRef(null);
+  const chunkIndexRef = useRef(0);
+  const loopPromiseRef = useRef(null);
+  const stopChunkRef = useRef(null);
 
-  const hearingDocuments = useMemo(
-    () => documents.filter((item) => String(item?.hearingId) === String(hearing?.id)),
-    [documents, hearing?.id]
-  );
+  const hearingId = hearing?.id;
+  const hasTranscript = Boolean(transcriptText.trim());
+  const showProgress = isStarting || isFinishing || isUploadingAudio || isTranscribing || isGeneratingPdf;
+  const canDownloadPdf = Boolean(transcriptInfo?.pdfAvailable);
 
-  const audioDocuments = useMemo(
+  const refreshTranscript = useCallback(async () => {
+    if (!hearingId) {
+      return;
+    }
+
+    try {
+      setLoadingTranscript(true);
+      const result = await getHearingTranscription(hearingId);
+      setTranscriptInfo(result);
+      setTranscriptText(result?.text || '');
+      setStatusText(
+        result?.text
+          ? 'Transcripción cargada.'
+          : 'Lista para grabar la audiencia.'
+      );
+    } catch (error) {
+      console.error('[HearingRecordingPanel] Error cargando transcripcion:', error);
+      setStatusText('No pudimos cargar la transcripción guardada.');
+    } finally {
+      setLoadingTranscript(false);
+    }
+  }, [hearingId]);
+
+  useEffect(() => {
+    void refreshTranscript();
+  }, [refreshTranscript]);
+
+  const waitForChunkEnd = useCallback(
     () =>
-      [...hearingDocuments]
-        .filter(isAudioDocument)
-        .sort((first, second) => new Date(second?.uploadedAt || second?.createdAt || 0) - new Date(first?.uploadedAt || first?.createdAt || 0)),
-    [hearingDocuments]
+      new Promise((resolve) => {
+        const timeoutId = setTimeout(resolve, CHUNK_MILLIS);
+        stopChunkRef.current = () => {
+          clearTimeout(timeoutId);
+          resolve();
+        };
+      }),
+    []
   );
 
-  const activeAudioDocument = uploadedAudioDocument || audioDocuments[0] || null;
+  const recordLoop = useCallback(async () => {
+    while (recordingRef.current) {
+      const chunkIndex = chunkIndexRef.current;
+      const startTime = chunkIndex * CHUNK_SECONDS;
+      const endTime = startTime + CHUNK_SECONDS;
+
+      try {
+        setStatusText(`Grabando bloque ${chunkIndex + 1}...`);
+        await recorder.prepareToRecordAsync();
+        recorder.record();
+        await waitForChunkEnd();
+
+        setStatusText('Transcribiendo audiencia...');
+        setIsTranscribing(true);
+        await recorder.stop();
+
+        const recorderSnapshot = recorder.getStatus();
+        const audioUri = recorder.uri || recorderSnapshot?.url || recorderState.url;
+        stopChunkRef.current = null;
+
+        if (!audioUri) {
+          throw new Error('No se encontró el archivo temporal de audio.');
+        }
+
+        const sessionId = sessionIdRef.current;
+
+        if (!sessionId) {
+          throw new Error('No hay una sesion activa para enviar el bloque.');
+        }
+
+        const response = await uploadHearingLiveTranscriptionChunk({
+          audioUri,
+          chunkIndex,
+          endTime,
+          hearingId,
+          sessionId,
+          startTime,
+        });
+        console.log('[HearingRecordingPanel] chunk enviado', {
+          chunkIndex,
+          endpoint: `POST /audiencias/${sessionId}/chunk`,
+        });
+        const nextText = response?.fullText || [transcriptText.trim(), response?.text].filter(Boolean).join('\n');
+
+        if (nextText) {
+          setTranscriptText(nextText);
+        }
+
+        setTranscriptInfo((current) => ({
+          ...(current || {}),
+          audioAvailable: true,
+          status: response?.status || 'transcribing',
+          text: nextText,
+        }));
+      } catch (error) {
+        console.error('[HearingRecordingPanel] Error procesando bloque:', error);
+        setStatusText(getErrorMessage(error, 'No se pudo transcribir un bloque de audio.'));
+      } finally {
+        setIsTranscribing(false);
+        chunkIndexRef.current = chunkIndex + 1;
+      }
+    }
+  }, [hearingId, recorder, recorderState.url, transcriptText, waitForChunkEnd]);
 
   const handleStartRecording = useCallback(async () => {
+    if (recordingRef.current || isStarting || !hearingId) {
+      return;
+    }
+
     try {
+      setIsStarting(true);
       const permission = await requestRecordingPermissionsAsync();
 
       if (!permission.granted) {
-        Alert.alert('Permiso requerido', 'Necesitamos acceso al microfono para grabar la audiencia.');
+        Alert.alert('Permiso requerido', 'Necesitamos acceso al micrófono para grabar la audiencia.');
         return;
-      }
-
-      if (playerStatus?.playing) {
-        player.pause();
       }
 
       await setAudioModeAsync({
@@ -108,146 +204,149 @@ export default function HearingRecordingPanel({ hearing, documents = [], onDocum
         shouldRouteThroughEarpiece: false,
       });
 
-      await recorder.prepareToRecordAsync();
-      recorder.record();
-      setLocalRecording(null);
-      setTranscriptState(null);
+      console.log('[HearingRecordingPanel] start endpoint', 'POST /audiencias/start');
+      const started = await startHearingLiveTranscription({ caseDetail, hearing });
+      sessionIdRef.current = started?.sessionId || null;
+      console.log('[HearingRecordingPanel] sessionId creado', sessionIdRef.current);
+      setTranscriptInfo(started);
+      setTranscriptText('');
+      setStatusText('Grabando audiencia...');
+      chunkIndexRef.current = 0;
+      recordingRef.current = true;
+      setIsRecording(true);
+      loopPromiseRef.current = recordLoop();
     } catch (error) {
+      const message = getErrorMessage(error, 'No se pudo iniciar la grabacion.');
       console.error('[HearingRecordingPanel] Error iniciando grabacion:', error);
-      Alert.alert('No se pudo iniciar la grabacion.', 'Intenta nuevamente.');
+      Alert.alert('No se pudo iniciar la grabación', message);
+      recordingRef.current = false;
+      sessionIdRef.current = null;
+      setIsRecording(false);
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => null);
+    } finally {
+      setIsStarting(false);
     }
-  }, [player, playerStatus?.playing, recorder]);
+  }, [caseDetail, hearing, hearingId, isStarting, recordLoop]);
 
   const handleStopRecording = useCallback(async () => {
+    const sessionId = sessionIdRef.current;
+
+    if (!recordingRef.current || isFinishing || !hearingId || !sessionId) {
+      return;
+    }
+
     try {
-      await recorder.stop();
-      await setAudioModeAsync({
-        allowsRecording: false,
-        playsInSilentMode: true,
-        interruptionMode: 'doNotMix',
-        shouldPlayInBackground: false,
-        shouldRouteThroughEarpiece: false,
-      });
+      setIsFinishing(true);
+      setStatusText('Transcribiendo audiencia...');
+      recordingRef.current = false;
+      stopChunkRef.current?.();
 
-      const recorderSnapshot = recorder.getStatus();
-      const recordingUri = recorder.uri || recorderSnapshot?.url || recorderState.url;
-
-      if (!recordingUri) {
-        throw new Error('No se encontro el audio grabado.');
+      if (loopPromiseRef.current) {
+        await loopPromiseRef.current;
       }
 
-      const nextIndex = audioDocuments.length + 1;
-      setLocalRecording({
-        uri: recordingUri,
-        fileName: `${slugify(hearing?.title)}_audio_${nextIndex}.m4a`,
-        durationMillis: recorderState.durationMillis || 0,
-      });
+      const finished = await finishHearingLiveTranscription({ hearingId, sessionId });
+      console.log('[HearingRecordingPanel] finish enviado', `POST /audiencias/${sessionId}/finish`);
+      setTranscriptInfo(finished);
+
+      if (finished?.text) {
+        setTranscriptText(finished.text);
+      }
+
+      setStatusText('Transcripción guardada.');
+      await onDocumentsChanged?.();
     } catch (error) {
+      const message = getErrorMessage(error, 'No se pudo detener la grabación.');
       console.error('[HearingRecordingPanel] Error deteniendo grabacion:', error);
-      Alert.alert('No se pudo detener la grabacion.', 'Intenta nuevamente.');
+      Alert.alert('No se pudo detener la grabación', message);
+    } finally {
+      setIsRecording(false);
+      setIsFinishing(false);
+      sessionIdRef.current = null;
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => null);
     }
-  }, [audioDocuments.length, hearing?.title, recorder, recorderState.durationMillis, recorderState.url]);
+  }, [hearingId, isFinishing, onDocumentsChanged]);
 
-  const handlePlayRecording = useCallback(async () => {
-    if (!localRecording?.uri) {
+  const handleUploadAudio = useCallback(async () => {
+    if (!hearingId || isRecording) {
       return;
     }
 
     try {
-      await setAudioModeAsync({
-        allowsRecording: false,
-        playsInSilentMode: true,
-        interruptionMode: 'doNotMix',
-        shouldPlayInBackground: false,
-        shouldRouteThroughEarpiece: false,
+      const pickerResult = await DocumentPicker.getDocumentAsync({
+        copyToCacheDirectory: true,
+        multiple: false,
+        type: ['audio/*', 'video/mp4'],
       });
 
-      if (playerStatus?.playing) {
-        player.pause();
+      if (pickerResult.canceled) {
+        return;
       }
 
-      player.replace({ uri: localRecording.uri });
-      await player.seekTo(0).catch(() => null);
-      player.play();
-    } catch (error) {
-      console.error('[HearingRecordingPanel] Error reproduciendo grabacion:', error);
-      Alert.alert('No se pudo reproducir la grabacion.', 'Intenta nuevamente.');
-    }
-  }, [localRecording?.uri, player, playerStatus?.playing]);
+      const asset = pickerResult.assets?.[0] || null;
 
-  const handleSaveAudio = useCallback(async () => {
-    if (!localRecording?.uri || !hearing?.id) {
-      return;
-    }
-
-    try {
-      setSaving(true);
-      const uploadedDocument = await uploadDocument({
-        hearingId: hearing.id,
-        asset: {
-          uri: localRecording.uri,
-          name: localRecording.fileName,
-          mimeType: AUDIO_MIME_TYPE,
-        },
-        documentType: 'audio',
-        baseName: hearing?.title || 'audiencia',
-      });
-
-      if (uploadedDocument) {
-        setUploadedAudioDocument(uploadedDocument);
+      if (!asset?.uri) {
+        Alert.alert('Audio invalido', 'No pudimos leer el archivo seleccionado.');
+        return;
       }
 
+      setIsUploadingAudio(true);
+      setIsTranscribing(true);
+      setStatusText('Subiendo audio...');
+      await uploadHearingAudio({ asset, caseDetail, hearing });
+      setStatusText('Transcribiendo audiencia...');
+      const transcript = await transcribeHearingAudio({ hearingId });
+      setTranscriptInfo(transcript);
+      setTranscriptText(transcript?.text || '');
+      setStatusText('Transcripción guardada.');
       await onDocumentsChanged?.();
-      Alert.alert('Audio guardado', 'La grabacion se vinculo correctamente con la audiencia.');
     } catch (error) {
-      console.error('[HearingRecordingPanel] Error guardando audio:', error);
-      Alert.alert(
-        'No se pudo guardar el audio.',
-        error instanceof Error ? error.message : 'Intenta nuevamente.'
-      );
+      const message = getErrorMessage(error, 'No se pudo subir o transcribir el audio.');
+      console.error('[HearingRecordingPanel] Error subiendo audio:', error);
+      Alert.alert('No se pudo procesar el audio', message);
     } finally {
-      setSaving(false);
+      setIsUploadingAudio(false);
+      setIsTranscribing(false);
     }
-  }, [hearing?.id, hearing?.title, localRecording, onDocumentsChanged]);
+  }, [caseDetail, hearing, hearingId, isRecording, onDocumentsChanged]);
 
-  const handleTranscribeAudio = useCallback(async () => {
-    if (!activeAudioDocument?.id) {
+  const handleGeneratePdf = useCallback(async () => {
+    if (!hasTranscript) {
+      Alert.alert('No hay transcripción para guardar.');
       return;
     }
 
     try {
-      setTranscribing(true);
-      const response = await transcribeDocument(activeAudioDocument.id);
-      setTranscriptState({
-        documentId: activeAudioDocument.id,
-        transcript: response?.transcript || '',
-        transcriptFilePath: response?.transcriptFilePath || null,
-      });
-      await onDocumentsChanged?.();
-      Alert.alert('Transcripcion lista', 'El audio se transcribio correctamente.');
-    } catch (error) {
-      console.error('[HearingRecordingPanel] Error transcribiendo audio:', error);
-      Alert.alert(
-        'No se pudo transcribir el audio.',
-        error instanceof Error ? error.message : 'Intenta nuevamente.'
+      setIsGeneratingPdf(true);
+      setStatusText('Generando PDF...');
+      console.log(
+        '[HearingRecordingPanel] generando PDF endpoint:',
+        `/audiencias/${hearingId}/transcripcion/pdf`
       );
+      const result = await generateHearingTranscriptionPdf({ hearingId });
+      setTranscriptInfo(result);
+      setStatusText('PDF generado.');
+    } catch (error) {
+      const message = getErrorMessage(error, 'No se pudo generar el PDF.');
+      console.error('[HearingRecordingPanel] Error generando PDF:', error);
+      Alert.alert('No se pudo guardar el PDF', message);
     } finally {
-      setTranscribing(false);
+      setIsGeneratingPdf(false);
     }
-  }, [activeAudioDocument?.id, onDocumentsChanged]);
+  }, [hasTranscript, hearingId]);
 
-  const handleDownloadTranscript = useCallback(async () => {
-    if (!activeAudioDocument?.id) {
+  const handleDownloadPdf = useCallback(async () => {
+    if (!canDownloadPdf) {
+      Alert.alert('No hay PDF disponible para descargar.');
       return;
     }
 
     try {
-      setDownloadingTranscript(true);
+      setIsDownloadingPdf(true);
       const token = await getCurrentIdToken();
-      const fileName = buildTranscriptFileName(hearing?.title, activeAudioDocument, audioDocuments.length);
-      const localUri = `${FileSystem.documentDirectory}${fileName}`;
+      const localUri = `${FileSystem.documentDirectory}${buildPdfFileName(caseDetail, hearing)}`;
       const result = await FileSystem.downloadAsync(
-        `${API_BASE_URL}/documentos/${activeAudioDocument.id}/transcripcion/word`,
+        `${API_BASE_URL}/audiencias/${hearingId}/transcripcion/pdf`,
         localUri,
         {
           headers: {
@@ -259,120 +358,106 @@ export default function HearingRecordingPanel({ hearing, documents = [], onDocum
 
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(result.uri, {
-          dialogTitle: 'Compartir transcripcion',
-          mimeType: WORD_MIME_TYPE,
-          UTI: 'org.openxmlformats.wordprocessingml.document',
+          dialogTitle: 'Descargar transcripción',
+          mimeType: PDF_MIME_TYPE,
+          UTI: 'com.adobe.pdf',
         });
       }
-
-      Alert.alert('Transcripcion lista', 'El archivo Word quedo listo para abrir o compartir.');
     } catch (error) {
-      console.error('[HearingRecordingPanel] Error descargando transcripcion:', error);
-      Alert.alert(
-        'No se pudo descargar la transcripcion.',
-        error instanceof Error ? error.message : 'Intenta nuevamente.'
-      );
+      const message = getErrorMessage(error, 'No se pudo descargar el PDF.');
+      console.error('[HearingRecordingPanel] Error descargando PDF:', error);
+      Alert.alert('No se pudo descargar el PDF', message);
     } finally {
-      setDownloadingTranscript(false);
+      setIsDownloadingPdf(false);
     }
-  }, [activeAudioDocument, audioDocuments.length, hearing?.title]);
+  }, [canDownloadPdf, caseDetail, hearing, hearingId]);
 
-  const statusMessage = useMemo(() => {
-    if (recorderState.isRecording) {
-      return `Grabando... ${formatDuration(recorderState.durationMillis)}`;
-    }
-
-    if (saving) {
-      return 'Subiendo audio...';
-    }
-
-    if (transcribing) {
-      return 'Transcribiendo audio...';
-    }
-
-    if (localRecording?.uri) {
-      return `Grabacion lista (${formatDuration(localRecording.durationMillis)})`;
-    }
-
-    return 'Lista para grabar la audiencia.';
-  }, [localRecording?.durationMillis, localRecording?.uri, recorderState.durationMillis, recorderState.isRecording, saving, transcribing]);
-
-  const latestTranscript = transcriptState?.transcript || '';
+  useEffect(
+    () => () => {
+      recordingRef.current = false;
+      sessionIdRef.current = null;
+      stopChunkRef.current?.();
+      void setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => null);
+    },
+    []
+  );
 
   return (
     <View style={styles.panel}>
-      <Text style={styles.panelTitle}>Grabacion de audiencia</Text>
-      <Text style={styles.panelStatus}>{statusMessage}</Text>
+      <View style={styles.header}>
+        <View style={[styles.recordingIndicator, isRecording && styles.recordingIndicatorActive]} />
+        <View style={styles.headerCopy}>
+          <Text style={styles.panelTitle}>Transcripción de audiencia</Text>
+          <Text style={styles.panelDescription}>
+            Grabá la audiencia y visualizá la transcripción en tiempo real.
+          </Text>
+        </View>
+      </View>
 
       <View style={styles.buttonGrid}>
         <ActionButton
-          disabled={recorderState.isRecording || saving || transcribing}
-          label="Iniciar grabacion"
+          disabled={isRecording || isStarting || isFinishing}
+          label={isStarting ? 'Iniciando...' : 'Iniciar grabación'}
           onPress={() => void handleStartRecording()}
           styles={styles}
-          variant="secondary"
+          variant="primary"
         />
         <ActionButton
-          disabled={!recorderState.isRecording}
-          label="Detener grabacion"
+          disabled={!isRecording || isFinishing}
+          label={isFinishing ? 'Deteniendo...' : 'Detener grabación'}
           onPress={() => void handleStopRecording()}
           styles={styles}
-          variant="primary"
-        />
-        <ActionButton
-          disabled={!localRecording?.uri}
-          label={playerStatus?.playing ? 'Reproduciendo...' : 'Reproducir grabacion'}
-          onPress={() => void handlePlayRecording()}
-          styles={styles}
           variant="secondary"
         />
         <ActionButton
-          disabled={!localRecording?.uri || saving}
-          label={saving ? 'Guardando audio...' : 'Guardar audio'}
-          onPress={() => void handleSaveAudio()}
-          styles={styles}
-          variant="primary"
-        />
-        <ActionButton
-          disabled={!activeAudioDocument?.id || transcribing}
-          label={transcribing ? 'Transcribiendo...' : 'Transcribir audio'}
-          onPress={() => void handleTranscribeAudio()}
-          styles={styles}
-          variant="secondary"
-        />
-        <ActionButton
-          disabled={!transcriptState?.documentId || downloadingTranscript}
-          label={downloadingTranscript ? 'Descargando...' : 'Descargar transcripcion'}
-          onPress={() => void handleDownloadTranscript()}
-          styles={styles}
-          variant="primary"
-        />
-        <ActionButton
-          disabled={!hearing?.id}
-          label="Iniciar transcripción en vivo"
-          onPress={() =>
-            navigation.navigate('LiveTranscription', {
-              caseId: hearing?.caseId,
-              hearingId: hearing?.id,
-              title: hearing?.title,
-            })
-          }
+          disabled={isRecording || isUploadingAudio || isTranscribing}
+          label={isUploadingAudio ? 'Subiendo...' : 'Subir audio'}
+          onPress={() => void handleUploadAudio()}
           styles={styles}
           variant="secondary"
         />
       </View>
 
-      <View style={styles.infoBlock}>
-        <Text style={styles.infoLabel}>Ultimo audio guardado</Text>
-        <Text style={styles.infoText}>
-          {activeAudioDocument?.fileName || 'Todavia no se guardaron audios para esta audiencia.'}
+      {showProgress ? (
+        <View style={styles.progressBlock}>
+          <Text style={styles.progressText}>Transcribiendo audiencia...</Text>
+          <View style={styles.progressTrack}>
+            <View style={styles.progressFill} />
+          </View>
+        </View>
+      ) : (
+        <Text style={styles.panelStatus}>
+          {loadingTranscript ? 'Cargando transcripción...' : statusText}
         </Text>
+      )}
+
+      <View style={styles.transcriptPreview}>
+        <Text style={styles.previewTitle}>Vista previa de la transcripción</Text>
+        <View style={styles.documentBox}>
+          <Text style={[styles.transcriptText, !hasTranscript && styles.placeholderText]}>
+            {hasTranscript ? transcriptText : 'Todavía no hay transcripción disponible.'}
+          </Text>
+        </View>
       </View>
 
-      {latestTranscript ? (
-        <View style={styles.transcriptCard}>
-          <Text style={styles.infoLabel}>Vista previa de la transcripcion</Text>
-          <Text style={styles.transcriptText}>{latestTranscript}</Text>
+      {hasTranscript ? (
+        <View style={styles.pdfActions}>
+          <ActionButton
+            disabled={isGeneratingPdf}
+            label={isGeneratingPdf ? 'Guardando PDF...' : 'Guardar transcripción en PDF'}
+            onPress={() => void handleGeneratePdf()}
+            styles={styles}
+            variant="primary"
+          />
+          {canDownloadPdf ? (
+            <ActionButton
+              disabled={isDownloadingPdf}
+              label={isDownloadingPdf ? 'Descargando...' : 'Descargar PDF'}
+              onPress={() => void handleDownloadPdf()}
+              styles={styles}
+              variant="secondary"
+            />
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -400,12 +485,36 @@ const createStyles = (colors) => StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.borderSoft,
     paddingTop: 14,
-    gap: 12,
+    gap: 14,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  recordingIndicator: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: colors.textMuted,
+    marginTop: 6,
+  },
+  recordingIndicatorActive: {
+    backgroundColor: colors.danger,
+  },
+  headerCopy: {
+    flex: 1,
   },
   panelTitle: {
     color: colors.text,
-    fontSize: 15,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  panelDescription: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 20,
+    marginTop: 5,
   },
   panelStatus: {
     color: colors.textSecondary,
@@ -416,22 +525,22 @@ const createStyles = (colors) => StyleSheet.create({
     gap: 10,
   },
   primaryButton: {
-    minHeight: 46,
-    borderRadius: 16,
+    minHeight: 50,
+    borderRadius: 18,
     backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
   },
   secondaryButton: {
-    minHeight: 46,
-    borderRadius: 16,
+    minHeight: 50,
+    borderRadius: 18,
     backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: colors.borderSoft,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
   },
   buttonDisabled: {
     opacity: 0.55,
@@ -439,45 +548,70 @@ const createStyles = (colors) => StyleSheet.create({
   primaryButtonText: {
     color: colors.textOnPrimary,
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '800',
     textAlign: 'center',
   },
   secondaryButtonText: {
     color: colors.text,
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '800',
     textAlign: 'center',
   },
   buttonTextDisabled: {
     color: colors.textMuted,
   },
-  infoBlock: {
-    backgroundColor: colors.background,
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: colors.borderSoft,
-    gap: 6,
-  },
-  infoLabel: {
-    color: colors.text,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  infoText: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 20,
-  },
-  transcriptCard: {
+  progressBlock: {
     backgroundColor: colors.accentSoft,
     borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
     padding: 14,
-    gap: 8,
+    gap: 10,
+  },
+  progressText: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  progressTrack: {
+    height: 6,
+    borderRadius: 999,
+    backgroundColor: colors.borderSoft,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    width: '48%',
+    height: '100%',
+    borderRadius: 999,
+    backgroundColor: colors.primary,
+  },
+  transcriptPreview: {
+    gap: 10,
+  },
+  previewTitle: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  documentBox: {
+    minHeight: 220,
+    backgroundColor: colors.card,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: 16,
+    paddingVertical: 18,
   },
   transcriptText: {
     color: colors.text,
-    fontSize: 13,
-    lineHeight: 20,
+    fontSize: 14,
+    lineHeight: 23,
+  },
+  placeholderText: {
+    color: colors.textMuted,
+    fontStyle: 'italic',
+  },
+  pdfActions: {
+    gap: 10,
   },
 });
