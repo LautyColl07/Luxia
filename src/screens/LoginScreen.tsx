@@ -196,7 +196,7 @@ export default function LoginScreen({ navigation }: any) {
               <View style={styles.divider} />
 
               <TouchableOpacity
-                onPress={() => navigation.navigate("HelpAccess")}
+                onPress={() => navigation.navigate("ForgotPassword")}
                 style={styles.helpButton}
               >
                 <HelpCircle size={16} color="#5B6776" />

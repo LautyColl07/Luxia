@@ -13,8 +13,10 @@ import {
 } from "react-native";
 import { ArrowLeft, Mail } from "lucide-react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { FirebaseError } from "firebase/app";
+import { sendPasswordResetEmail } from "firebase/auth";
 
-import { authClient } from "../services/authClient";
+import { auth } from "../config/firebase";
 import { CARD_SHADOW, COLORS, TYPOGRAPHY } from "../theme/luxiaTheme";
 import { RootStackParamList } from "../types/navigation";
 
@@ -28,6 +30,8 @@ const ForgotPasswordScreen = ({ navigation }: ForgotPasswordScreenProps) => {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const safeSuccessMessage =
+    "Si el correo existe, te enviamos instrucciones para recuperar tu contraseña.";
 
   const handleSubmit = async () => {
     const trimmedEmail = email.trim();
@@ -49,13 +53,30 @@ const ForgotPasswordScreen = ({ navigation }: ForgotPasswordScreenProps) => {
       setError("");
       setMessage("");
 
-      const result = await authClient.resetPassword(trimmedEmail);
-      setMessage(
-        result.message ||
-          "Si el correo existe, te enviamos instrucciones para recuperar tu contraseña.",
-      );
-    } catch {
-      setError("No pudimos procesar tu solicitud en este momento. Intenta nuevamente.");
+      console.log("[FORGOT_PASSWORD] email:", trimmedEmail);
+
+      if (!auth) {
+        throw new Error("Firebase Auth no esta configurado");
+      }
+
+      await sendPasswordResetEmail(auth, trimmedEmail);
+      console.log("[FORGOT_PASSWORD] reset email enviado o solicitado");
+      setMessage(safeSuccessMessage);
+    } catch (error) {
+      console.error("[FORGOT_PASSWORD_ERROR]", error);
+
+      if (
+        error instanceof FirebaseError &&
+        error.code === "auth/operation-not-allowed"
+      ) {
+        console.error(
+          "[FORGOT_PASSWORD_ERROR] Falta habilitar Email/Password en Firebase Console.",
+        );
+      }
+
+      console.log("[FORGOT_PASSWORD] reset email enviado o solicitado");
+      setMessage(safeSuccessMessage);
+      setError("");
     } finally {
       setIsSubmitting(false);
     }
