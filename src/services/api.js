@@ -1104,6 +1104,56 @@ export async function uploadDocument(data) {
   });
 }
 
+export async function uploadPdfDocumentFromHearing({ fileUri, hearingId, fileName } = {}) {
+  if (!fileUri || !hearingId) {
+    throw createRequestError('No hay una audiencia o archivo PDF valido para guardar.', 400);
+  }
+
+  const currentUser = auth?.currentUser;
+
+  if (!currentUser) {
+    throw createRequestError(MISSING_SESSION_MESSAGE, 401);
+  }
+
+  const token = await currentUser.getIdToken();
+
+  if (!token) {
+    throw createRequestError(MISSING_SESSION_MESSAGE, 401);
+  }
+
+  setAuthToken(token);
+
+  const formData = new FormData();
+
+  formData.append('file', {
+    uri: fileUri,
+    type: 'application/pdf',
+    name: fileName,
+  });
+
+  formData.append('hearingId', String(hearingId));
+
+  const response = await fetch(`${API_BASE_URL}/documentos`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: formData,
+  });
+
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw createRequestError(
+      data?.error || 'No se pudo guardar el PDF en Documentos',
+      response.status,
+      data
+    );
+  }
+
+  return data;
+}
+
 export async function transcribeDocument(documentId) {
   if (USE_MOCKS) {
     return simulateDelay({

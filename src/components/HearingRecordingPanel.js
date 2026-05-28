@@ -1,5 +1,6 @@
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import {
   RecordingPresets,
@@ -13,35 +14,19 @@ import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useAppTheme } from '../context/ThemeContext';
 import {
-  API_BASE_URL,
   finishHearingLiveTranscription,
-  generateHearingTranscriptionPdf,
-  getCurrentIdToken,
   getHearingTranscription,
   startHearingLiveTranscription,
   transcribeHearingAudio,
   uploadHearingAudio,
   uploadHearingLiveTranscriptionChunk,
+  uploadPdfDocumentFromHearing,
 } from '../services/api';
+import { buildTranscriptionHtml } from '../utils/exportTranscription';
 
 const CHUNK_SECONDS = 5;
 const CHUNK_MILLIS = CHUNK_SECONDS * 1000;
 const PDF_MIME_TYPE = 'application/pdf';
-
-function slugify(value, fallback = 'Audiencia') {
-  return String(value || fallback)
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-zA-Z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .replace(/_+/g, '_') || fallback;
-}
-
-function buildPdfFileName(caseDetail, hearing) {
-  const caseName = slugify(caseDetail?.title || caseDetail?.titulo || hearing?.caseTitle || 'Causa');
-  const hearingId = slugify(hearing?.number || hearing?.numero || hearing?.id || '1');
-  return `Transcripcion_${caseName}_Audiencia_${hearingId}.pdf`;
-}
 
 function getErrorMessage(error, fallback) {
   return (
@@ -74,7 +59,7 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
   const loopPromiseRef = useRef(null);
   const stopChunkRef = useRef(null);
 
-  const hearingId = hearing?.id;
+  const hearingId = hearing?.id ?? hearing?.audienciaId ?? hearing?.hearingId;
   const hasTranscript = Boolean(transcriptText.trim());
   const showProgress = isStarting || isFinishing || isUploadingAudio || isTranscribing || isGeneratingPdf;
   const canDownloadPdf = Boolean(transcriptInfo?.pdfAvailable);
@@ -316,16 +301,56 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
       return;
     }
 
+    if (!hearingId) {
+      Alert.alert('Error', 'No se encontró el ID de la audiencia.');
+      return;
+    }
+
+    const fileName = `transcripcion-audiencia-${hearingId}.pdf`;
+
     try {
       setIsGeneratingPdf(true);
       setStatusText('Generando PDF...');
-      console.log(
-        '[HearingRecordingPanel] generando PDF endpoint:',
-        `/audiencias/${hearingId}/transcripcion/pdf`
-      );
-      const result = await generateHearingTranscriptionPdf({ hearingId });
-      setTranscriptInfo(result);
-      setStatusText('PDF generado.');
+      const htmlContent = buildTranscriptionHtml(transcriptText);
+      const pdf = await Print.printToFileAsync({
+        html: htmlContent,
+      });
+      const pdfUri = pdf.uri;
+
+      console.log('[PDF URI]', pdfUri);
+
+      const info = await FileSystem.getInfoAsync(pdfUri);
+
+      console.log('[PDF INFO]', info);
+
+      if (!info.exists || !info.size || info.size <= 0) {
+        throw new Error('El PDF generado está vacío o no existe');
+      }
+
+      setStatusText('Guardando PDF en Documentos...');
+
+      try {
+        await uploadPdfDocumentFromHearing({
+          fileUri: pdfUri,
+          hearingId,
+          fileName,
+        });
+
+        setTranscriptInfo((current) => ({
+          ...(current || {}),
+          pdfAvailable: true,
+        }));
+        setStatusText('PDF guardado en Documentos.');
+        Alert.alert('Listo', 'El PDF se guardó correctamente en Documentos.');
+        await onDocumentsChanged?.();
+      } catch (uploadError) {
+        setStatusText('PDF generado, pero no se pudo guardar en Documentos.');
+        console.error('[HearingRecordingPanel] Error subiendo PDF a Documentos:', uploadError);
+        Alert.alert(
+          'PDF generado',
+          'El PDF se generó, pero no se pudo guardar en Documentos.'
+        );
+      }
     } catch (error) {
       const message = getErrorMessage(error, 'No se pudo generar el PDF.');
       console.error('[HearingRecordingPanel] Error generando PDF:', error);
@@ -333,28 +358,20 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
     } finally {
       setIsGeneratingPdf(false);
     }
-  }, [hasTranscript, hearingId]);
+  }, [hasTranscript, hearingId, onDocumentsChanged, transcriptText]);
 
   const handleDownloadPdf = useCallback(async () => {
-    if (!canDownloadPdf) {
+    if (!canDownloadPdf || !hasTranscript) {
       Alert.alert('No hay PDF disponible para descargar.');
       return;
     }
 
     try {
       setIsDownloadingPdf(true);
-      const token = await getCurrentIdToken();
-      const localUri = `${FileSystem.documentDirectory}${buildPdfFileName(caseDetail, hearing)}`;
-      const result = await FileSystem.downloadAsync(
-        `${API_BASE_URL}/audiencias/${hearingId}/transcripcion/pdf`,
-        localUri,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-          idempotent: true,
-        }
-      );
+      const htmlContent = buildTranscriptionHtml(transcriptText);
+      const result = await Print.printToFileAsync({
+        html: htmlContent,
+      });
 
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(result.uri, {
@@ -370,7 +387,7 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
     } finally {
       setIsDownloadingPdf(false);
     }
-  }, [canDownloadPdf, caseDetail, hearing, hearingId]);
+  }, [canDownloadPdf, hasTranscript, transcriptText]);
 
   useEffect(
     () => () => {
