@@ -98,6 +98,10 @@ export default function DashboardScreen({ navigation }) {
     navigation.navigate('Documentos');
   }, [navigation]);
 
+  const handleOpenActivityHistory = useCallback(() => {
+    navigation.navigate('ActivityHistory');
+  }, [navigation]);
+
   const handleCreateCase = useCallback(() => {
     navigation.navigate('NewCase');
   }, [navigation]);
@@ -240,6 +244,19 @@ export default function DashboardScreen({ navigation }) {
             </View>
           ))}
         </View>
+
+        <Pressable onPress={handleOpenActivityHistory} style={styles.activityShortcut}>
+          <View style={styles.activityShortcutIcon}>
+            <MaterialCommunityIcons color={colors.primary} name="history" size={20} />
+          </View>
+          <View style={styles.activityShortcutCopy}>
+            <Text style={styles.activityShortcutTitle}>Historial de actividad</Text>
+            <Text style={styles.activityShortcutDescription}>
+              Revisa movimientos recientes del estudio.
+            </Text>
+          </View>
+          <MaterialCommunityIcons color={colors.textMuted} name="chevron-right" size={22} />
+        </Pressable>
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionEyebrow}>PROXIMAS AUDIENCIAS</Text>
@@ -409,6 +426,46 @@ const createStyles = (colors) => StyleSheet.create({
     width: '50%',
     padding: 6,
     aspectRatio: 1.05,
+  },
+  activityShortcut: {
+    marginTop: 8,
+    marginHorizontal: 22,
+    borderRadius: 24,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    shadowColor: colors.shadow,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.12,
+    shadowRadius: 18,
+    elevation: 3,
+  },
+  activityShortcutIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: colors.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  activityShortcutCopy: {
+    flex: 1,
+  },
+  activityShortcutTitle: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  activityShortcutDescription: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 4,
   },
   sectionHeader: {
     paddingHorizontal: 22,

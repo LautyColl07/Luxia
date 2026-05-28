@@ -4,6 +4,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useMemo } from 'react';
 
 import { useAppTheme } from '../context/ThemeContext';
+import ActivityHistoryScreen from '../screens/ActivityHistoryScreen';
 import CalendarScreen from '../screens/CalendarScreen';
 import CaseDetailScreen from '../screens/CaseDetailScreen';
 import CasesScreen from '../screens/CasesScreen';
@@ -90,6 +91,11 @@ export default function DashboardNavigator() {
       }}
     >
       <Stack.Screen component={DashboardTabs} name="MainTabs" options={{ headerShown: false }} />
+      <Stack.Screen
+        component={ActivityHistoryScreen}
+        name="ActivityHistory"
+        options={{ title: 'Historial de actividad' }}
+      />
       <Stack.Screen component={CaseDetailScreen} name="CaseDetail" options={{ title: 'Detalle de causa' }} />
       <Stack.Screen component={NewCaseScreen} name="NewCase" options={{ title: 'Nueva causa' }} />
       <Stack.Screen component={NewHearingScreen} name="NewHearing" options={{ title: 'Registrar audiencia' }} />
