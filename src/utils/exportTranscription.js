@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 
@@ -18,7 +18,7 @@ function formatDateTime(date = new Date()) {
   }).format(date);
 }
 
-function buildTranscriptionHtml(text, generatedAt = new Date()) {
+export function buildTranscriptionHtml(text, generatedAt = new Date()) {
   const safeText = escapeHtml(text).replace(/\n/g, '<br />');
   const safeDate = escapeHtml(formatDateTime(generatedAt));
 

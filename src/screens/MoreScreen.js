@@ -261,6 +261,23 @@ export default function MoreScreen({ navigation }) {
 
       <CardSection
         colors={colors}
+        icon="history"
+        styles={styles}
+        subtitle="Accesos de consulta para revisar lo que paso en la app."
+        title="Actividad"
+      >
+        <ActionRow
+          colors={colors}
+          description="Ver movimientos recientes del estudio."
+          icon="history"
+          onPress={() => navigation.navigate('ActivityHistory')}
+          styles={styles}
+          title="Historial de actividad"
+        />
+      </CardSection>
+
+      <CardSection
+        colors={colors}
         icon="lock-outline"
         styles={styles}
         subtitle="Acciones rapidas para proteger tu acceso."

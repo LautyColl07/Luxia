@@ -7,7 +7,9 @@ const helmet = require('helmet');
 
 const app = require('./app');
 const { authRateLimit, luxRateLimit } = require('./lib/rateLimit');
+const activityRoutes = require('./routes/activity.routes');
 const authRoutes = require('./routes/auth.routes');
+const documentRoutes = require('./routes/documents.routes');
 const hearingTranscriptionRoutes = require('./routes/hearingTranscription.routes');
 const luxRoutes = require('./routes/lux.routes');
 const transcriptionRoutes = require('./routes/transcription.routes');
@@ -29,8 +31,10 @@ app.use('/api/v1/auth/register', authRateLimit);
 app.use('/api/v1/lux/chat', luxRateLimit);
 
 app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/activity', activityRoutes);
 app.use('/api/v1/lux', luxRoutes);
 app.use('/api/v1/transcriptions', transcriptionRoutes);
+app.use('/api/v1/documentos', documentRoutes);
 app.use('/api/v1/audiencias', hearingTranscriptionRoutes);
 
 app.listen(PORT, () => {

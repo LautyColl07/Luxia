@@ -2,8 +2,8 @@ const express = require('express');
 const multer = require('multer');
 
 const prisma = require('../lib/prisma');
-const { requireFirebaseAuth } = require('../middleware/firebaseAuth');
 const { transcribeAudioChunk } = require('../services/transcription.service');
+const { logActivity } = require('../utils/activityLogger');
 
 const router = express.Router();
 const upload = multer({
@@ -173,6 +173,18 @@ router.post('/:sessionId/finish', async (req, res) => {
       where: { id: sessionId },
     });
 
+    if (session.createdById) {
+      await logActivity({
+        userId: session.createdById,
+        type: 'transcript',
+        title: 'Transcripcion guardada',
+        description: `Se guardo la transcripcion ${session.title ? `de ${session.title}` : 'de una sesion en vivo'}.`,
+        relatedEntityType: 'transcript_session',
+        relatedEntityId: session.id,
+        relatedEntityName: session.title || session.hearingId || session.id,
+      });
+    }
+
     return res.json(normalizeSession(session));
   } catch (error) {
     if (error?.code === 'P2025') {
@@ -186,22 +198,6 @@ router.post('/:sessionId/finish', async (req, res) => {
       error: 'No se pudo finalizar la sesion de transcripcion.',
     });
   }
-});
-
-router.post('/:id/transcripcion/pdf', requireFirebaseAuth, async (req, res) => {
-  const hearingId = normalizeOptionalString(req.params.id);
-
-  if (!hearingId) {
-    return res.status(400).json({
-      error: 'hearingId es obligatorio.',
-    });
-  }
-
-  return res.json({
-    success: true,
-    message: 'PDF pendiente de implementación',
-    downloadUrl: null,
-  });
 });
 
 router.get('/:sessionId', async (req, res) => {

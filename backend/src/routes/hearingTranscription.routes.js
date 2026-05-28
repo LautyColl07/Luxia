@@ -8,6 +8,7 @@ const PDFDocument = require('pdfkit');
 const prisma = require('../lib/prisma');
 const { requireFirebaseAuth } = require('../middleware/firebaseAuth');
 const { transcribeAudioChunk } = require('../services/transcription.service');
+const { logActivity } = require('../utils/activityLogger');
 
 const router = express.Router();
 const upload = multer({
@@ -44,6 +45,21 @@ function parseDate(value) {
 
   const date = new Date(normalized);
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function hasSameDateTime(first, second) {
+  const firstDate = first instanceof Date ? first : parseDate(first);
+  const secondDate = second instanceof Date ? second : parseDate(second);
+
+  if (!firstDate && !secondDate) {
+    return true;
+  }
+
+  if (!firstDate || !secondDate) {
+    return false;
+  }
+
+  return firstDate.getTime() === secondDate.getTime();
 }
 
 function slugify(value, fallback = 'audiencia') {
@@ -164,16 +180,37 @@ async function getOrCreateHearing(req, { allowCreate }) {
     const caseUpdate = getUpdateData({
       title: metadata.caseTitle,
     });
+    const shouldLogCaseUpdate =
+      Boolean(caseUpdate.title) &&
+      normalizeOptionalString(caseUpdate.title) !== normalizeOptionalString(existing.case?.title);
+    const shouldLogHearingUpdate =
+      (Boolean(hearingUpdate.title) &&
+        normalizeOptionalString(hearingUpdate.title) !== normalizeOptionalString(existing.title)) ||
+      (hearingUpdate.date !== undefined && !hasSameDateTime(hearingUpdate.date, existing.date));
 
     if (Object.keys(caseUpdate).length) {
       await prisma.legalCase.update({
         data: caseUpdate,
         where: { id: existing.caseId },
       });
+
+      if (shouldLogCaseUpdate) {
+        await logActivity({
+          userId: user.id,
+          userEmail: user.email,
+          userName: user.name,
+          type: 'case',
+          title: 'Causa actualizada',
+          description: `Se actualizo la causa ${caseUpdate.title || existing.case?.title || existing.caseId}.`,
+          relatedEntityType: 'case',
+          relatedEntityId: existing.caseId,
+          relatedEntityName: caseUpdate.title || existing.case?.title || existing.caseId,
+        });
+      }
     }
 
     if (Object.keys(hearingUpdate).length) {
-      return prisma.hearing.update({
+      const updatedHearing = await prisma.hearing.update({
         data: hearingUpdate,
         include: {
           case: true,
@@ -184,6 +221,22 @@ async function getOrCreateHearing(req, { allowCreate }) {
         },
         where: { id: existing.id },
       });
+
+      if (shouldLogHearingUpdate) {
+        await logActivity({
+          userId: user.id,
+          userEmail: user.email,
+          userName: user.name,
+          type: 'hearing',
+          title: 'Audiencia modificada',
+          description: `Se actualizo la audiencia ${updatedHearing.title || existing.title || existing.id}.`,
+          relatedEntityType: 'hearing',
+          relatedEntityId: updatedHearing.id,
+          relatedEntityName: updatedHearing.title || existing.title || updatedHearing.id,
+        });
+      }
+
+      return updatedHearing;
     }
 
     return existing;
@@ -203,22 +256,55 @@ async function getOrCreateHearing(req, { allowCreate }) {
     throw error;
   }
 
+  let caseRecord = existingCase;
+
   if (existingCase) {
     await prisma.legalCase.update({
       data: { title: metadata.caseTitle },
       where: { id: metadata.caseId },
     });
+
+    caseRecord = {
+      ...existingCase,
+      title: metadata.caseTitle,
+    };
+
+    if (normalizeOptionalString(existingCase.title) !== normalizeOptionalString(metadata.caseTitle)) {
+      await logActivity({
+        userId: user.id,
+        userEmail: user.email,
+        userName: user.name,
+        type: 'case',
+        title: 'Causa actualizada',
+        description: `Se actualizo la causa ${metadata.caseTitle || existingCase.title || metadata.caseId}.`,
+        relatedEntityType: 'case',
+        relatedEntityId: metadata.caseId,
+        relatedEntityName: metadata.caseTitle || existingCase.title || metadata.caseId,
+      });
+    }
   } else {
-    await prisma.legalCase.create({
+    caseRecord = await prisma.legalCase.create({
       data: {
         id: metadata.caseId,
         title: metadata.caseTitle,
         userId: user.id,
       },
     });
+
+    await logActivity({
+      userId: user.id,
+      userEmail: user.email,
+      userName: user.name,
+      type: 'case',
+      title: 'Causa creada',
+      description: `Se creo la causa ${caseRecord.title || metadata.caseId}.`,
+      relatedEntityType: 'case',
+      relatedEntityId: caseRecord.id,
+      relatedEntityName: caseRecord.title || caseRecord.id,
+    });
   }
 
-  return prisma.hearing.create({
+  const createdHearing = await prisma.hearing.create({
     data: {
       caseId: metadata.caseId,
       date: metadata.hearingDate,
@@ -234,6 +320,20 @@ async function getOrCreateHearing(req, { allowCreate }) {
       },
     },
   });
+
+  await logActivity({
+    userId: user.id,
+    userEmail: user.email,
+    userName: user.name,
+    type: 'hearing',
+    title: 'Audiencia registrada',
+    description: `Se registro la audiencia ${createdHearing.title || createdHearing.id}.`,
+    relatedEntityType: 'hearing',
+    relatedEntityId: createdHearing.id,
+    relatedEntityName: createdHearing.title || createdHearing.id,
+  });
+
+  return createdHearing;
 }
 
 async function getTranscriptForHearing(hearing, userId) {
@@ -481,6 +581,18 @@ router.post('/:id/transcripcion', async (req, res) => {
       text,
     });
 
+    await logActivity({
+      userId: req.authUser.id,
+      userEmail: req.authUser.email,
+      userName: req.authUser.name,
+      type: 'transcript',
+      title: 'Transcripcion guardada',
+      description: `Se guardo la transcripcion de ${hearing.title || `audiencia ${hearing.id}`}.`,
+      relatedEntityType: 'hearing',
+      relatedEntityId: hearing.id,
+      relatedEntityName: hearing.title || hearing.id,
+    });
+
     return res.json({
       ...normalizeTranscriptResponse(transcript, hearing),
       success: true,
@@ -574,6 +686,18 @@ router.post('/:id/transcripcion/live/finish', async (req, res) => {
     const transcript = await upsertTranscript(hearing, req.authUser.id, {
       audioPath: chunks.length ? manifestPath : undefined,
       status: 'completed',
+    });
+
+    await logActivity({
+      userId: req.authUser.id,
+      userEmail: req.authUser.email,
+      userName: req.authUser.name,
+      type: 'transcript',
+      title: 'Transcripcion guardada',
+      description: `Se guardo la transcripcion de ${hearing.title || `audiencia ${hearing.id}`}.`,
+      relatedEntityType: 'hearing',
+      relatedEntityId: hearing.id,
+      relatedEntityName: hearing.title || hearing.id,
     });
 
     sendSseEvent(hearing.id, req.authUser.id, {
