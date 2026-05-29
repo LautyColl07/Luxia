@@ -1193,11 +1193,29 @@ function normalizeHearingTranscription(data = {}, hearingId = null) {
     ...data,
     audioAvailable,
     downloadUrl,
+    hasPdf: Boolean(data?.hasPdf ?? data?.pdfAvailable ?? data?.pdf_disponible ?? downloadUrl),
+    hasTranscript: Boolean(data?.hasTranscript ?? text),
     pdfAvailable,
     status: safeString(data?.status ?? data?.estado, text ? 'completed' : 'empty'),
     text,
     transcriptId: data?.transcriptId ?? data?.id ?? null,
   };
+}
+
+function buildEmptyHearingTranscription(hearingId = null) {
+  return normalizeHearingTranscription(
+    {
+      success: true,
+      hearingId,
+      status: 'empty',
+      text: '',
+      hasTranscript: false,
+      hasPdf: false,
+      audioAvailable: false,
+      pdfAvailable: false,
+    },
+    hearingId
+  );
 }
 
 function getTranscriptionSessionId(data = {}) {
@@ -1217,8 +1235,16 @@ export async function getHearingTranscription(hearingId) {
     throw createRequestError('No hay una audiencia valida para consultar.', 400);
   }
 
-  const payload = await request(`/audiencias/${hearingId}/transcripcion`);
-  return normalizeHearingTranscription(payload || {}, hearingId);
+  try {
+    const payload = await request(`/audiencias/${hearingId}/transcripcion`);
+    return normalizeHearingTranscription(payload || {}, hearingId);
+  } catch (error) {
+    if (error?.status === 404) {
+      return buildEmptyHearingTranscription(hearingId);
+    }
+
+    throw error;
+  }
 }
 
 export async function uploadHearingAudio({ asset, caseDetail, hearing } = {}) {
