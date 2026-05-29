@@ -167,6 +167,12 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
       nextErrors.acceptedTerms = "Necesitás aceptar los términos para continuar";
     }
 
+    if (fields.includes("enrollment") && form.enrollment.trim()) {
+      if (!/^\d+$/.test(form.enrollment.trim())) {
+        nextErrors.enrollment = "La matrícula debe contener solo números";
+      }
+    }
+
     return nextErrors;
   };
 

@@ -8,6 +8,7 @@ const documentRoutes = require('./routes/documents.routes');
 const hearingTranscriptionRoutes = require('./routes/hearingTranscription.routes');
 const luxRoutes = require('./routes/lux.routes');
 const transcriptionRoutes = require('./routes/transcription.routes');
+const authRoutes = require('./routes/auth.routes');
 
 const PORT = Number(process.env.PORT || 3000);
 const apiConfigPath = path.resolve(__dirname, '../../src/config/api.js');
@@ -24,6 +25,7 @@ app.use('/api/v1/lux', luxRoutes);
 app.use('/api/v1/transcriptions', transcriptionRoutes);
 app.use('/api/v1/documentos', documentRoutes);
 app.use('/api/v1/audiencias', hearingTranscriptionRoutes);
+app.use('/api/v1/auth', authRoutes);
 
 app.listen(PORT, () => {
   console.log(`Luxia backend escuchando en ${PUBLIC_BACKEND_URL}`);
