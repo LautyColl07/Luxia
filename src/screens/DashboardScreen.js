@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import EmptyState from '../components/EmptyState';
@@ -13,7 +13,7 @@ import MetricCard from '../components/MetricCard';
 import QuickActionButton from '../components/QuickActionButton';
 import { useAuth } from '../context/AuthContext';
 import { useAppTheme } from '../context/ThemeContext';
-import { getDashboardResumen, getNotifications } from '../services/api';
+import { getDashboardBootstrap } from '../services/api';
 
 export default function DashboardScreen({ navigation }) {
   const { colors } = useAppTheme();
@@ -25,6 +25,9 @@ export default function DashboardScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [isLuxVisible, setIsLuxVisible] = useState(false);
+  const activeLoadRef = useRef(null);
+  const loadSequenceRef = useRef(0);
+  const isFocusedRef = useRef(false);
 
   const loadDashboard = useCallback(async (isRefresh = false) => {
     if (!isAuthReady) {
@@ -40,7 +43,14 @@ export default function DashboardScreen({ navigation }) {
       return;
     }
 
-    try {
+    if (!isRefresh && activeLoadRef.current) {
+      return activeLoadRef.current;
+    }
+
+    const loadId = loadSequenceRef.current + 1;
+    loadSequenceRef.current = loadId;
+
+    const loadPromise = (async () => {
       if (isRefresh) {
         setRefreshing(true);
       } else {
@@ -48,22 +58,40 @@ export default function DashboardScreen({ navigation }) {
       }
 
       setError('');
-      const [resumen, notifications] = await Promise.all([
-        getDashboardResumen(),
-        getNotifications(),
-      ]);
+      const { resumen, notificationCount: unreadCount } = await getDashboardBootstrap({
+        force: isRefresh,
+      });
+
+      if (!isFocusedRef.current || loadSequenceRef.current !== loadId) {
+        return;
+      }
+
       setDashboard(resumen);
-      setNotificationCount(notifications.filter((item) => !item?.read).length);
+      setNotificationCount(unreadCount);
+    })();
+
+    activeLoadRef.current = loadPromise;
+
+    try {
+      await loadPromise;
     } catch (loadError) {
-      console.error('[DashboardScreen] Error cargando metricas:', loadError);
-      setError(
-        loadError instanceof Error
-          ? loadError.message
-          : 'No pudimos cargar la informacion del panel inicial.'
-      );
+      if (isFocusedRef.current && loadSequenceRef.current === loadId) {
+        console.error('[DashboardScreen] Error cargando metricas:', loadError);
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : 'No pudimos cargar la informacion del panel inicial.'
+        );
+      }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (activeLoadRef.current === loadPromise) {
+        activeLoadRef.current = null;
+      }
+
+      if (isFocusedRef.current && loadSequenceRef.current === loadId) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [currentUser, isAuthReady]);
 
@@ -73,8 +101,11 @@ export default function DashboardScreen({ navigation }) {
         return undefined;
       }
 
+      isFocusedRef.current = true;
       void loadDashboard();
-      return undefined;
+      return () => {
+        isFocusedRef.current = false;
+      };
     }, [isAuthReady, loadDashboard])
   );
 

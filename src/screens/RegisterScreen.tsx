@@ -6,7 +6,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -14,6 +13,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import {
   Briefcase,
   Eye,
@@ -34,8 +34,8 @@ type RegisterForm = {
   firstName: string;
   lastName: string;
   email: string;
-  enrollment: string;
-  lawFirm: string;
+  matricula: string;
+  estudioJuridico: string;
   username: string;
   password: string;
   confirmPassword: string;
@@ -59,8 +59,8 @@ const initialForm: RegisterForm = {
   firstName: "",
   lastName: "",
   email: "",
-  enrollment: "",
-  lawFirm: "",
+  matricula: "",
+  estudioJuridico: "",
   username: "",
   password: "",
   confirmPassword: "",
@@ -84,7 +84,7 @@ const steps: RegisterStep[] = [
     key: "professional",
     title: "Datos profesionales",
     subtitle: "Estos datos son opcionales, pero ayudan a completar tu perfil institucional.",
-    fields: ["enrollment", "lawFirm"],
+    fields: ["matricula", "estudioJuridico"],
   },
   {
     key: "username",
@@ -254,8 +254,8 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
         firstName: form.firstName.trim(),
         lastName: form.lastName.trim(),
         email: form.email.trim(),
-        enrollment: form.enrollment.trim(),
-        lawFirm: form.lawFirm.trim(),
+        matricula: form.matricula.trim(),
+        estudioJuridico: form.estudioJuridico.trim(),
         username: form.username.trim(),
         password: form.password,
       });
@@ -354,22 +354,22 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
                   <View style={styles.row}>
                     <View style={styles.halfWidth}>
                       <Field
-                        error={errors.enrollment}
+                        error={errors.matricula}
                         icon={<Briefcase size={18} color={COLORS.textSecondary} />}
                         label="Matrícula"
-                        onChangeText={(value) => setField("enrollment", value)}
+                        onChangeText={(value) => setField("matricula", value)}
                         placeholder="Número de matrícula"
-                        value={form.enrollment}
+                        value={form.matricula}
                       />
                     </View>
                     <View style={styles.halfWidth}>
                       <Field
-                        error={errors.lawFirm}
+                        error={errors.estudioJuridico}
                         icon={<Briefcase size={18} color={COLORS.textSecondary} />}
                         label="Estudio jurídico"
-                        onChangeText={(value) => setField("lawFirm", value)}
+                        onChangeText={(value) => setField("estudioJuridico", value)}
                         placeholder="Nombre del estudio"
-                        value={form.lawFirm}
+                        value={form.estudioJuridico}
                       />
                     </View>
                   </View>

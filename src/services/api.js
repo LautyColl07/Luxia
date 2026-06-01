@@ -18,7 +18,12 @@ const REQUEST_TIMEOUT_MS = 8000;
 const LUX_REQUEST_TIMEOUT_MS = 120000;
 const EXPIRED_SESSION_MESSAGE = 'Tu sesión expiró. Iniciá sesión nuevamente.';
 const MISSING_SESSION_MESSAGE = 'No hay una sesión activa. Iniciá sesión nuevamente.';
-const PROTECTED_ENDPOINT_PREFIXES = ['/dashboard/resumen', '/causas', '/audiencias', '/documentos', '/lux/chat', '/transcriptions'];
+const PROTECTED_ENDPOINT_PREFIXES = ['/auth', '/dashboard/resumen', '/notificaciones', '/causas', '/audiencias', '/documentos', '/lux/chat', '/transcriptions'];
+const DASHBOARD_BOOTSTRAP_CACHE_MS = 1200;
+let dashboardResumenInFlight = null;
+let notificationsInFlight = null;
+let dashboardBootstrapInFlight = null;
+let lastDashboardBootstrap = null;
 const LUX_CONNECTION_ERROR_MESSAGE = 'No pude conectarme con LUX en este momento.';
 const LUX_TIMEOUT_ERROR_MESSAGE = 'LUX tardó demasiado en responder. Intentá de nuevo con una consulta más corta.';
 
@@ -660,7 +665,7 @@ export async function request(endpoint, options = {}) {
   console.log('[API] baseURL:', API_BASE_URL);
   console.log('[API] endpoint:', endpoint);
   console.log('[API] url:', url);
-  console.log('[API] currentUser uid:', auth.currentUser?.uid || null);
+  console.log('[API] currentUser uid:', auth?.currentUser?.uid || null);
   const { headers: authHeaders, token } = await getRequestAuthHeaders(path, fetchOptions.headers);
   console.log('[API] token presente:', Boolean(token));
 
@@ -770,7 +775,18 @@ export async function getMe() {
   }
 }
 
-export async function getDashboardResumen() {
+export async function syncRegister(payload, token = null) {
+  const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+
+  return request('/auth/register', {
+    method: 'POST',
+    body: payload,
+    headers,
+    timeout: 20000,
+  });
+}
+
+export async function getDashboardResumen(options = {}) {
   if (USE_MOCKS) {
     return simulateDelay({
       usuario: normalizeUser(mockStore.user, getAuthenticatedUserCandidate() || {}),
@@ -779,12 +795,22 @@ export async function getDashboardResumen() {
     });
   }
 
-  const data = await request(DASHBOARD_RESUMEN_ENDPOINT);
-  toArray(data?.proximasAudiencias ?? data?.upcomingHearings).forEach((audiencia) => {
-    console.log('[DASHBOARD] Audiencia recibida:', JSON.stringify(audiencia, null, 2));
+  if (!options.force && dashboardResumenInFlight) {
+    return dashboardResumenInFlight;
+  }
+
+  dashboardResumenInFlight = (async () => {
+    const data = await request(DASHBOARD_RESUMEN_ENDPOINT);
+    toArray(data?.proximasAudiencias ?? data?.upcomingHearings).forEach((audiencia) => {
+      console.log('[DASHBOARD] Audiencia recibida:', JSON.stringify(audiencia, null, 2));
+    });
+
+    return enrichDashboardResumenWithCases(normalizeDashboardResumen(data));
+  })().finally(() => {
+    dashboardResumenInFlight = null;
   });
 
-  return enrichDashboardResumenWithCases(normalizeDashboardResumen(data));
+  return dashboardResumenInFlight;
 }
 
 export async function getCases() {
@@ -1535,17 +1561,27 @@ export async function getTranscriptionSession(sessionId) {
   return getLiveTranscription(sessionId);
 }
 
-export async function getNotifications() {
+export async function getNotifications(options = {}) {
   if (USE_MOCKS) {
     return simulateDelay([...mockStore.notifications]);
   }
 
-  try {
-    const data = await request('/notificaciones');
-    return sortByDateDesc(toArray(data).map((item) => normalizeNotification(item)), 'createdAt');
-  } catch {
-    return [];
+  if (!options.force && notificationsInFlight) {
+    return notificationsInFlight;
   }
+
+  notificationsInFlight = (async () => {
+    try {
+      const data = await request('/notificaciones');
+      return sortByDateDesc(toArray(data).map((item) => normalizeNotification(item)), 'createdAt');
+    } catch {
+      return [];
+    }
+  })().finally(() => {
+    notificationsInFlight = null;
+  });
+
+  return notificationsInFlight;
 }
 
 export async function sendLuxMessage(message, context = {}) {
@@ -1591,13 +1627,43 @@ export async function sendLuxMessage(message, context = {}) {
   }
 }
 
-export async function getDashboardBootstrap() {
-  const [resumen, notifications] = await Promise.all([getDashboardResumen(), getNotifications().catch(() => [])]);
+export async function getDashboardBootstrap(options = {}) {
+  const now = Date.now();
 
-  return {
-    resumen,
-    notificationCount: notifications.filter((item) => !item.read).length,
-  };
+  if (
+    !options.force &&
+    lastDashboardBootstrap &&
+    now - lastDashboardBootstrap.timestamp < DASHBOARD_BOOTSTRAP_CACHE_MS
+  ) {
+    return lastDashboardBootstrap.data;
+  }
+
+  if (!options.force && dashboardBootstrapInFlight) {
+    return dashboardBootstrapInFlight;
+  }
+
+  dashboardBootstrapInFlight = (async () => {
+    const [resumen, notifications] = await Promise.all([
+      getDashboardResumen(options),
+      getNotifications(options).catch(() => []),
+    ]);
+
+    const data = {
+      resumen,
+      notificationCount: notifications.filter((item) => !item.read).length,
+    };
+
+    lastDashboardBootstrap = {
+      data,
+      timestamp: Date.now(),
+    };
+
+    return data;
+  })().finally(() => {
+    dashboardBootstrapInFlight = null;
+  });
+
+  return dashboardBootstrapInFlight;
 }
 
 export function preloadDashboardBootstrap() {
