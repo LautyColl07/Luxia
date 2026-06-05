@@ -5,6 +5,7 @@ import { signOut } from 'firebase/auth';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
+
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
 import { auth } from '../config/firebase';
@@ -295,7 +296,7 @@ export default function MoreScreen({ navigation }) {
           colors={colors}
           description="Consejos rapidos para volver a entrar a tu cuenta."
           icon="lifebuoy"
-          onPress={() => navigation.navigate('HelpAccess')}
+          onPress={() => Alert.alert('Ayuda de acceso', 'Para recuperar tu contrase�a, cerr� sesi�n y toc� Olvid� mi contrase�a en la pantalla de login.')}
           styles={styles}
           title="Ayuda de acceso"
         />

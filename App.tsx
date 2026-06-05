@@ -82,7 +82,11 @@ const AppContent = () => {
                     <Stack.Screen name="Login" component={LoginScreen} />
                     <Stack.Screen name="Register" component={RegisterScreen} />
                     <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
-                    <Stack.Screen name="HelpAccess" component={HelpAccessScreen} />
+                   <Stack.Screen
+                        name="HelpAccess"
+                        component={HelpAccessScreen}
+                        options={{ headerShown: false }}
+                      />
                   </>
                 )}
               </Stack.Navigator>

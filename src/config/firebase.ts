@@ -1,6 +1,20 @@
 import { FirebaseOptions, getApp, getApps, initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
+import { getAuth, initializeAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+// Custom AsyncStorage persistence for Firebase v12+
+// firebase/auth/react-native was removed; we implement the internal persistence protocol directly.
+// The public `Persistence` type omits internal methods, so we cast to `any`.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const asyncStoragePersistence: any = {
+  type: "LOCAL",
+  _get: (key: string) => AsyncStorage.getItem(key),
+  _set: (key: string, value: string) => AsyncStorage.setItem(key, value),
+  _remove: (key: string) => AsyncStorage.removeItem(key),
+  _addListener: () => {},
+  _removeListener: () => {},
+};
 
 const firebaseFallbackConfig = {
   apiKey: "AIzaSyDwGuMIFRLXNvrFRHdfwRPhcb7g9TlRt_g",
@@ -43,7 +57,16 @@ export const firebaseConfig: FirebaseOptions | null = isFirebaseConfigured
 
 const app = firebaseConfig ? (getApps().length > 0 ? getApp() : initializeApp(firebaseConfig)) : null;
 
-export const auth = app ? getAuth(app) : null;
+export const auth = app
+  ? (() => {
+      try {
+        return initializeAuth(app, { persistence: asyncStoragePersistence });
+      } catch {
+        // Auth already initialized (e.g. hot reload) — return existing instance
+        return getAuth(app);
+      }
+    })()
+  : null;
 export const db = app ? getFirestore(app) : null;
 
 export default app;
