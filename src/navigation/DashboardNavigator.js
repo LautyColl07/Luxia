@@ -3,6 +3,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useMemo } from 'react';
 
+import StudyContextSelector from '../components/StudyContextSelector';
 import { useAppTheme } from '../context/ThemeContext';
 import CalendarScreen from '../screens/CalendarScreen';
 import CaseDetailScreen from '../screens/CaseDetailScreen';
@@ -84,6 +85,7 @@ export default function DashboardNavigator() {
         headerStyle: {
           backgroundColor: colors.background,
         },
+        headerRight: () => <StudyContextSelector />,
         contentStyle: {
           backgroundColor: colors.background,
         },

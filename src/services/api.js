@@ -18,12 +18,27 @@ const REQUEST_TIMEOUT_MS = 8000;
 const LUX_REQUEST_TIMEOUT_MS = 120000;
 const EXPIRED_SESSION_MESSAGE = 'Tu sesión expiró. Iniciá sesión nuevamente.';
 const MISSING_SESSION_MESSAGE = 'No hay una sesión activa. Iniciá sesión nuevamente.';
-const PROTECTED_ENDPOINT_PREFIXES = ['/auth', '/dashboard/resumen', '/notificaciones', '/causas', '/audiencias', '/documentos', '/lux/chat', '/transcriptions'];
+const PROTECTED_ENDPOINT_PREFIXES = [
+  '/auth',
+  '/dashboard/resumen',
+  '/notificaciones',
+  '/causas',
+  '/cases',
+  '/audiencias',
+  '/hearings',
+  '/documentos',
+  '/tasks',
+  '/legal-studies',
+  '/lux/chat',
+  '/transcriptions',
+  '/transcripts',
+];
 const DASHBOARD_BOOTSTRAP_CACHE_MS = 1200;
 let dashboardResumenInFlight = null;
 let notificationsInFlight = null;
 let dashboardBootstrapInFlight = null;
 let lastDashboardBootstrap = null;
+let activeWorkContext = { type: 'personal', legalStudyId: null, name: 'Mis Casos' };
 const LUX_CONNECTION_ERROR_MESSAGE = 'No pude conectarme con LUX en este momento.';
 const LUX_TIMEOUT_ERROR_MESSAGE = 'LUX tardó demasiado en responder. Intentá de nuevo con una consulta más corta.';
 
@@ -775,6 +790,98 @@ export async function getMe() {
   }
 }
 
+export async function getMyLegalStudies() {
+  if (USE_MOCKS) {
+    return simulateDelay(toArray(mockStore.legalStudies).map((item) => ({
+      id: String(item.id),
+      name: safeString(item.name, 'Estudio Juridico'),
+    })));
+  }
+
+  const response = await request('/legal-studies/my');
+  const data = Array.isArray(response) ? response : response?.data;
+
+  return toArray(data).map((item) => ({
+    id: String(item.id),
+    name: safeString(item.name, 'Estudio Juridico'),
+  }));
+}
+
+function getWorkContextKey(context = activeWorkContext) {
+  return context?.type === 'study' && context?.legalStudyId
+    ? `study:${context.legalStudyId}`
+    : 'personal';
+}
+
+function setScopedCacheDirty() {
+  dashboardResumenInFlight = null;
+  dashboardBootstrapInFlight = null;
+  lastDashboardBootstrap = null;
+}
+
+export function setApiWorkContext(context = {}) {
+  const nextContext =
+    context?.type === 'study' && context?.legalStudyId
+      ? {
+          type: 'study',
+          legalStudyId: String(context.legalStudyId),
+          name: context.name || 'Estudio Juridico',
+        }
+      : { type: 'personal', legalStudyId: null, name: 'Mis Casos' };
+
+  if (getWorkContextKey(activeWorkContext) !== getWorkContextKey(nextContext)) {
+    activeWorkContext = nextContext;
+    setScopedCacheDirty();
+    return;
+  }
+
+  activeWorkContext = nextContext;
+}
+
+function getActiveWorkContextQuery() {
+  if (activeWorkContext?.type === 'study' && activeWorkContext?.legalStudyId) {
+    return {
+      scope: 'study',
+      legalStudyId: activeWorkContext.legalStudyId,
+    };
+  }
+
+  return {
+    scope: 'personal',
+  };
+}
+
+function appendQueryParams(endpoint, params = {}) {
+  const entries = Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== '');
+
+  if (!entries.length) {
+    return endpoint;
+  }
+
+  const separator = endpoint.includes('?') ? '&' : '?';
+  const query = entries
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+    .join('&');
+
+  return endpoint + separator + query;
+}
+
+function withWorkScope(endpoint) {
+  return appendQueryParams(endpoint, getActiveWorkContextQuery());
+}
+
+async function requestWithFallback(endpoint, fallbackEndpoint, options) {
+  try {
+    return await request(endpoint, options);
+  } catch (error) {
+    if (!fallbackEndpoint || (error?.status !== 404 && error?.status !== 405)) {
+      throw error;
+    }
+
+    return request(fallbackEndpoint, options);
+  }
+}
+
 export async function syncRegister(payload, token = null) {
   const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
 
@@ -800,7 +907,7 @@ export async function getDashboardResumen(options = {}) {
   }
 
   dashboardResumenInFlight = (async () => {
-    const data = await request(DASHBOARD_RESUMEN_ENDPOINT);
+    const data = await request(withWorkScope(DASHBOARD_RESUMEN_ENDPOINT));
     toArray(data?.proximasAudiencias ?? data?.upcomingHearings).forEach((audiencia) => {
       console.log('[DASHBOARD] Audiencia recibida:', JSON.stringify(audiencia, null, 2));
     });
@@ -819,7 +926,7 @@ export async function getCases() {
     return simulateDelay(cases);
   }
 
-  const data = await request('/causas');
+  const data = await requestWithFallback(withWorkScope('/cases'), withWorkScope('/causas'));
   return sortByDateDesc(toArray(data).map((item) => normalizeCase(item)), 'createdAt');
 }
 
@@ -828,7 +935,7 @@ export async function getCaseById(id) {
     return simulateDelay(getCaseDetailMock(id));
   }
 
-  const data = await request(`/causas/${id}`);
+  const data = await requestWithFallback(withWorkScope(`/cases/${id}`), withWorkScope(`/causas/${id}`));
   const normalizedCase = normalizeCase(data);
   const hasHearings = Array.isArray(data?.hearings) || Array.isArray(data?.audiencias);
   const hasDocuments =
@@ -904,11 +1011,16 @@ export async function createCase(data) {
     return simulateDelay(newCase);
   }
 
-  const endpoint = '/causas';
-  const caseData = normalizeCasePayload(data);
+  const endpoint = withWorkScope('/cases');
+  const caseData = {
+    ...normalizeCasePayload(data),
+    ...(activeWorkContext?.type === 'study' && activeWorkContext?.legalStudyId
+      ? { legalStudyId: activeWorkContext.legalStudyId }
+      : {}),
+  };
   console.log('[API] createCase payload:', JSON.stringify(caseData, null, 2));
   console.log('[API] endpoint:', endpoint);
-  const response = await request(endpoint, { method: 'POST', body: caseData });
+  const response = await requestWithFallback(endpoint, withWorkScope('/causas'), { method: 'POST', body: caseData });
   return normalizeCase({
     ...response,
     title: response?.title ?? response?.titulo ?? response?.caratula ?? caseData.caratula,
@@ -940,7 +1052,11 @@ export async function updateCase(id, data) {
   }
 
   const payload = normalizeCasePayload(data);
-  const response = await request(`/causas/${id}`, { method: 'PUT', body: payload });
+  const response = await requestWithFallback(
+    withWorkScope(`/cases/${id}`),
+    withWorkScope(`/causas/${id}`),
+    { method: 'PUT', body: payload }
+  );
   return normalizeCase({
     ...response,
     id,
@@ -965,7 +1081,7 @@ export async function getHearings() {
     return simulateDelay(items);
   }
 
-  const data = await request('/audiencias');
+  const data = await request(withWorkScope('/audiencias'));
   return sortByDateAsc(toArray(data).map((item) => normalizeHearing(item)), 'date');
 }
 
@@ -974,7 +1090,7 @@ export async function getUpcomingHearings() {
     return simulateDelay(mapUpcomingHearings());
   }
 
-  const data = await request('/audiencias/proximas');
+  const data = await request(withWorkScope('/audiencias/proximas'));
   return sortByDateAsc(toArray(data).map((item) => normalizeHearing(item)), 'date');
 }
 
@@ -1019,7 +1135,15 @@ export async function createHearing(data) {
   }
 
   const payload = normalizeHearingPayload(data);
-  const response = await request('/audiencias', { method: 'POST', body: payload });
+  const response = await request(withWorkScope('/audiencias'), {
+    method: 'POST',
+    body: {
+      ...payload,
+      ...(activeWorkContext?.type === 'study' && activeWorkContext?.legalStudyId
+        ? { legalStudyId: activeWorkContext.legalStudyId }
+        : {}),
+    },
+  });
 
   return normalizeHearing({
     ...response,
@@ -1046,7 +1170,7 @@ export async function getDocuments() {
     return simulateDelay(items);
   }
 
-  const data = await request('/documentos');
+  const data = await request(withWorkScope('/documentos'));
   return sortByDateDesc(toArray(data).map((item) => normalizeDocument(item)), 'uploadedAt');
 }
 
@@ -1114,7 +1238,11 @@ export async function uploadDocument(data) {
     name: asset.name || `documento-${Date.now()}.pdf`,
     type: asset.mimeType || 'application/octet-stream',
   });
-  const payload = await request('/documentos', { method: 'POST', body: formData });
+  const uploadEndpoint = withWorkScope('/documentos');
+  if (activeWorkContext?.type === 'study' && activeWorkContext?.legalStudyId) {
+    formData.append('legalStudyId', String(activeWorkContext.legalStudyId));
+  }
+  const payload = await request(uploadEndpoint, { method: 'POST', body: formData });
 
   await getDocuments().catch(() => []);
 
@@ -1159,7 +1287,11 @@ export async function uploadPdfDocumentFromHearing({ fileUri, hearingId, fileNam
 
   formData.append('hearingId', String(hearingId));
 
-  const response = await fetch(`${API_BASE_URL}/documentos`, {
+  if (activeWorkContext?.type === 'study' && activeWorkContext?.legalStudyId) {
+    formData.append('legalStudyId', String(activeWorkContext.legalStudyId));
+  }
+
+  const response = await fetch(`${API_BASE_URL}${withWorkScope('/documentos')}`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -1329,6 +1461,9 @@ export async function startHearingLiveTranscription({ caseDetail, hearing } = {}
     body: {
       hearingId,
       caseId: hearingCaseId,
+      ...(activeWorkContext?.type === 'study' && activeWorkContext?.legalStudyId
+        ? { legalStudyId: activeWorkContext.legalStudyId }
+        : {}),
       title: `Audiencia ${hearingId}`,
     },
   });
@@ -1463,6 +1598,9 @@ export async function startLiveTranscription({ title, caseId, hearingId } = {}) 
       title: safeOptionalString(title) || 'Transcripción en vivo',
       caseId: safeOptionalString(caseId),
       hearingId: normalizedHearingId,
+      ...(activeWorkContext?.type === 'study' && activeWorkContext?.legalStudyId
+        ? { legalStudyId: activeWorkContext.legalStudyId }
+        : {}),
       title: normalizedTitle,
     },
   });
@@ -1531,7 +1669,7 @@ export async function getLiveTranscription(sessionId) {
     throw createRequestError('No hay una sesion activa para consultar.', 400);
   }
 
-  const payload = await request(`/transcriptions/${sessionId}`);
+  const payload = await request(withWorkScope(`/transcriptions/${sessionId}`));
   return normalizeLiveTranscriptionSession(payload || {});
 }
 

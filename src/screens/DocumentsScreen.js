@@ -17,13 +17,16 @@ import {
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
+import StudyContextSelector from '../components/StudyContextSelector';
 import { API_ROOT_URL } from '../config/api';
+import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { getDocuments } from '../services/api';
 import { formatDate } from '../utils/date';
 
 export default function DocumentsScreen({ navigation }) {
   const { colors } = useAppTheme();
+  const { activeContextKey } = useStudyContext();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [documents, setDocuments] = useState([]);
@@ -50,7 +53,7 @@ export default function DocumentsScreen({ navigation }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeContextKey]);
 
   useFocusEffect(
     useCallback(() => {
@@ -181,6 +184,8 @@ export default function DocumentsScreen({ navigation }) {
           </View>
 
           <View style={styles.searchWrapper}>
+            <StudyContextSelector />
+
             {searchOpen && (
               <TextInput
                 style={styles.searchInput}
@@ -393,6 +398,7 @@ const createStyles = (colors) =>
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'flex-end',
+      gap: 10,
       marginTop: 2,
     },
     searchInput: {

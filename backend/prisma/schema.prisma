@@ -14,25 +14,63 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  cases       LegalCase[]
-  files       File[]
-  hearings    Hearing[]
-  transcripts Transcript[]
+  cases          LegalCase[]
+  ownedCases     LegalCase[]        @relation("CaseOwner")
+  createdCases   LegalCase[]        @relation("CaseCreator")
+  files          File[]
+  hearings       Hearing[]
+  transcripts    Transcript[]
+  studyMembers   LegalStudyMember[]
 }
 
-model LegalCase {
-  id        String   @id
-  userId    String
-  title     String
+model LegalStudy {
+  id        String   @id @default(cuid())
+  name      String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user        User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cases    LegalCase[]
+  members  LegalStudyMember[]
+}
+
+model LegalStudyMember {
+  id           String   @id @default(cuid())
+  legalStudyId String
+  userId       String
+  status       String   @default("ACTIVE")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  legalStudy LegalStudy @relation(fields: [legalStudyId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([legalStudyId, userId])
+  @@index([userId])
+  @@index([legalStudyId])
+}
+
+model LegalCase {
+  id           String   @id
+  userId       String
+  createdById  String?
+  ownerUserId  String?
+  legalStudyId String?
+  title        String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  owner       User?       @relation("CaseOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  creator     User?       @relation("CaseCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  legalStudy  LegalStudy? @relation(fields: [legalStudyId], references: [id], onDelete: SetNull)
   files       File[]
   hearings    Hearing[]
   transcripts Transcript[]
 
   @@index([userId])
+  @@index([createdById])
+  @@index([ownerUserId])
+  @@index([legalStudyId])
   @@map("Case")
 }
 
@@ -102,11 +140,15 @@ model TranscriptSession {
   status      String   @default("recording")
   caseId      String?
   hearingId   String?
+  legalStudyId String?
   createdById String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   chunks TranscriptChunk[]
+
+  @@index([createdById])
+  @@index([legalStudyId])
 }
 
 model TranscriptChunk {

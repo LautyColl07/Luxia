@@ -11,13 +11,16 @@ import LuxAssistantButton from '../components/LuxAssistantButton';
 import LuxAssistantModal from '../components/LuxAssistantModal';
 import MetricCard from '../components/MetricCard';
 import QuickActionButton from '../components/QuickActionButton';
+import StudyContextSelector from '../components/StudyContextSelector';
 import { useAuth } from '../context/AuthContext';
+import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { getDashboardBootstrap } from '../services/api';
 
 export default function DashboardScreen({ navigation }) {
   const { colors } = useAppTheme();
   const { currentUser, isAuthReady } = useAuth();
+  const { activeContextKey } = useStudyContext();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [dashboard, setDashboard] = useState(null);
   const [notificationCount, setNotificationCount] = useState(0);
@@ -93,7 +96,7 @@ export default function DashboardScreen({ navigation }) {
         setRefreshing(false);
       }
     }
-  }, [currentUser, isAuthReady]);
+  }, [activeContextKey, currentUser, isAuthReady]);
 
   useFocusEffect(
     useCallback(() => {
@@ -248,14 +251,18 @@ export default function DashboardScreen({ navigation }) {
           <View style={styles.heroTopRow}>
             <Text style={styles.brand}>LUXIA</Text>
 
-            <Pressable onPress={handleNotificationsPress} style={styles.notificationButton}>
-              <MaterialCommunityIcons color={colors.textOnPrimary} name="bell-outline" size={24} />
-              {notificationCount > 0 ? (
-                <View style={styles.notificationBadge}>
-                  <Text style={styles.notificationBadgeText}>{notificationCount}</Text>
-                </View>
-              ) : null}
-            </Pressable>
+            <View style={styles.heroActions}>
+              <StudyContextSelector inverse />
+
+              <Pressable onPress={handleNotificationsPress} style={styles.notificationButton}>
+                <MaterialCommunityIcons color={colors.textOnPrimary} name="bell-outline" size={24} />
+                {notificationCount > 0 ? (
+                  <View style={styles.notificationBadge}>
+                    <Text style={styles.notificationBadgeText}>{notificationCount}</Text>
+                  </View>
+                ) : null}
+              </Pressable>
+            </View>
           </View>
 
           <Text style={styles.greeting}>Hola, {nombreUsuario}</Text>
@@ -385,6 +392,7 @@ const createStyles = (colors) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 12,
   },
   brand: {
     color: colors.textOnPrimary,
@@ -399,6 +407,12 @@ const createStyles = (colors) => StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.12)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  heroActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexShrink: 1,
   },
   notificationBadge: {
     position: 'absolute',

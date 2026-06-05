@@ -13,6 +13,8 @@ import {
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
+import StudyContextSelector from '../components/StudyContextSelector';
+import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { getCaseById, getCases, getHearings } from '../services/api';
 import {
@@ -40,6 +42,7 @@ const CATEGORY_OPTIONS = [
 
 export default function CalendarScreen({ navigation }) {
   const { colors } = useAppTheme();
+  const { activeContextKey } = useStudyContext();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const today = useMemo(() => startOfDay(new Date()) || new Date(), []);
   const [calendarMonth, setCalendarMonth] = useState(today);
@@ -89,7 +92,7 @@ export default function CalendarScreen({ navigation }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeContextKey]);
 
   useFocusEffect(
     useCallback(() => {
@@ -207,6 +210,11 @@ export default function CalendarScreen({ navigation }) {
       showsVerticalScrollIndicator={false}
       style={styles.screen}
     >
+      <View style={styles.topBar}>
+        <Text style={styles.topBarTitle}>Agenda</Text>
+        <StudyContextSelector />
+      </View>
+
       <View style={styles.calendarCard}>
         <View style={styles.calendarHeader}>
           <View style={styles.headerStripeOne} />
@@ -432,6 +440,17 @@ const createStyles = (colors) => StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 34,
     gap: 16,
+  },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  topBarTitle: {
+    color: colors.text,
+    fontSize: 26,
+    fontWeight: '800',
   },
   calendarCard: {
     backgroundColor: colors.card,

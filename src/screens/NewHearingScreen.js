@@ -4,6 +4,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
+import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { createHearing, getCases } from '../services/api';
 import {
@@ -19,6 +20,7 @@ const TIME_PRESETS = ['09:00', '11:15', '15:00', '17:30'];
 
 export default function NewHearingScreen({ navigation, route }) {
   const { colors } = useAppTheme();
+  const { activeContextKey } = useStudyContext();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const initialCaseId = route?.params?.caseId ? String(route.params.caseId) : '';
   const [cases, setCases] = useState([]);
@@ -36,7 +38,7 @@ export default function NewHearingScreen({ navigation, route }) {
 
   useEffect(() => {
     void loadCases();
-  }, []);
+  }, [activeContextKey]);
 
   async function loadCases() {
     try {

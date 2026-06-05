@@ -7,6 +7,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 're
 
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
+import StudyContextSelector from '../components/StudyContextSelector';
 import { auth } from '../config/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useAppTheme } from '../context/ThemeContext';
@@ -160,6 +161,11 @@ export default function MoreScreen({ navigation }) {
 
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} style={styles.screen}>
+      <View style={styles.topBar}>
+        <Text style={styles.topBarTitle}>Mas</Text>
+        <StudyContextSelector />
+      </View>
+
       <View style={styles.heroCard}>
         <View style={styles.avatar}>
           <Text style={styles.avatarText}>{displayProfile.initials}</Text>
@@ -411,6 +417,17 @@ const createStyles = (colors) => StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 34,
     gap: 18,
+  },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  topBarTitle: {
+    color: colors.text,
+    fontSize: 26,
+    fontWeight: '800',
   },
   heroCard: {
     backgroundColor: colors.primaryDeep,

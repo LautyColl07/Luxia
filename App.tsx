@@ -14,6 +14,7 @@ import LoginScreen from "./src/screens/LoginScreen";
 import MainAppScreen from "./src/screens/MainAppScreen";
 import RegisterScreen from "./src/screens/RegisterScreen";
 import { AuthProvider, useAuth } from "./src/context/AuthContext";
+import { StudyContextProvider } from "./src/context/StudyContext";
 import { ThemeProvider, useAppTheme } from "./src/context/ThemeContext";
 import { RootStackParamList } from "./src/types/navigation";
 
@@ -64,7 +65,9 @@ const AppContent = () => {
     <GestureHandlerRootView style={styles.root}>
       <SafeAreaProvider>
         <AuthProvider>
-          <AppNavigator />
+          <StudyContextProvider>
+            <AppNavigator />
+          </StudyContextProvider>
         </AuthProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
