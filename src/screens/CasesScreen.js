@@ -7,12 +7,15 @@ import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
 import StatusBadge from '../components/StatusBadge';
+import StudyContextSelector from '../components/StudyContextSelector';
+import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { getCases } from '../services/api';
 import { formatDate } from '../utils/date';
 
 export default function CasesScreen({ navigation }) {
   const { colors } = useAppTheme();
+  const { activeContextKey } = useStudyContext();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [cases, setCases] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -41,7 +44,7 @@ export default function CasesScreen({ navigation }) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [activeContextKey]);
 
   useFocusEffect(
     useCallback(() => {
@@ -71,11 +74,15 @@ export default function CasesScreen({ navigation }) {
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
-        <View style={styles.headerCopy}>
-          <Text style={styles.title}>Causas</Text>
-          <Text style={styles.subtitle}>
-            Consulta el estado de tus expedientes, su juzgado interviniente y las fechas relevantes.
-          </Text>
+        <View style={styles.headerTopRow}>
+          <View style={styles.headerCopy}>
+            <Text style={styles.title}>Causas</Text>
+            <Text style={styles.subtitle}>
+              Consulta el estado de tus expedientes, su juzgado interviniente y las fechas relevantes.
+            </Text>
+          </View>
+
+          <StudyContextSelector />
         </View>
 
         <Pressable onPress={() => navigation.navigate('NewCase')} style={styles.primaryButton}>
@@ -146,7 +153,14 @@ const createStyles = (colors) => StyleSheet.create({
     paddingBottom: 18,
     gap: 16,
   },
+  headerTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
   headerCopy: {
+    flex: 1,
     gap: 6,
   },
   title: {

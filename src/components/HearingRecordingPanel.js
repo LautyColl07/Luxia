@@ -17,7 +17,6 @@ import {
   finishHearingLiveTranscription,
   getHearingTranscription,
   startHearingLiveTranscription,
-  transcribeHearingAudio,
   uploadHearingAudio,
   uploadHearingLiveTranscriptionChunk,
   uploadPdfDocumentFromHearing,
@@ -64,24 +63,35 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
   const showProgress = isStarting || isFinishing || isUploadingAudio || isTranscribing || isGeneratingPdf;
   const canDownloadPdf = Boolean(transcriptInfo?.pdfAvailable);
 
-  const refreshTranscript = useCallback(async () => {
+  const refreshTranscript = useCallback(async ({ preserveEmptyStatus = false, throwOnError = false } = {}) => {
     if (!hearingId) {
-      return;
+      return null;
     }
 
     try {
       setLoadingTranscript(true);
       const result = await getHearingTranscription(hearingId);
+      const nextText = result?.text || '';
       setTranscriptInfo(result);
-      setTranscriptText(result?.text || '');
-      setStatusText(
-        result?.text
-          ? 'Transcripción cargada.'
-          : 'Lista para grabar la audiencia.'
-      );
+      setTranscriptText(nextText);
+      if (nextText) {
+        setStatusText('Transcripción cargada.');
+      } else if (!preserveEmptyStatus) {
+        setStatusText('Lista para grabar la audiencia.');
+      }
+
+      return result;
     } catch (error) {
       console.error('[HearingRecordingPanel] Error cargando transcripcion:', error);
-      setStatusText('No pudimos cargar la transcripción guardada.');
+      if (!preserveEmptyStatus) {
+        setStatusText('No pudimos cargar la transcripción guardada.');
+      }
+
+      if (throwOnError) {
+        throw error;
+      }
+
+      return null;
     } finally {
       setLoadingTranscript(false);
     }
@@ -276,24 +286,47 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
       }
 
       setIsUploadingAudio(true);
-      setIsTranscribing(true);
       setStatusText('Subiendo audio...');
-      await uploadHearingAudio({ asset, caseDetail, hearing });
-      setStatusText('Transcribiendo audiencia...');
-      const transcript = await transcribeHearingAudio({ hearingId });
-      setTranscriptInfo(transcript);
-      setTranscriptText(transcript?.text || '');
-      setStatusText('Transcripción guardada.');
+      const uploadResponse = await uploadHearingAudio({ asset, caseDetail, hearing });
+
+      if (!uploadResponse?.success) {
+        throw new Error(uploadResponse?.error || uploadResponse?.message || 'No se pudo subir el audio');
+      }
+
+      console.log('[HearingRecordingPanel] Audio subido OK');
+      setTranscriptInfo((current) => ({
+        ...(current || {}),
+        ...(uploadResponse || {}),
+        audioAvailable: true,
+        status: uploadResponse?.status || 'uploaded',
+      }));
+      setStatusText('Audio subido correctamente.');
+      Alert.alert('Listo', 'Audio subido correctamente');
       await onDocumentsChanged?.();
+
+      try {
+        const transcript = await refreshTranscript({
+          preserveEmptyStatus: true,
+          throwOnError: true,
+        });
+
+        if (!transcript?.text) {
+          console.log('[HearingRecordingPanel] Transcripción no disponible todavía');
+        }
+      } catch (transcriptionError) {
+        console.log(
+          '[HearingRecordingPanel] Transcripción no disponible todavía:',
+          transcriptionError?.message
+        );
+      }
     } catch (error) {
-      const message = getErrorMessage(error, 'No se pudo subir o transcribir el audio.');
+      const message = getErrorMessage(error, 'No se pudo subir el audio.');
       console.error('[HearingRecordingPanel] Error subiendo audio:', error);
-      Alert.alert('No se pudo procesar el audio', message);
+      Alert.alert('No se pudo subir el audio', message);
     } finally {
       setIsUploadingAudio(false);
-      setIsTranscribing(false);
     }
-  }, [caseDetail, hearing, hearingId, isRecording, onDocumentsChanged]);
+  }, [caseDetail, hearing, hearingId, isRecording, onDocumentsChanged, refreshTranscript]);
 
   const handleGeneratePdf = useCallback(async () => {
     if (!hasTranscript) {
@@ -437,7 +470,7 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
 
       {showProgress ? (
         <View style={styles.progressBlock}>
-          <Text style={styles.progressText}>Transcribiendo audiencia...</Text>
+          <Text style={styles.progressText}>{statusText}</Text>
           <View style={styles.progressTrack}>
             <View style={styles.progressFill} />
           </View>

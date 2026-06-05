@@ -8,12 +8,14 @@ import ErrorState from '../components/ErrorState';
 import HearingRecordingPanel from '../components/HearingRecordingPanel';
 import LoadingState from '../components/LoadingState';
 import StatusBadge from '../components/StatusBadge';
+import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { getCaseById } from '../services/api';
 import { formatDate, formatDateTime } from '../utils/date';
 
 export default function CaseDetailScreen({ navigation, route }) {
   const { colors } = useAppTheme();
+  const { activeContextKey } = useStudyContext();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const caseId = route?.params?.caseId;
   const [caseDetail, setCaseDetail] = useState(null);
@@ -36,7 +38,7 @@ export default function CaseDetailScreen({ navigation, route }) {
     } finally {
       setLoading(false);
     }
-  }, [caseId]);
+  }, [activeContextKey, caseId]);
 
   useFocusEffect(
     useCallback(() => {

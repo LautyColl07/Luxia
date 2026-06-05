@@ -5,6 +5,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
+import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { getHearings, uploadDocument } from '../services/api';
 import { formatDateTime } from '../utils/date';
@@ -14,6 +15,7 @@ const DOCUMENT_TYPES = ['Demanda', 'Escrito', 'Prueba', 'Anexo'];
 
 export default function UploadDocumentScreen({ navigation }) {
   const { colors } = useAppTheme();
+  const { activeContextKey } = useStudyContext();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [hearings, setHearings] = useState([]);
   const [loadingHearings, setLoadingHearings] = useState(true);
@@ -27,7 +29,7 @@ export default function UploadDocumentScreen({ navigation }) {
 
   useEffect(() => {
     void loadHearings();
-  }, []);
+  }, [activeContextKey]);
 
   async function loadHearings() {
     try {

@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import EmptyState from '../components/EmptyState';
@@ -11,13 +11,16 @@ import LuxAssistantButton from '../components/LuxAssistantButton';
 import LuxAssistantModal from '../components/LuxAssistantModal';
 import MetricCard from '../components/MetricCard';
 import QuickActionButton from '../components/QuickActionButton';
+import StudyContextSelector from '../components/StudyContextSelector';
 import { useAuth } from '../context/AuthContext';
+import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
-import { getDashboardResumen, getNotifications } from '../services/api';
+import { getDashboardBootstrap } from '../services/api';
 
 export default function DashboardScreen({ navigation }) {
   const { colors } = useAppTheme();
   const { currentUser, isAuthReady } = useAuth();
+  const { activeContextKey } = useStudyContext();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [dashboard, setDashboard] = useState(null);
   const [notificationCount, setNotificationCount] = useState(0);
@@ -25,6 +28,9 @@ export default function DashboardScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [isLuxVisible, setIsLuxVisible] = useState(false);
+  const activeLoadRef = useRef(null);
+  const loadSequenceRef = useRef(0);
+  const isFocusedRef = useRef(false);
 
   const loadDashboard = useCallback(async (isRefresh = false) => {
     if (!isAuthReady) {
@@ -40,7 +46,14 @@ export default function DashboardScreen({ navigation }) {
       return;
     }
 
-    try {
+    if (!isRefresh && activeLoadRef.current) {
+      return activeLoadRef.current;
+    }
+
+    const loadId = loadSequenceRef.current + 1;
+    loadSequenceRef.current = loadId;
+
+    const loadPromise = (async () => {
       if (isRefresh) {
         setRefreshing(true);
       } else {
@@ -48,24 +61,42 @@ export default function DashboardScreen({ navigation }) {
       }
 
       setError('');
-      const [resumen, notifications] = await Promise.all([
-        getDashboardResumen(),
-        getNotifications(),
-      ]);
+      const { resumen, notificationCount: unreadCount } = await getDashboardBootstrap({
+        force: isRefresh,
+      });
+
+      if (!isFocusedRef.current || loadSequenceRef.current !== loadId) {
+        return;
+      }
+
       setDashboard(resumen);
-      setNotificationCount(notifications.filter((item) => !item?.read).length);
+      setNotificationCount(unreadCount);
+    })();
+
+    activeLoadRef.current = loadPromise;
+
+    try {
+      await loadPromise;
     } catch (loadError) {
-      console.error('[DashboardScreen] Error cargando metricas:', loadError);
-      setError(
-        loadError instanceof Error
-          ? loadError.message
-          : 'No pudimos cargar la informacion del panel inicial.'
-      );
+      if (isFocusedRef.current && loadSequenceRef.current === loadId) {
+        console.error('[DashboardScreen] Error cargando metricas:', loadError);
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : 'No pudimos cargar la informacion del panel inicial.'
+        );
+      }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (activeLoadRef.current === loadPromise) {
+        activeLoadRef.current = null;
+      }
+
+      if (isFocusedRef.current && loadSequenceRef.current === loadId) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  }, [currentUser, isAuthReady]);
+  }, [activeContextKey, currentUser, isAuthReady]);
 
   useFocusEffect(
     useCallback(() => {
@@ -73,8 +104,11 @@ export default function DashboardScreen({ navigation }) {
         return undefined;
       }
 
+      isFocusedRef.current = true;
       void loadDashboard();
-      return undefined;
+      return () => {
+        isFocusedRef.current = false;
+      };
     }, [isAuthReady, loadDashboard])
   );
 
@@ -221,14 +255,18 @@ export default function DashboardScreen({ navigation }) {
           <View style={styles.heroTopRow}>
             <Text style={styles.brand}>LUXIA</Text>
 
-            <Pressable onPress={handleNotificationsPress} style={styles.notificationButton}>
-              <MaterialCommunityIcons color={colors.textOnPrimary} name="bell-outline" size={24} />
-              {notificationCount > 0 ? (
-                <View style={styles.notificationBadge}>
-                  <Text style={styles.notificationBadgeText}>{notificationCount}</Text>
-                </View>
-              ) : null}
-            </Pressable>
+            <View style={styles.heroActions}>
+              <StudyContextSelector inverse />
+
+              <Pressable onPress={handleNotificationsPress} style={styles.notificationButton}>
+                <MaterialCommunityIcons color={colors.textOnPrimary} name="bell-outline" size={24} />
+                {notificationCount > 0 ? (
+                  <View style={styles.notificationBadge}>
+                    <Text style={styles.notificationBadgeText}>{notificationCount}</Text>
+                  </View>
+                ) : null}
+              </Pressable>
+            </View>
           </View>
 
           <Text style={styles.greeting}>Hola, {nombreUsuario}</Text>
@@ -371,6 +409,7 @@ const createStyles = (colors) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 12,
   },
   brand: {
     color: colors.textOnPrimary,
@@ -385,6 +424,12 @@ const createStyles = (colors) => StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.12)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  heroActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexShrink: 1,
   },
   notificationBadge: {
     position: 'absolute',
