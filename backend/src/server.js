@@ -9,6 +9,7 @@ const app = require('./app');
 const { authRateLimit, luxRateLimit } = require('./lib/rateLimit');
 const activityRoutes = require('./routes/activity.routes');
 const authRoutes = require('./routes/auth.routes');
+const casesRoutes = require('./routes/cases.routes');
 const documentRoutes = require('./routes/documents.routes');
 const hearingTranscriptionRoutes = require('./routes/hearingTranscription.routes');
 const luxRoutes = require('./routes/lux.routes');
@@ -36,6 +37,8 @@ app.use('/api/v1/lux', luxRoutes);
 app.use('/api/v1/transcriptions', transcriptionRoutes);
 app.use('/api/v1/documentos', documentRoutes);
 app.use('/api/v1/audiencias', hearingTranscriptionRoutes);
+app.use('/api/v1/cases', casesRoutes);
+app.use('/api/v1/causas', casesRoutes);
 
 app.listen(PORT, () => {
   console.log(`Luxia backend escuchando en ${PUBLIC_BACKEND_URL}`);

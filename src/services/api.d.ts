@@ -11,6 +11,14 @@ export function syncRegister(
   },
   token?: string | null
 ): Promise<unknown>;
+export function getMyLegalStudies(): Promise<
+  Array<{ id: string; name: string }>
+>;
+export function setApiWorkContext(context?: {
+  type?: string;
+  legalStudyId?: string | null;
+  name?: string;
+}): void;
 export function getDashboardBootstrap(options?: { force?: boolean }): Promise<{
   resumen: unknown;
   notificationCount: number;

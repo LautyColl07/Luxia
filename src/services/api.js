@@ -652,6 +652,13 @@ async function getRequestAuthHeaders(path, customHeaders = {}) {
       throw error;
     }
 
+    if (authToken) {
+      return {
+        headers: { Authorization: `Bearer ${authToken}` },
+        token: authToken,
+      };
+    }
+
     setAuthToken(null);
     throw createRequestError(EXPIRED_SESSION_MESSAGE, 401, error);
   }
@@ -916,14 +923,76 @@ export async function getDashboardResumen(options = {}) {
   return dashboardResumenInFlight;
 }
 
-export async function getCases() {
+export async function getCases(params = {}) {
   if (USE_MOCKS) {
-    const cases = sortByDateDesc(mockStore.cases, 'createdAt').map((item) => normalizeCase(item));
-    return simulateDelay(cases);
+    let cases = sortByDateDesc(mockStore.cases, 'createdAt').map((item) => normalizeCase(item));
+    
+    // Apply mock filtering
+    if (params.status && params.status !== 'all') {
+      cases = cases.filter(c => normalizeStatusLabel(c.status) === normalizeStatusLabel(params.status));
+    }
+    if (params.court) {
+      cases = cases.filter(c => c.court?.toLowerCase().includes(params.court.toLowerCase()));
+    }
+    if (params.startDate) {
+      const start = new Date(params.startDate);
+      cases = cases.filter(c => new Date(c.createdAt) >= start);
+    }
+    if (params.endDate) {
+      const end = new Date(params.endDate);
+      end.setHours(23, 59, 59, 999);
+      cases = cases.filter(c => new Date(c.createdAt) <= end);
+    }
+    
+    const page = params.page || 1;
+    const limit = params.limit || 20;
+    const total = cases.length;
+    const items = cases.slice((page - 1) * limit, page * limit);
+
+    return simulateDelay({
+      items,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit)
+    });
   }
 
-  const data = await requestWithFallback(withWorkScope('/cases'), withWorkScope('/causas'));
-  return sortByDateDesc(toArray(data).map((item) => normalizeCase(item)), 'createdAt');
+  // Build query string
+  const queryParams = new URLSearchParams();
+  if (params.page) queryParams.append('page', params.page);
+  if (params.limit) queryParams.append('limit', params.limit);
+  if (params.status && params.status !== 'all') queryParams.append('status', params.status);
+  if (params.court) queryParams.append('court', params.court);
+  if (params.startDate) queryParams.append('startDate', params.startDate);
+  if (params.endDate) queryParams.append('endDate', params.endDate);
+  if (params.search) queryParams.append('search', params.search);
+
+  const queryStr = queryParams.toString() ? `?${queryParams.toString()}` : '';
+
+  const response = await requestWithFallback(
+    withWorkScope(`/cases${queryStr}`),
+    withWorkScope(`/causas${queryStr}`)
+  );
+
+  // If response has items (new paginated format), map items and return
+  if (response && response.items) {
+    return {
+      ...response,
+      items: response.items.map((item) => normalizeCase(item))
+    };
+  }
+
+  // Fallback for older backend returning an array directly
+  const arrayData = Array.isArray(response) ? response : (response?.data || []);
+  const items = sortByDateDesc(toArray(arrayData).map((item) => normalizeCase(item)), 'createdAt');
+  return {
+    items,
+    total: items.length,
+    page: 1,
+    limit: items.length || 20,
+    totalPages: 1
+  };
 }
 
 export async function getCaseById(id) {

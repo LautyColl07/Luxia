@@ -11,6 +11,18 @@ import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
 import { API_BASE_URL } from "../config/api";
 import { auth, db, isFirebaseConfigured, missingFirebaseKeys } from "../config/firebase";
 import { setAuthToken, syncRegister } from "./api";
+import {
+  getUsernameValidationError,
+  normalizeLoginIdentifier,
+  resolveRegisterUsername,
+} from "../utils/auth";
+
+const GENERIC_LOGIN_ERROR_MESSAGE =
+  "El usuario o la contrasena son incorrectos.";
+const GENERIC_PASSWORD_RESET_MESSAGE =
+  "Si existe una cuenta con ese email, vas a recibir un enlace para restablecer tu contrasena.";
+const GENERIC_PASSWORD_RESET_ERROR_MESSAGE =
+  "No pudimos enviar el email de restablecimiento. Intenta nuevamente.";
 
 export type LoginPayload = {
   identifier: string;
