@@ -497,7 +497,8 @@ async function enrichDashboardResumenWithCases(resumen) {
   }
 
   try {
-    const cases = await getCases();
+    const response = await getCases();
+    const cases = response?.items || [];
 
     return {
       ...resumen,
@@ -810,6 +811,27 @@ export async function getMyLegalStudies() {
   }));
 }
 
+export async function joinLegalStudy(name) {
+  if (USE_MOCKS) {
+    const newStudy = {
+      id: String(Date.now()),
+      name: name.trim(),
+    };
+    mockStore.legalStudies = [newStudy, ...mockStore.legalStudies];
+    return simulateDelay(newStudy);
+  }
+
+  const response = await request('/legal-studies/join', {
+    method: 'POST',
+    body: { name: name.trim() },
+  });
+
+  return {
+    id: String(response?.id || Date.now()),
+    name: safeString(response?.name || name, name),
+  };
+}
+
 function getWorkContextKey(context = activeWorkContext) {
   return context?.type === 'study' && context?.legalStudyId
     ? `study:${context.legalStudyId}`
@@ -923,7 +945,7 @@ export async function getDashboardResumen(options = {}) {
   return dashboardResumenInFlight;
 }
 
-export async function getCases(params = {}) {
+export async function getCases(context = 'private', params = {}) {
   if (USE_MOCKS) {
     let cases = sortByDateDesc(mockStore.cases, 'createdAt').map((item) => normalizeCase(item));
     
@@ -958,8 +980,18 @@ export async function getCases(params = {}) {
     });
   }
 
-  // Build query string
+  // Build scope query based on context
+  const scopeQuery = {};
+  if (context === 'studio' && activeWorkContext?.legalStudyId) {
+    scopeQuery.scope = 'study';
+    scopeQuery.legalStudyId = activeWorkContext.legalStudyId;
+  } else {
+    scopeQuery.scope = 'personal';
+  }
+
+  // Build remaining query params
   const queryParams = new URLSearchParams();
+  Object.entries(scopeQuery).forEach(([key, value]) => queryParams.append(key, value));
   if (params.page) queryParams.append('page', params.page);
   if (params.limit) queryParams.append('limit', params.limit);
   if (params.status && params.status !== 'all') queryParams.append('status', params.status);
@@ -968,11 +1000,11 @@ export async function getCases(params = {}) {
   if (params.endDate) queryParams.append('endDate', params.endDate);
   if (params.search) queryParams.append('search', params.search);
 
-  const queryStr = queryParams.toString() ? `?${queryParams.toString()}` : '';
+  const queryStr = `?${queryParams.toString()}`;
 
   const response = await requestWithFallback(
-    withWorkScope(`/cases${queryStr}`),
-    withWorkScope(`/causas${queryStr}`)
+    `/cases${queryStr}`,
+    `/causas${queryStr}`
   );
 
   // If response has items (new paginated format), map items and return
@@ -1079,9 +1111,12 @@ export async function createCase(data) {
   const endpoint = withWorkScope('/cases');
   const caseData = {
     ...normalizeCasePayload(data),
-    ...(activeWorkContext?.type === 'study' && activeWorkContext?.legalStudyId
+    ...(data.scope ? { scope: data.scope } : {}),
+    ...(data.scope === 'LEGAL_STUDY' && activeWorkContext?.legalStudyId
       ? { legalStudyId: activeWorkContext.legalStudyId }
-      : {}),
+      : activeWorkContext?.type === 'study' && activeWorkContext?.legalStudyId
+        ? { legalStudyId: activeWorkContext.legalStudyId }
+        : {}),
   };
   console.log('[API] createCase payload:', JSON.stringify(caseData, null, 2));
   console.log('[API] endpoint:', endpoint);

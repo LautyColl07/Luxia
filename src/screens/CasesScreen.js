@@ -1,13 +1,12 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useMemo, useState } from 'react';
-import { FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View, ActivityIndicator, Platform } from 'react-native';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { Animated, FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View, ActivityIndicator, Platform } from 'react-native';
 
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
 import StatusBadge from '../components/StatusBadge';
-import StudyContextSelector from '../components/StudyContextSelector';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { getCases } from '../services/api';
@@ -24,14 +23,19 @@ const STATUS_OPTIONS = [
 
 export default function CasesScreen({ navigation }) {
   const { colors } = useAppTheme();
-  const { activeContextKey } = useStudyContext();
+  const { activeContextKey, legalStudies, activeLegalStudy, selectPersonalContext, selectStudyContext } = useStudyContext();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const hasStudy = legalStudies.length > 0;
 
+  const [context, setContext] = useState('private');
   const [cases, setCases] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [fetchingMore, setFetchingMore] = useState(false);
   const [error, setError] = useState('');
+
+  // Animated value for the segmented control indicator
+  const segmentAnim = useRef(new Animated.Value(0)).current;
 
   // Pagination & Filter State
   const [page, setPage] = useState(1);
@@ -46,6 +50,26 @@ export default function CasesScreen({ navigation }) {
     endDate: '',
   });
 
+  const handleContextChange = useCallback((nextContext) => {
+    setContext(nextContext);
+    Animated.spring(segmentAnim, {
+      toValue: nextContext === 'private' ? 0 : 1,
+      useNativeDriver: false,
+      friction: 8,
+      tension: 70,
+    }).start();
+
+    // Sync the global API work context so scope/legalStudyId are sent correctly
+    if (nextContext === 'studio') {
+      const study = activeLegalStudy || legalStudies[0];
+      if (study) {
+        selectStudyContext(study);
+      }
+    } else {
+      selectPersonalContext();
+    }
+  }, [segmentAnim, activeLegalStudy, legalStudies, selectStudyContext, selectPersonalContext]);
+
   const loadCases = useCallback(async (isRefresh = false, fetchPage = 1, currentFilters = filters) => {
     try {
       if (isRefresh) {
@@ -58,7 +82,7 @@ export default function CasesScreen({ navigation }) {
 
       setError('');
       
-      const response = await getCases({
+      const response = await getCases(context, {
         ...currentFilters,
         page: fetchPage,
         limit: 20
@@ -90,7 +114,7 @@ export default function CasesScreen({ navigation }) {
       setRefreshing(false);
       setFetchingMore(false);
     }
-  }, [activeContextKey]);
+  }, [activeContextKey, context]);
 
   useFocusEffect(
     useCallback(() => {
@@ -219,8 +243,6 @@ export default function CasesScreen({ navigation }) {
               Consulta el estado de tus expedientes, su juzgado interviniente y las fechas relevantes.
             </Text>
           </View>
-
-          <StudyContextSelector />
         </View>
 
         <View style={styles.headerActions}>
@@ -243,7 +265,64 @@ export default function CasesScreen({ navigation }) {
             </Text>
           </Pressable>
         </View>
-        
+
+        {/* ── Segmented Context Control ── */}
+        {hasStudy && (
+        <View style={styles.segmentedWrapper}>
+          <View style={styles.segmentedTrack}>
+            <Animated.View
+              style={[
+                styles.segmentedIndicator,
+                {
+                  left: segmentAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: ['0%', '50%'],
+                  }),
+                },
+              ]}
+            />
+            <Pressable
+              onPress={() => handleContextChange('private')}
+              style={styles.segmentedButton}
+            >
+              <MaterialCommunityIcons
+                name="briefcase-outline"
+                size={16}
+                color={context === 'private' ? colors.textOnPrimary : colors.textSecondary}
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={[
+                  styles.segmentedLabel,
+                  context === 'private' && styles.segmentedLabelActive,
+                ]}
+              >
+                Mis Causas
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => handleContextChange('studio')}
+              style={styles.segmentedButton}
+            >
+              <MaterialCommunityIcons
+                name="office-building-outline"
+                size={16}
+                color={context === 'studio' ? colors.textOnPrimary : colors.textSecondary}
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={[
+                  styles.segmentedLabel,
+                  context === 'studio' && styles.segmentedLabelActive,
+                ]}
+              >
+                Causas de mi Estudio
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+        )}
+
         {renderFilterSection()}
         
         <View style={styles.resultsSummary}>
@@ -480,6 +559,51 @@ const createStyles = (colors) => StyleSheet.create({
     color: colors.textOnPrimary,
     fontSize: 14,
     fontWeight: '600',
+  },
+  segmentedWrapper: {
+    marginTop: 4,
+  },
+  segmentedTrack: {
+    flexDirection: 'row',
+    backgroundColor: colors.card,
+    borderRadius: 16,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  segmentedIndicator: {
+    position: 'absolute',
+    top: 4,
+    bottom: 4,
+    width: '50%',
+    backgroundColor: colors.primary,
+    borderRadius: 13,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  segmentedButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 11,
+    paddingHorizontal: 8,
+    borderRadius: 13,
+    zIndex: 1,
+  },
+  segmentedLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  segmentedLabelActive: {
+    color: colors.textOnPrimary,
+    fontWeight: '700',
   },
   resultsSummary: {
     paddingVertical: 8,

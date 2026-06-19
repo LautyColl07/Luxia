@@ -1,6 +1,8 @@
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { createCase } from '../services/api';
 import { showSuccessAndGoBack } from '../utils/formFeedback';
@@ -10,13 +12,17 @@ const STATUS_OPTIONS = ['Activa', 'Pendiente', 'En proceso', 'Archivada'];
 
 export default function NewCaseScreen({ navigation }) {
   const { colors } = useAppTheme();
+  const { legalStudies, activeLegalStudy } = useStudyContext();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const hasStudy = legalStudies.length > 0;
+  const studyId = activeLegalStudy?.id || legalStudies[0]?.id || null;
   const [form, setForm] = useState({
     title: '',
     description: '',
     court: '',
     status: 'Activa',
   });
+  const [scope, setScope] = useState('PRIVATE');
   const [submitting, setSubmitting] = useState(false);
 
   const updateField = (key, value) => setForm((current) => ({ ...current, [key]: value }));
@@ -34,6 +40,8 @@ export default function NewCaseScreen({ navigation }) {
         description: form.description.trim(),
         court: form.court.trim(),
         status: form.status,
+        scope,
+        ...(scope === 'LEGAL_STUDY' && studyId ? { legalStudyId: studyId } : {}),
       };
 
       console.log('[NewCaseScreen] Payload creando causa:', JSON.stringify(payload, null, 2));
@@ -107,6 +115,81 @@ export default function NewCaseScreen({ navigation }) {
           ))}
         </View>
       </Field>
+
+      {/* ── Scope Selector ── */}
+      <View style={styles.scopeSection}>
+        <Text style={styles.scopeSectionTitle}>¿Dónde deseas guardar esta causa?</Text>
+        <Text style={styles.scopeSectionHint}>
+          Elegí si el expediente pertenece a tu ámbito personal o al estudio jurídico.
+        </Text>
+        <View style={styles.scopeCards}>
+          <Pressable
+            onPress={() => setScope('PRIVATE')}
+            style={[
+              styles.scopeCard,
+              scope === 'PRIVATE' && styles.scopeCardActive,
+            ]}
+          >
+            <View style={[
+              styles.scopeIconCircle,
+              scope === 'PRIVATE' && styles.scopeIconCircleActive,
+            ]}>
+              <MaterialCommunityIcons
+                name="account-outline"
+                size={24}
+                color={scope === 'PRIVATE' ? colors.textOnPrimary : colors.textSecondary}
+              />
+            </View>
+            <Text style={[
+              styles.scopeCardTitle,
+              scope === 'PRIVATE' && styles.scopeCardTitleActive,
+            ]}>Causa Personal</Text>
+            <Text style={[
+              styles.scopeCardDesc,
+              scope === 'PRIVATE' && styles.scopeCardDescActive,
+            ]}>Solo visible para vos</Text>
+            {scope === 'PRIVATE' && (
+              <View style={styles.scopeCheckBadge}>
+                <MaterialCommunityIcons name="check-bold" size={14} color={colors.textOnPrimary} />
+              </View>
+            )}
+          </Pressable>
+
+          <Pressable
+            disabled={!hasStudy}
+            onPress={() => setScope('LEGAL_STUDY')}
+            style={[
+              styles.scopeCard,
+              scope === 'LEGAL_STUDY' && styles.scopeCardActive,
+              !hasStudy && { opacity: 0.45 },
+            ]}
+          >
+            <View style={[
+              styles.scopeIconCircle,
+              scope === 'LEGAL_STUDY' && styles.scopeIconCircleActive,
+            ]}>
+              <MaterialCommunityIcons
+                name="office-building-outline"
+                size={24}
+                color={scope === 'LEGAL_STUDY' ? colors.textOnPrimary : colors.textSecondary}
+              />
+            </View>
+            <Text style={[
+              styles.scopeCardTitle,
+              scope === 'LEGAL_STUDY' && styles.scopeCardTitleActive,
+            ]}>Causa del Estudio</Text>
+            <Text style={[
+              styles.scopeCardDesc,
+              scope === 'LEGAL_STUDY' && styles.scopeCardDescActive,
+            ]}>{hasStudy ? 'Visible para el equipo' : 'No perteneces a un estudio'}</Text>
+            {scope === 'LEGAL_STUDY' && (
+              <View style={styles.scopeCheckBadge}>
+                <MaterialCommunityIcons name="check-bold" size={14} color={colors.textOnPrimary} />
+              </View>
+            )}
+          </Pressable>
+        </View>
+      </View>
 
       <Pressable
         disabled={submitting}
@@ -198,6 +281,89 @@ const createStyles = (colors) => StyleSheet.create({
   },
   optionChipTextActive: {
     color: colors.textOnPrimary,
+  },
+  scopeSection: {
+    gap: 10,
+    marginTop: 6,
+  },
+  scopeSectionTitle: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  scopeSectionHint: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  scopeCards: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 4,
+  },
+  scopeCard: {
+    flex: 1,
+    backgroundColor: colors.card,
+    borderRadius: 20,
+    padding: 18,
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1.5,
+    borderColor: colors.borderSoft,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  scopeCardActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.accentSoft || `${colors.primary}15`,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 5,
+  },
+  scopeIconCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+  },
+  scopeIconCircleActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  scopeCardTitle: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  scopeCardTitleActive: {
+    color: colors.primary,
+  },
+  scopeCardDesc: {
+    color: colors.textMuted,
+    fontSize: 12,
+    textAlign: 'center',
+    lineHeight: 16,
+  },
+  scopeCardDescActive: {
+    color: colors.textSecondary,
+  },
+  scopeCheckBadge: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   submitButton: {
     marginTop: 8,

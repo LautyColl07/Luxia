@@ -11,7 +11,7 @@ import LuxAssistantButton from '../components/LuxAssistantButton';
 import LuxAssistantModal from '../components/LuxAssistantModal';
 import MetricCard from '../components/MetricCard';
 import QuickActionButton from '../components/QuickActionButton';
-import StudyContextSelector from '../components/StudyContextSelector';
+
 import { useAuth } from '../context/AuthContext';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
@@ -256,7 +256,6 @@ export default function DashboardScreen({ navigation }) {
             <Text style={styles.brand}>LUXIA</Text>
 
             <View style={styles.heroActions}>
-              <StudyContextSelector inverse />
 
               <Pressable onPress={handleNotificationsPress} style={styles.notificationButton}>
                 <MaterialCommunityIcons color={colors.textOnPrimary} name="bell-outline" size={24} />

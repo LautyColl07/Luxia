@@ -3,15 +3,15 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { signOut } from 'firebase/auth';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View, Modal, TextInput } from 'react-native';
 
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
-import StudyContextSelector from '../components/StudyContextSelector';
 import { auth } from '../config/firebase';
 import { useAuth } from '../context/AuthContext';
+import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
-import { getMe, getNotifications } from '../services/api';
+import { getMe, getNotifications, joinLegalStudy } from '../services/api';
 import { authClient } from '../services/authClient';
 import { buildDisplayUser } from '../utils/userDisplay';
 
@@ -23,6 +23,7 @@ const APPEARANCE_OPTIONS = [
 
 export default function MoreScreen({ navigation }) {
   const { currentUser } = useAuth();
+  const { legalStudies, refreshLegalStudies } = useStudyContext();
   const { colors, isDark, resolvedTheme, setThemePreference, themePreference } = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [profile, setProfile] = useState(null);
@@ -35,6 +36,11 @@ export default function MoreScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [sendingReset, setSendingReset] = useState(false);
   const [error, setError] = useState('');
+
+  // Study Modal State
+  const [showStudyModal, setShowStudyModal] = useState(false);
+  const [studyInput, setStudyInput] = useState('');
+  const [savingStudy, setSavingStudy] = useState(false);
 
   const loadProfile = useCallback(async () => {
     try {
@@ -136,6 +142,27 @@ export default function MoreScreen({ navigation }) {
     }
   }, [displayProfile.email]);
 
+  const handleSaveStudy = async () => {
+    const name = studyInput.trim();
+    if (!name) {
+      Alert.alert('Informacion incompleta', 'Ingresa el nombre de tu estudio juridico.');
+      return;
+    }
+
+    try {
+      setSavingStudy(true);
+      await joinLegalStudy(name);
+      await refreshLegalStudies();
+      setShowStudyModal(false);
+      Alert.alert('Estudio actualizado', `Te vinculaste al estudio ${name} exitosamente.`);
+    } catch (err) {
+      console.error('[MoreScreen] Error vinculando estudio:', err);
+      Alert.alert('No pudimos vincularte', 'Ocurrio un error al intentar vincular el estudio. Intenta nuevamente.');
+    } finally {
+      setSavingStudy(false);
+    }
+  };
+
   const updateSetting = useCallback((key, value) => {
     setSettings((current) => ({ ...current, [key]: value }));
   }, []);
@@ -163,7 +190,6 @@ export default function MoreScreen({ navigation }) {
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} style={styles.screen}>
       <View style={styles.topBar}>
         <Text style={styles.topBarTitle}>Mas</Text>
-        <StudyContextSelector />
       </View>
 
       <View style={styles.heroCard}>
@@ -197,6 +223,31 @@ export default function MoreScreen({ navigation }) {
         <InfoRow label="Email de la cuenta" styles={styles} value={accountEmail} />
         <InfoRow label="Metodo de acceso" styles={styles} value="Firebase Auth" />
         <InfoRow label="Identificador" styles={styles} value={accountId} />
+      </CardSection>
+
+      <CardSection
+        colors={colors}
+        icon="office-building-outline"
+        styles={styles}
+        subtitle="Vincula tu cuenta a un equipo de trabajo."
+        title="Estudio Juridico"
+      >
+        <InfoRow 
+          label="Estudio actual" 
+          styles={styles} 
+          value={legalStudies.length > 0 ? legalStudies.map(s => s.name).join(', ') : 'Ninguno'} 
+        />
+        <ActionRow
+          colors={colors}
+          description="Escribe el nombre para unirte o crearlo."
+          icon="account-group-outline"
+          onPress={() => {
+            setStudyInput('');
+            setShowStudyModal(true);
+          }}
+          styles={styles}
+          title={legalStudies.length > 0 ? 'Cambiar estudio' : 'Vincular estudio'}
+        />
       </CardSection>
 
       <CardSection
@@ -362,6 +413,51 @@ export default function MoreScreen({ navigation }) {
           Cuenta conectada con email real y configuracion visual {isDark ? 'oscura' : 'clara'}.
         </Text>
       </View>
+
+      <Modal
+        visible={showStudyModal}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setShowStudyModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalIconContainer}>
+                <MaterialCommunityIcons name="office-building-outline" size={24} color={colors.primary} />
+              </View>
+              <Text style={styles.modalTitle}>Estudio Juridico</Text>
+              <Text style={styles.modalSubtitle}>Ingresa el nombre del estudio para vincular tu cuenta a su espacio de trabajo.</Text>
+            </View>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="Nombre del estudio (ej. Perez & Asoc)"
+              placeholderTextColor={colors.textMuted}
+              value={studyInput}
+              onChangeText={setStudyInput}
+              autoCapitalize="words"
+            />
+            <View style={styles.modalActions}>
+              <Pressable
+                style={styles.modalButtonSecondary}
+                onPress={() => setShowStudyModal(false)}
+                disabled={savingStudy}
+              >
+                <Text style={styles.modalButtonSecondaryText}>Cancelar</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modalButtonPrimary, savingStudy && styles.modalButtonDisabled]}
+                onPress={handleSaveStudy}
+                disabled={savingStudy}
+              >
+                <Text style={styles.modalButtonPrimaryText}>
+                  {savingStudy ? 'Guardando...' : 'Vincular'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -717,5 +813,94 @@ const createStyles = (colors) => StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 13,
     marginTop: 6,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalContainer: {
+    width: '100%',
+    maxWidth: 400,
+    backgroundColor: colors.card,
+    borderRadius: 24,
+    padding: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  modalHeader: {
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  modalIconContainer: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.accentSoft,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    color: colors.text,
+    fontSize: 20,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  modalSubtitle: {
+    color: colors.textSecondary,
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  modalInput: {
+    height: 50,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    fontSize: 16,
+    color: colors.text,
+    backgroundColor: colors.backgroundAlt,
+    marginBottom: 24,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  modalButtonSecondary: {
+    flex: 1,
+    height: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 14,
+    backgroundColor: colors.backgroundAlt,
+  },
+  modalButtonSecondaryText: {
+    color: colors.textSecondary,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  modalButtonPrimary: {
+    flex: 1,
+    height: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 14,
+    backgroundColor: colors.primary,
+  },
+  modalButtonDisabled: {
+    opacity: 0.6,
+  },
+  modalButtonPrimaryText: {
+    color: colors.textOnPrimary,
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

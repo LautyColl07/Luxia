@@ -132,10 +132,23 @@ async function getStoredUserProfile(uid: string): Promise<StoredUserProfile> {
   }
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const snapshot = await getDoc(doc(db, "users", uid));
+    try {
+      const snapshot = await getDoc(doc(db, "users", uid));
 
-    if (snapshot.exists()) {
-      return snapshot.data() as StoredUserProfile;
+      if (snapshot.exists()) {
+        return snapshot.data() as StoredUserProfile;
+      }
+    } catch (e) {
+      console.warn("Failed to get stored user profile, retrying...", e);
+      try {
+        const { getDocFromCache } = await import("firebase/firestore");
+        const cachedSnapshot = await getDocFromCache(doc(db, "users", uid));
+        if (cachedSnapshot.exists()) {
+          return cachedSnapshot.data() as StoredUserProfile;
+        }
+      } catch (cacheError) {
+        // Cache read also failed
+      }
     }
 
     await delay(250);
