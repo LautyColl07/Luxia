@@ -20,19 +20,20 @@ export default function QuickActionButton({ title, subtitle, icon, onPress, full
       <View style={styles.iconWrapper}>
         <MaterialCommunityIcons color={colors.primary} name={icon} size={22} />
       </View>
-      <Text style={styles.title}>{title}</Text>
-      <Text style={styles.subtitle}>{subtitle}</Text>
+      <Text style={styles.title} numberOfLines={2}>{title}</Text>
+      <Text style={styles.subtitle} numberOfLines={3}>{subtitle}</Text>
     </Pressable>
   );
 }
 
 const createStyles = (colors) => StyleSheet.create({
   card: {
-    width: '48%',
+    flexBasis: '47%',
+    flexGrow: 1,
     backgroundColor: colors.card,
     borderRadius: 24,
     padding: 18,
-    minHeight: 164,
+    minHeight: 155,
     shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.18,
@@ -43,8 +44,8 @@ const createStyles = (colors) => StyleSheet.create({
     borderColor: colors.borderSoft,
   },
   cardFullWidth: {
-    width: '100%',
-    minHeight: 150,
+    flexBasis: '100%',
+    minHeight: 140,
   },
   cardPressed: {
     transform: [{ scale: 0.99 }],
@@ -67,7 +68,8 @@ const createStyles = (colors) => StyleSheet.create({
   subtitle: {
     color: colors.textSecondary,
     fontSize: 13,
-    lineHeight: 19,
-    marginTop: 8,
+    lineHeight: 18,
+    marginTop: 6,
+    flexShrink: 1,
   },
 });

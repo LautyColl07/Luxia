@@ -28,6 +28,8 @@ const PROTECTED_ENDPOINT_PREFIXES = [
   '/hearings',
   '/documentos',
   '/tasks',
+  '/tareas',
+  '/activity',
   '/legal-studies',
   '/lux/chat',
   '/transcriptions',
@@ -1254,6 +1256,36 @@ export async function createHearing(data) {
     location: response?.location ?? payload.location,
   });
 }
+
+export async function createTask(data) {
+  if (USE_MOCKS) {
+    const nextId = Math.max(0, ...mockStore.tasks.map((item) => item.id)) + 1;
+    const newTask = normalizeTask({
+      id: nextId,
+      title: data.title,
+      description: data.description,
+      dueDate: data.dueDate,
+      completed: false,
+      caseId: Number(data.caseId),
+    });
+    mockStore.tasks = [...mockStore.tasks, newTask];
+    return simulateDelay(newTask);
+  }
+
+  const payload = {
+    title: data.title,
+    description: data.description || null,
+    dueDate: data.dueDate || null,
+    status: data.status || 'Pendiente',
+    caseId: Number(data.caseId),
+  };
+
+  return request('/tareas', {
+    method: 'POST',
+    body: payload,
+  });
+}
+
 
 export async function getDocuments() {
   if (USE_MOCKS) {

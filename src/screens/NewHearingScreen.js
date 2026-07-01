@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import EmptyState from '../components/EmptyState';
@@ -36,15 +37,12 @@ export default function NewHearingScreen({ navigation, route }) {
     location: '',
   });
 
-  useEffect(() => {
-    void loadCases();
-  }, [activeContextKey]);
-
-  async function loadCases() {
+  const loadCases = useCallback(async () => {
     try {
       setLoadingCases(true);
       setCasesError('');
-      const items = await getCases();
+      const response = await getCases();
+      const items = response?.items || response || [];
       setCases(Array.isArray(items) ? items : []);
     } catch (error) {
       console.error('[NewHearingScreen] Error cargando causas:', error);
@@ -55,7 +53,13 @@ export default function NewHearingScreen({ navigation, route }) {
     } finally {
       setLoadingCases(false);
     }
-  }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadCases();
+    }, [loadCases, activeContextKey])
+  );
 
   const selectedCase = useMemo(
     () => cases.find((item) => String(item?.id) === form.caseId) || null,
@@ -161,13 +165,18 @@ export default function NewHearingScreen({ navigation, route }) {
 
   if (!cases.length) {
     return (
-      <EmptyState
-        actionLabel="Nueva causa"
-        icon="briefcase-search-outline"
-        message="Todavia no hay causas disponibles para vincular una audiencia."
-        onAction={() => navigation.navigate('NewCase')}
-        title="Sin causas registradas"
-      />
+      <View style={[styles.screen, { justifyContent: 'center', padding: 20, gap: 14 }]}>
+        <EmptyState
+          actionLabel="Nueva causa"
+          icon="briefcase-search-outline"
+          message="Todavía no hay causas disponibles para vincular una audiencia."
+          onAction={() => navigation.navigate('NewCase')}
+          title="Sin causas registradas"
+        />
+        <Pressable onPress={() => navigation.goBack()} style={styles.secondaryButton}>
+          <Text style={styles.secondaryButtonText}>Volver</Text>
+        </Pressable>
+      </View>
     );
   }
 
@@ -358,6 +367,7 @@ const createStyles = (colors) => StyleSheet.create({
   field: {
     gap: 10,
     flex: 1,
+    minWidth: 120,
   },
   label: {
     color: colors.text,
@@ -411,6 +421,7 @@ const createStyles = (colors) => StyleSheet.create({
   },
   dualRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 12,
   },
   optionRow: {
@@ -510,6 +521,21 @@ const createStyles = (colors) => StyleSheet.create({
   submitButtonText: {
     color: colors.textOnPrimary,
     fontSize: 15,
+    fontWeight: '700',
+  },
+  secondaryButton: {
+    minHeight: 52,
+    borderRadius: 16,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  secondaryButtonText: {
+    color: colors.text,
+    fontSize: 14,
     fontWeight: '700',
   },
 });

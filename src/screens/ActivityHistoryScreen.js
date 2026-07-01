@@ -194,8 +194,8 @@ export default function ActivityHistoryScreen({ navigation }) {
           </Pressable>
         </View>
 
-        <Text style={styles.title}>Historial de actividad</Text>
-        <Text style={styles.subtitle}>Registro de movimientos recientes en tu estudio</Text>
+        <Text style={styles.title} numberOfLines={2}>Historial de actividad</Text>
+        <Text style={styles.subtitle} numberOfLines={2}>Registro de movimientos recientes en tu estudio</Text>
 
         <View style={styles.heroMetaRow}>
           <View style={styles.heroBadge}>
@@ -293,9 +293,10 @@ const createStyles = (colors) => StyleSheet.create({
   },
   title: {
     color: colors.textOnPrimary,
-    fontSize: 26,
+    fontSize: 24,
     fontWeight: '700',
     marginTop: 18,
+    lineHeight: 32,
   },
   subtitle: {
     color: 'rgba(255,255,255,0.78)',
@@ -303,6 +304,7 @@ const createStyles = (colors) => StyleSheet.create({
     lineHeight: 21,
     marginTop: 8,
     maxWidth: '88%',
+    flexShrink: 1,
   },
   heroMetaRow: {
     flexDirection: 'row',

@@ -3,8 +3,10 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useMemo, useState } from 'react';
 import {
   Alert,
+  Platform,
   Pressable,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   View,
@@ -65,7 +67,8 @@ export default function CalendarScreen({ navigation }) {
       setLoading(true);
       setError('');
 
-      const [hearings, cases] = await Promise.all([getHearings(), getCases()]);
+      const [hearings, casesResponse] = await Promise.all([getHearings(), getCases()]);
+      const cases = casesResponse?.items || casesResponse || [];
       const detailedCases = await Promise.all(
         (Array.isArray(cases) ? cases : []).map(async (caseItem) => {
           try {
@@ -111,7 +114,7 @@ export default function CalendarScreen({ navigation }) {
 
     return dailyEvents.filter((event) => {
       const matchesArea = selectedArea === 'all' || event?.area?.key === selectedArea;
-      const isReviewed = reviewed[event.id];
+      const isReviewed = reviewed[event.id] !== undefined ? reviewed[event.id] : Boolean(event.completed);
 
       if (!showReviewed && isReviewed) {
         return false;
@@ -210,8 +213,9 @@ export default function CalendarScreen({ navigation }) {
       showsVerticalScrollIndicator={false}
       style={styles.screen}
     >
+      <StatusBar barStyle="dark-content" />
       <View style={styles.topBar}>
-        <Text style={styles.topBarTitle}>Agenda</Text>
+        <Text style={styles.topBarTitle} numberOfLines={1}>Agenda</Text>
         <StudyContextSelector />
       </View>
 
@@ -312,7 +316,7 @@ export default function CalendarScreen({ navigation }) {
           <View style={styles.agendaIcon}>
             <MaterialCommunityIcons color={colors.primary} name="calendar-blank-outline" size={18} />
           </View>
-          <Text style={styles.agendaTitle}>
+          <Text style={styles.agendaTitle} numberOfLines={2}>
             {formatAgendaDate(selectedDate).toUpperCase()}
           </Text>
         </View>
@@ -371,7 +375,7 @@ export default function CalendarScreen({ navigation }) {
       {selectedDayEvents.length ? (
         selectedDayEvents.map((event) => {
           const isFavorite = Boolean(favorites[event.id]);
-          const isReviewed = Boolean(reviewed[event.id]);
+          const isReviewed = reviewed[event.id] !== undefined ? reviewed[event.id] : Boolean(event.completed);
 
           return (
             <View key={event.id} style={styles.eventCard}>
@@ -389,17 +393,17 @@ export default function CalendarScreen({ navigation }) {
               </View>
 
               <View style={styles.eventContent}>
-                <Text style={[styles.eventTitle, isReviewed && styles.eventTitleReviewed]}>
-                  {event.title}
-                </Text>
+                 <Text style={[styles.eventTitle, isReviewed && styles.eventTitleReviewed]} numberOfLines={2}>
+                   {event.title}
+                 </Text>
                 <View style={styles.eventAreaRow}>
                   <View style={[styles.eventAreaDot, { backgroundColor: event?.area?.color || colors.primary }]} />
                   <Text style={styles.eventAreaText}>
                     {event?.area?.label || 'General'}
                   </Text>
                 </View>
-                <Text style={styles.eventMeta}>{event.caseTitle}</Text>
-                <Text style={styles.eventMeta}>{event.court}</Text>
+                <Text style={styles.eventMeta} numberOfLines={2}>{event.caseTitle}</Text>
+                <Text style={styles.eventMeta} numberOfLines={2}>{event.court}</Text>
               </View>
 
               <View style={styles.eventActions}>
@@ -436,7 +440,7 @@ const createStyles = (colors) => StyleSheet.create({
     backgroundColor: colors.backgroundAlt,
   },
   content: {
-    paddingTop: 28,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) + 12 : 56,
     paddingHorizontal: 16,
     paddingBottom: 34,
     gap: 16,
@@ -465,9 +469,10 @@ const createStyles = (colors) => StyleSheet.create({
     elevation: 4,
   },
   calendarHeader: {
-    minHeight: 78,
+    minHeight: 64,
     backgroundColor: colors.primaryDeep,
     paddingHorizontal: 18,
+    paddingVertical: 14,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
@@ -633,9 +638,11 @@ const createStyles = (colors) => StyleSheet.create({
   },
   agendaTitle: {
     flex: 1,
+    flexShrink: 1,
     color: colors.text,
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '800',
+    lineHeight: 20,
   },
   agendaActions: {
     flexDirection: 'row',
@@ -733,7 +740,8 @@ const createStyles = (colors) => StyleSheet.create({
     color: colors.text,
     fontSize: 15,
     fontWeight: '700',
-    lineHeight: 22,
+    lineHeight: 21,
+    flexShrink: 1,
   },
   eventTitleReviewed: {
     color: colors.textMuted,
@@ -758,6 +766,7 @@ const createStyles = (colors) => StyleSheet.create({
     color: colors.legendText,
     fontSize: 13,
     lineHeight: 18,
+    flexShrink: 1,
   },
   eventActions: {
     minHeight: 54,

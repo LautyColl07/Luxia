@@ -31,21 +31,21 @@ export default function HearingTimelineCard({
         <View style={styles.card}>
           <View style={styles.headerRow}>
             <View style={styles.headerCopy}>
-              <Text style={styles.title}>{hearing?.title || 'Audiencia sin titulo'}</Text>
-              <Text style={styles.caseTitle}>{hearing?.caseTitle || 'Causa sin referencia'}</Text>
+              <Text style={styles.title} numberOfLines={2}>{hearing?.title || 'Audiencia sin titulo'}</Text>
+              <Text style={styles.caseTitle} numberOfLines={2}>{hearing?.caseTitle || 'Causa sin referencia'}</Text>
             </View>
             <StatusBadge status={hearing?.status} />
           </View>
 
           <View style={styles.metaRow}>
             <MaterialCommunityIcons color={colors.textSecondary} name="calendar-clock" size={16} />
-            <Text style={styles.metaText}>{formatDateTime(hearing?.date)}</Text>
+            <Text style={styles.metaText} numberOfLines={1}>{formatDateTime(hearing?.date)}</Text>
           </View>
 
           {hearing?.court ? (
             <View style={styles.metaRow}>
               <MaterialCommunityIcons color={colors.textSecondary} name="scale-balance" size={16} />
-              <Text style={styles.metaText}>{hearing.court}</Text>
+              <Text style={styles.metaText} numberOfLines={1}>{hearing.court}</Text>
             </View>
           ) : null}
 
@@ -142,8 +142,10 @@ const createStyles = (colors) => StyleSheet.create({
   },
   title: {
     color: colors.text,
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '700',
+    lineHeight: 23,
+    flexShrink: 1,
   },
   caseTitle: {
     color: colors.primary,

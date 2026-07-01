@@ -1,5 +1,6 @@
 import * as DocumentPicker from 'expo-document-picker';
-import { useEffect, useMemo, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import EmptyState from '../components/EmptyState';
@@ -27,11 +28,7 @@ export default function UploadDocumentScreen({ navigation }) {
     documentType: 'Escrito',
   });
 
-  useEffect(() => {
-    void loadHearings();
-  }, [activeContextKey]);
-
-  async function loadHearings() {
+  const loadHearings = useCallback(async () => {
     try {
       setLoadingHearings(true);
       setHearingsError('');
@@ -46,7 +43,13 @@ export default function UploadDocumentScreen({ navigation }) {
     } finally {
       setLoadingHearings(false);
     }
-  }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadHearings();
+    }, [loadHearings, activeContextKey])
+  );
 
   const selectedHearing = useMemo(
     () => hearings.find((item) => String(item?.id) === form.hearingId) || null,
@@ -141,13 +144,18 @@ export default function UploadDocumentScreen({ navigation }) {
 
   if (!hearings.length) {
     return (
-      <EmptyState
-        actionLabel="Registrar audiencia"
-        icon="calendar-blank-outline"
-        message="Todavia no hay audiencias disponibles para vincular documentos."
-        onAction={() => navigation.navigate('NewHearing')}
-        title="Sin audiencias registradas"
-      />
+      <View style={[styles.screen, { justifyContent: 'center', padding: 20, gap: 14 }]}>
+        <EmptyState
+          actionLabel="Registrar audiencia"
+          icon="calendar-blank-outline"
+          message="Todavia no hay audiencias disponibles para vincular documentos."
+          onAction={() => navigation.navigate('NewHearing')}
+          title="Sin audiencias registradas"
+        />
+        <Pressable onPress={() => navigation.goBack()} style={styles.secondaryButton}>
+          <Text style={styles.secondaryButtonText}>Volver</Text>
+        </Pressable>
+      </View>
     );
   }
 

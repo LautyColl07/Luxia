@@ -74,8 +74,8 @@ export default function CaseDetailScreen({ navigation, route }) {
       <View style={styles.heroCard}>
         <View style={styles.heroHeader}>
           <View style={styles.heroCopy}>
-            <Text style={styles.title}>{caseDetail?.title || 'Causa sin titulo'}</Text>
-            <Text style={styles.description}>
+            <Text style={styles.title} numberOfLines={3}>{caseDetail?.title || 'Causa sin titulo'}</Text>
+            <Text style={styles.description} numberOfLines={4}>
               {caseDetail?.description || 'Sin informacion adicional registrada.'}
             </Text>
           </View>
@@ -84,7 +84,7 @@ export default function CaseDetailScreen({ navigation, route }) {
 
         <View style={styles.metaRow}>
           <MaterialCommunityIcons color={colors.textSecondary} name="scale-balance" size={16} />
-          <Text style={styles.metaText}>{caseDetail?.court || 'Juzgado a confirmar'}</Text>
+          <Text style={styles.metaText} numberOfLines={2}>{caseDetail?.court || 'Juzgado a confirmar'}</Text>
         </View>
 
         <View style={styles.metaRow}>
@@ -107,7 +107,7 @@ export default function CaseDetailScreen({ navigation, route }) {
             <View key={hearing?.id} style={styles.sectionCard}>
               <View style={styles.sectionCardHeader}>
                 <View style={styles.sectionCardCopy}>
-                  <Text style={styles.sectionCardTitle}>{hearing?.title || 'Audiencia sin titulo'}</Text>
+                  <Text style={styles.sectionCardTitle} numberOfLines={2}>{hearing?.title || 'Audiencia sin titulo'}</Text>
                   <Text style={styles.sectionCardSubtitle}>{formatDateTime(hearing?.date)}</Text>
                 </View>
                 <StatusBadge status={hearing?.status} />
@@ -139,7 +139,7 @@ export default function CaseDetailScreen({ navigation, route }) {
         {documents.length ? (
           documents.map((document) => (
             <View key={document?.id} style={styles.sectionCard}>
-              <Text style={styles.sectionCardTitle}>{document?.fileName || 'Documento sin nombre'}</Text>
+              <Text style={styles.sectionCardTitle} numberOfLines={2}>{document?.fileName || 'Documento sin nombre'}</Text>
               <Text style={styles.sectionCardSubtitle}>{document?.documentType || 'Documento'}</Text>
               <Text style={styles.sectionCardMeta}>
                 Fecha de carga: {formatDate(document?.uploadedAt)}
@@ -238,8 +238,10 @@ const createStyles = (colors) => StyleSheet.create({
   },
   title: {
     color: colors.text,
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '700',
+    lineHeight: 30,
+    flexShrink: 1,
   },
   description: {
     color: colors.textSecondary,
@@ -310,6 +312,8 @@ const createStyles = (colors) => StyleSheet.create({
     color: colors.text,
     fontSize: 16,
     fontWeight: '700',
+    lineHeight: 22,
+    flexShrink: 1,
   },
   sectionCardSubtitle: {
     color: colors.primary,

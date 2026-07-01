@@ -22,8 +22,8 @@ export default function MetricCard({ label, value, icon, accentColor, onPress })
       <View style={[styles.iconWrapper, { backgroundColor: `${accentColor}18` }]}>
         <MaterialCommunityIcons color={accentColor} name={icon} size={22} />
       </View>
-      <Text style={styles.value}>{new Intl.NumberFormat('es-AR').format(normalizedValue)}</Text>
-      <Text style={styles.label}>{label}</Text>
+      <Text style={styles.value} numberOfLines={1}>{new Intl.NumberFormat('es-AR').format(normalizedValue)}</Text>
+      <Text style={styles.label} numberOfLines={2}>{label}</Text>
     </Pressable>
   );
 }
@@ -62,8 +62,9 @@ const createStyles = (colors) => StyleSheet.create({
   },
   label: {
     color: colors.textSecondary,
-    fontSize: 14,
-    lineHeight: 20,
-    minHeight: 40,
+    fontSize: 13,
+    lineHeight: 18,
+    minHeight: 36,
+    flexShrink: 1,
   },
 });

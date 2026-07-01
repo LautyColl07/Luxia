@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { Animated, FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View, ActivityIndicator, Platform } from 'react-native';
+import { Animated, FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View, ActivityIndicator, Platform, StatusBar, KeyboardAvoidingView } from 'react-native';
 
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
@@ -233,13 +233,13 @@ export default function CasesScreen({ navigation }) {
     );
   };
 
-  return (
-    <View style={styles.screen}>
+  const renderHeader = () => {
+    return (
       <View style={styles.header}>
         <View style={styles.headerTopRow}>
           <View style={styles.headerCopy}>
-            <Text style={styles.title}>Causas</Text>
-            <Text style={styles.subtitle}>
+            <Text style={styles.title} numberOfLines={1}>Causas</Text>
+            <Text style={styles.subtitle} numberOfLines={3}>
               Consulta el estado de tus expedientes, su juzgado interviniente y las fechas relevantes.
             </Text>
           </View>
@@ -331,8 +331,16 @@ export default function CasesScreen({ navigation }) {
           </Text>
         </View>
       </View>
+    );
+  };
 
+  return (
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      style={styles.screen}
+    >
       <FlatList
+        ListHeaderComponent={renderHeader}
         contentContainerStyle={styles.listContent}
         data={cases}
         keyExtractor={(item) => String(item?.id)}
@@ -356,22 +364,22 @@ export default function CasesScreen({ navigation }) {
             style={styles.card}
           >
             <View style={styles.cardTopRow}>
-              <Text style={styles.cardTitle}>{item?.title || 'Causa sin titulo'}</Text>
+              <Text style={styles.cardTitle} numberOfLines={2}>{item?.title || 'Causa sin titulo'}</Text>
               <StatusBadge status={item?.status} />
             </View>
 
-            <Text style={styles.description}>
+            <Text style={styles.description} numberOfLines={3}>
               {item?.description || 'Sin informacion adicional registrada.'}
             </Text>
 
             <View style={styles.metaRow}>
               <MaterialCommunityIcons color={colors.textSecondary} name="scale-balance" size={16} />
-              <Text style={styles.metaText}>{item?.court || 'Juzgado a confirmar'}</Text>
+              <Text style={styles.metaText} numberOfLines={1}>{item?.court || 'Juzgado a confirmar'}</Text>
             </View>
 
             <View style={styles.metaRow}>
               <MaterialCommunityIcons color={colors.textSecondary} name="calendar-outline" size={16} />
-              <Text style={styles.metaText}>Fecha de alta: {formatDate(item?.createdAt)}</Text>
+              <Text style={styles.metaText} numberOfLines={1}>Fecha de alta: {formatDate(item?.createdAt)}</Text>
             </View>
           </Pressable>
         )}
@@ -388,7 +396,7 @@ export default function CasesScreen({ navigation }) {
         }
         showsVerticalScrollIndicator={false}
       />
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -398,7 +406,7 @@ const createStyles = (colors) => StyleSheet.create({
     backgroundColor: colors.background,
   },
   header: {
-    paddingTop: 62,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) + 16 : 56,
     paddingHorizontal: 22,
     paddingBottom: 8,
     gap: 16,
@@ -423,6 +431,7 @@ const createStyles = (colors) => StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     maxWidth: '88%',
+    flexShrink: 1,
   },
   headerActions: {
     flexDirection: 'row',
@@ -481,10 +490,12 @@ const createStyles = (colors) => StyleSheet.create({
   },
   filterRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 12,
   },
   filterGroup: {
     flex: 1,
+    minWidth: 140,
     gap: 8,
   },
   filterLabel: {
@@ -638,16 +649,19 @@ const createStyles = (colors) => StyleSheet.create({
   },
   cardTitle: {
     flex: 1,
+    flexShrink: 1,
     color: colors.text,
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '700',
+    lineHeight: 23,
   },
   description: {
     color: colors.textSecondary,
     fontSize: 14,
     lineHeight: 20,
-    marginTop: 12,
-    marginBottom: 14,
+    marginTop: 10,
+    marginBottom: 12,
+    flexShrink: 1,
   },
   metaRow: {
     flexDirection: 'row',

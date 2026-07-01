@@ -81,8 +81,8 @@ export default function ActivityCard({ activity }) {
         </View>
 
         <View style={styles.copy}>
-          <Text style={styles.title}>{activity?.title}</Text>
-          <Text style={styles.description}>{activity?.description}</Text>
+          <Text style={styles.title} numberOfLines={2}>{activity?.title}</Text>
+          <Text style={styles.description} numberOfLines={3}>{activity?.description}</Text>
         </View>
       </View>
 
@@ -135,13 +135,16 @@ const createStyles = (colors) => StyleSheet.create({
   },
   title: {
     color: colors.text,
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
+    lineHeight: 21,
+    flexShrink: 1,
   },
   description: {
     color: colors.textSecondary,
     fontSize: 13,
-    lineHeight: 20,
+    lineHeight: 19,
+    flexShrink: 1,
   },
   footer: {
     flexDirection: 'row',

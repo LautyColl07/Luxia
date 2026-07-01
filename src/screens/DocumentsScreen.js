@@ -7,7 +7,9 @@ import {
   Alert,
   FlatList,
   Linking,
+  Platform,
   Pressable,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -248,10 +250,10 @@ export default function DocumentsScreen({ navigation }) {
                 </View>
 
                 <View style={styles.cardTextContent}>
-                  <Text style={styles.cardTitle}>
+                  <Text style={styles.cardTitle} numberOfLines={2}>
                     {item?.fileName || 'Documento sin nombre'}
                   </Text>
-                  <Text style={styles.cardSubtitle}>
+                  <Text style={styles.cardSubtitle} numberOfLines={1}>
                     {item?.documentType || 'Documento'}
                   </Text>
                 </View>
@@ -263,7 +265,7 @@ export default function DocumentsScreen({ navigation }) {
                   name="briefcase-outline"
                   size={16}
                 />
-                <Text style={styles.metaText}>
+                <Text style={styles.metaText} numberOfLines={2}>
                   {item?.caseTitle || 'Causa sin referencia'}
                 </Text>
               </View>
@@ -274,7 +276,7 @@ export default function DocumentsScreen({ navigation }) {
                   name="calendar-clock"
                   size={16}
                 />
-                <Text style={styles.metaText}>
+                <Text style={styles.metaText} numberOfLines={2}>
                   {item?.hearingTitle || 'Audiencia sin referencia'}
                 </Text>
               </View>
@@ -285,7 +287,7 @@ export default function DocumentsScreen({ navigation }) {
                   name="clock-outline"
                   size={16}
                 />
-                <Text style={styles.metaText}>
+                <Text style={styles.metaText} numberOfLines={1}>
                   Fecha de carga: {formatDate(item?.uploadedAt)}
                 </Text>
               </View>
@@ -367,7 +369,7 @@ const createStyles = (colors) =>
       backgroundColor: colors.background,
     },
     header: {
-      paddingTop: 62,
+      paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) + 16 : 56,
       paddingHorizontal: 22,
       paddingBottom: 18,
       gap: 16,
@@ -400,9 +402,11 @@ const createStyles = (colors) =>
       justifyContent: 'flex-end',
       gap: 10,
       marginTop: 2,
+      flexShrink: 1,
     },
     searchInput: {
-      width: 210,
+      maxWidth: 210,
+      flex: 1,
       height: 44,
       backgroundColor: colors.card,
       borderRadius: 16,
@@ -477,6 +481,8 @@ const createStyles = (colors) =>
       color: colors.text,
       fontSize: 16,
       fontWeight: '700',
+      lineHeight: 22,
+      flexShrink: 1,
     },
     cardSubtitle: {
       color: colors.primary,

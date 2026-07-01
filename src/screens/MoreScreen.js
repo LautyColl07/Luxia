@@ -3,7 +3,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { signOut } from 'firebase/auth';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View, Modal, TextInput } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StatusBar, StyleSheet, Switch, Text, View, Modal, TextInput } from 'react-native';
 
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
@@ -196,8 +196,8 @@ export default function MoreScreen({ navigation }) {
         <View style={styles.avatar}>
           <Text style={styles.avatarText}>{displayProfile.initials}</Text>
         </View>
-        <Text style={styles.profileName}>{displayProfile.name}</Text>
-        <Text style={styles.profileEmail}>{accountEmail}</Text>
+        <Text style={styles.profileName} numberOfLines={2}>{displayProfile.name}</Text>
+        <Text style={styles.profileEmail} numberOfLines={1}>{accountEmail}</Text>
 
         <View style={styles.heroMetaRow}>
           <View style={styles.heroBadge}>
@@ -483,7 +483,7 @@ function InfoRow({ label, styles, value }) {
   return (
     <View style={styles.infoRow}>
       <Text style={styles.infoLabel}>{label}</Text>
-      <Text style={styles.infoValue}>{value}</Text>
+      <Text style={styles.infoValue} numberOfLines={2}>{value}</Text>
     </View>
   );
 }
@@ -526,7 +526,7 @@ const createStyles = (colors) => StyleSheet.create({
     backgroundColor: colors.background,
   },
   content: {
-    paddingTop: 32,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) + 12 : 56,
     paddingHorizontal: 20,
     paddingBottom: 34,
     gap: 18,
@@ -569,16 +569,18 @@ const createStyles = (colors) => StyleSheet.create({
   },
   profileName: {
     color: colors.textOnPrimary,
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '700',
     marginTop: 16,
     textAlign: 'center',
+    lineHeight: 28,
   },
   profileEmail: {
     color: 'rgba(255,255,255,0.8)',
     fontSize: 14,
     marginTop: 6,
     textAlign: 'center',
+    lineHeight: 20,
   },
   heroMetaRow: {
     flexDirection: 'row',
@@ -661,6 +663,8 @@ const createStyles = (colors) => StyleSheet.create({
     color: colors.text,
     fontSize: 15,
     fontWeight: '600',
+    lineHeight: 21,
+    flexShrink: 1,
   },
   appearanceOptions: {
     gap: 10,

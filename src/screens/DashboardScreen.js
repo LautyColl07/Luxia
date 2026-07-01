@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StatusBar, StyleSheet, Text, View, Platform } from 'react-native';
 
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
@@ -148,6 +148,10 @@ export default function DashboardScreen({ navigation }) {
     navigation.navigate('NewHearing');
   }, [navigation]);
 
+  const handleCreateTask = useCallback(() => {
+    navigation.navigate('NewTask');
+  }, [navigation]);
+
   const handleOpenHearing = useCallback(
     (hearing) => {
       if (hearing?.caseId) {
@@ -197,7 +201,13 @@ export default function DashboardScreen({ navigation }) {
       value: metricas?.audienciasHoy ?? 0,
       icon: 'calendar-clock',
       accentColor: colors.success,
-      onPress: handleOpenCalendar,
+      onPress: () => {
+        if ((metricas?.audienciasHoy ?? 0) > 0) {
+          handleOpenCalendar();
+        } else {
+          handleCreateHearing();
+        }
+      },
     },
     {
       label: 'Documentos registrados',
@@ -211,7 +221,13 @@ export default function DashboardScreen({ navigation }) {
       value: metricas?.tareasPendientes ?? 0,
       icon: 'clipboard-text-clock-outline',
       accentColor: colors.danger,
-      onPress: handleOpenCalendar,
+      onPress: () => {
+        if ((metricas?.tareasPendientes ?? 0) > 0) {
+          handleOpenCalendar();
+        } else {
+          handleCreateTask();
+        }
+      },
     },
   ];
 
@@ -249,6 +265,7 @@ export default function DashboardScreen({ navigation }) {
         style={styles.screen}
       >
         <View style={styles.hero}>
+          <StatusBar barStyle="light-content" />
           <View style={styles.heroShapeLarge} />
           <View style={styles.heroShapeSmall} />
 
@@ -268,8 +285,8 @@ export default function DashboardScreen({ navigation }) {
             </View>
           </View>
 
-          <Text style={styles.greeting}>Hola, {nombreUsuario}</Text>
-          <Text style={styles.subtitle}>
+          <Text style={styles.greeting} numberOfLines={1}>Hola, {nombreUsuario}</Text>
+          <Text style={styles.subtitle} numberOfLines={3}>
             Gestiona tus causas, audiencias y documentos desde un solo lugar.
           </Text>
         </View>
@@ -287,8 +304,8 @@ export default function DashboardScreen({ navigation }) {
             <MaterialCommunityIcons color={colors.primary} name="history" size={20} />
           </View>
           <View style={styles.activityShortcutCopy}>
-            <Text style={styles.activityShortcutTitle}>Historial de actividad</Text>
-            <Text style={styles.activityShortcutDescription}>
+             <Text style={styles.activityShortcutTitle} numberOfLines={1}>Historial de actividad</Text>
+            <Text style={styles.activityShortcutDescription} numberOfLines={2}>
               Revisa movimientos recientes del estudio en una sola vista.
             </Text>
           </View>
@@ -381,7 +398,7 @@ const createStyles = (colors) => StyleSheet.create({
     backgroundColor: colors.primaryDeep,
     borderBottomLeftRadius: 34,
     borderBottomRightRadius: 34,
-    paddingTop: 62,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) + 20 : 56,
     paddingHorizontal: 22,
     paddingBottom: 28,
     overflow: 'hidden',
@@ -458,7 +475,8 @@ const createStyles = (colors) => StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
     marginTop: 8,
-    maxWidth: '82%',
+    maxWidth: '85%',
+    flexShrink: 1,
   },
   metricGrid: {
     flexDirection: 'row',
@@ -469,7 +487,6 @@ const createStyles = (colors) => StyleSheet.create({
   metricCell: {
     width: '50%',
     padding: 6,
-    aspectRatio: 1.05,
   },
   activityShortcut: {
     marginTop: 8,

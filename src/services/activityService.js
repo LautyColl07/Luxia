@@ -52,41 +52,10 @@ export function normalizeActivityResponse(items = []) {
     .sort((first, second) => new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime());
 }
 
+import { request } from './api';
+
 async function getActivityHistoryFromApi() {
-  if (!API_BASE_URL) {
-    throw new Error('Configura API_BASE_URL para consultar el historial de actividad.');
-  }
-
-  const headers = {
-    Accept: 'application/json',
-  };
-
-  const currentUser = auth?.currentUser;
-
-  if (currentUser) {
-    const token = await currentUser.getIdToken();
-
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
-    }
-  }
-
-  const response = await fetch(`${API_BASE_URL}${ACTIVITY_ENDPOINT}`, {
-    method: 'GET',
-    headers,
-  });
-
-  const payload = await response.json().catch(() => []);
-
-  if (!response.ok) {
-    const message =
-      payload?.message ||
-      payload?.error ||
-      'No pudimos obtener el historial de actividad en este momento.';
-
-    throw new Error(message);
-  }
-
+  const payload = await request(ACTIVITY_ENDPOINT);
   const items = Array.isArray(payload) ? payload : payload?.data ?? payload?.items;
   return normalizeActivityResponse(Array.isArray(items) ? items : []);
 }

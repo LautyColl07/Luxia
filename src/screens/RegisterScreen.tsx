@@ -295,13 +295,15 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
   return (
     <SafeAreaView style={styles.safeArea}>
       <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.keyboardAvoidingView}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 24}
       >
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
+          bounces={false}
         >
           <View style={styles.container}>
             <View style={styles.card}>
@@ -643,26 +645,27 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
+    paddingBottom: 40,
   },
   container: {
     flexGrow: 1,
     justifyContent: "center",
     alignItems: "center",
-    paddingHorizontal: 18,
-    paddingVertical: 24,
+    paddingHorizontal: 20,
+    paddingVertical: 32,
     backgroundColor: COLORS.background,
   },
   card: {
     width: "100%",
     maxWidth: 640,
-    minHeight: 520,
+    minHeight: 480,
     backgroundColor: COLORS.card,
     borderWidth: 1.5,
     borderColor: COLORS.gold,
     borderRadius: 22,
-    paddingHorizontal: 22,
-    paddingVertical: 28,
-    gap: 16,
+    paddingHorizontal: 24,
+    paddingVertical: 30,
+    gap: 18,
     ...CARD_SHADOW,
   },
   title: {
@@ -701,31 +704,33 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.primary,
   },
   stepContent: {
-    minHeight: 260,
+    minHeight: 220,
     justifyContent: "center",
-    gap: 16,
+    gap: 18,
+    paddingVertical: 8,
   },
   stepTitle: {
     color: COLORS.text,
     fontSize: 21,
     fontWeight: "700",
     textAlign: "center",
+    lineHeight: 28,
   },
   stepSubtitle: {
-    marginTop: -8,
+    marginTop: -6,
     color: COLORS.textSecondary,
     fontSize: 14,
-    lineHeight: 20,
+    lineHeight: 21,
     textAlign: "center",
   },
   row: {
     flexDirection: "row",
-    gap: 16,
+    gap: 14,
     flexWrap: "wrap",
   },
   halfWidth: {
     flex: 1,
-    minWidth: 260,
+    minWidth: 140,
   },
   fieldBlock: {
     gap: 8,
@@ -736,7 +741,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   inputWrapper: {
-    minHeight: 50,
+    minHeight: 52,
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
@@ -744,13 +749,14 @@ const styles = StyleSheet.create({
     borderColor: COLORS.gold,
     borderRadius: 14,
     backgroundColor: COLORS.card,
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
   },
   inputWrapperError: {
     borderColor: COLORS.error,
   },
   input: {
     flex: 1,
+    flexShrink: 1,
     color: COLORS.text,
     fontSize: 15,
     paddingVertical: Platform.OS === "ios" ? 14 : 10,
@@ -819,9 +825,10 @@ const styles = StyleSheet.create({
   },
   checkboxText: {
     flex: 1,
+    flexShrink: 1,
     color: COLORS.textSecondary,
     fontSize: 14,
-    lineHeight: 20,
+    lineHeight: 21,
   },
   checkboxLink: {
     color: COLORS.primary,
@@ -891,12 +898,14 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   footerLink: {
-    marginTop: 24,
+    marginTop: 28,
+    paddingVertical: 8,
   },
   footerText: {
     color: COLORS.textSecondary,
     fontSize: 15,
     textAlign: "center",
+    lineHeight: 22,
   },
   footerLinkText: {
     color: COLORS.primary,

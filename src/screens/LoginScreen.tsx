@@ -10,7 +10,9 @@ import {
   ScrollView,
   Platform,
   Alert,
+  StatusBar,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { User, Lock, Eye, EyeOff, HelpCircle } from "lucide-react-native";
 
 import { authClient } from "../services/authClient";
@@ -69,14 +71,19 @@ export default function LoginScreen({ navigation }: any) {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.keyboardView}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
-      <ScrollView
-        contentContainerStyle={styles.scrollContainer}
-        keyboardShouldPersistTaps="handled"
+    <SafeAreaView style={styles.safeArea}>
+      <StatusBar barStyle="dark-content" />
+      <KeyboardAvoidingView
+        style={styles.keyboardView}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 24}
       >
+        <ScrollView
+          contentContainerStyle={styles.scrollContainer}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          bounces={false}
+        >
         <View style={styles.container}>
           <View style={styles.card}>
             <View style={styles.header}>
@@ -216,23 +223,28 @@ export default function LoginScreen({ navigation }: any) {
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  keyboardView: {
+  safeArea: {
     flex: 1,
     backgroundColor: "#F3F5F7",
   },
+  keyboardView: {
+    flex: 1,
+  },
   scrollContainer: {
     flexGrow: 1,
+    paddingBottom: 40,
   },
   container: {
     flex: 1,
     backgroundColor: "#F3F5F7",
     justifyContent: "center",
     paddingHorizontal: 24,
-    paddingVertical: 48,
+    paddingVertical: 32,
   },
   card: {
     width: "100%",
@@ -282,10 +294,10 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     borderWidth: 2,
     borderColor: "#C4A77D",
-    borderRadius: 10,
+    borderRadius: 14,
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
   },
   inputError: {
     borderColor: "#EF4444",
@@ -295,8 +307,10 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
+    flexShrink: 1,
     color: "#1E2A36",
     fontSize: 15,
+    paddingVertical: Platform.OS === "ios" ? 12 : 8,
   },
   eyeButton: {
     padding: 4,
@@ -336,7 +350,7 @@ const styles = StyleSheet.create({
   loginButton: {
     height: 54,
     backgroundColor: "#123A67",
-    borderRadius: 10,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     shadowColor: "#000",
