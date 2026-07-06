@@ -23,7 +23,7 @@ export default function MetricCard({ label, value, icon, accentColor, onPress })
         <MaterialCommunityIcons color={accentColor} name={icon} size={22} />
       </View>
       <Text style={styles.value} numberOfLines={1}>{new Intl.NumberFormat('es-AR').format(normalizedValue)}</Text>
-      <Text style={styles.label} numberOfLines={2}>{label}</Text>
+      <Text style={styles.label} numberOfLines={1}>{label}</Text>
     </Pressable>
   );
 }
@@ -34,7 +34,7 @@ const createStyles = (colors) => StyleSheet.create({
     height: '100%',
     backgroundColor: colors.card,
     borderRadius: 24,
-    padding: 18,
+    padding: 16,
     justifyContent: 'space-between',
     shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 10 },
@@ -62,9 +62,8 @@ const createStyles = (colors) => StyleSheet.create({
   },
   label: {
     color: colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 18,
-    minHeight: 36,
-    flexShrink: 1,
+    fontSize: 12.5,
+    lineHeight: 17,
+    flexShrink: 0,
   },
 });

@@ -180,7 +180,7 @@ export default function DashboardScreen({ navigation }) {
     tareasPendientes: 0,
   };
   const proximasAudiencias = data?.proximasAudiencias || [];
-  const nombreUsuario = data?.usuario?.nombre || 'Usuario';
+  const nombreUsuario = currentUser?.displayName || data?.usuario?.nombre || 'Usuario';
   const luxContext = useMemo(
     () => ({
       screen: 'dashboard',
@@ -481,12 +481,12 @@ const createStyles = (colors) => StyleSheet.create({
   metricGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    paddingHorizontal: 18,
+    paddingHorizontal: 14,
     marginTop: -18,
   },
   metricCell: {
     width: '50%',
-    padding: 6,
+    padding: 5,
   },
   activityShortcut: {
     marginTop: 8,

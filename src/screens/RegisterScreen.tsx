@@ -583,7 +583,9 @@ const Field = ({
           value={value}
         />
       </View>
-      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      <View style={styles.errorSlot}>
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      </View>
     </View>
   );
 };
@@ -630,7 +632,9 @@ const PasswordField = ({
           )}
         </Pressable>
       </View>
-      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      <View style={styles.errorSlot}>
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      </View>
     </View>
   );
 };
@@ -841,6 +845,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFF5F4",
     paddingHorizontal: 14,
     paddingVertical: 12,
+  },
+  errorSlot: {
+    minHeight: 18,
   },
   errorText: {
     color: COLORS.error,
