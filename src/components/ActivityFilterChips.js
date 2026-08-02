@@ -38,12 +38,14 @@ const createStyles = (colors) => StyleSheet.create({
     gap: 10,
   },
   chip: {
+    minHeight: 44,
     paddingHorizontal: 16,
     paddingVertical: 11,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.card,
+    justifyContent: 'center',
   },
   chipActive: {
     backgroundColor: colors.primary,

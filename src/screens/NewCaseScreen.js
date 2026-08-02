@@ -5,6 +5,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { createCase } from '../services/api';
+import { useResponsiveLayout } from '../theme/layout';
 import { showSuccessAndGoBack } from '../utils/formFeedback';
 import { normalizeStatusLabel } from '../utils/status';
 
@@ -13,7 +14,8 @@ const STATUS_OPTIONS = ['Activa', 'Pendiente', 'En proceso', 'Archivada'];
 export default function NewCaseScreen({ navigation }) {
   const { colors } = useAppTheme();
   const { legalStudies, activeLegalStudy } = useStudyContext();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const layout = useResponsiveLayout();
+  const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
   const hasStudy = legalStudies.length > 0;
   const studyId = activeLegalStudy?.id || legalStudies[0]?.id || null;
   const [form, setForm] = useState({
@@ -61,7 +63,12 @@ export default function NewCaseScreen({ navigation }) {
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} style={styles.screen}>
+    <ScrollView
+      contentContainerStyle={styles.content}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+      style={styles.screen}
+    >
       <Text style={styles.title}>Nueva causa</Text>
       <Text style={styles.subtitle}>
         Registra un expediente con su caratula, descripcion, juzgado y estado inicial.
@@ -211,13 +218,16 @@ function Field({ children, label, styles }) {
   );
 }
 
-const createStyles = (colors) => StyleSheet.create({
+const createStyles = (colors, layout) => StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
   },
   content: {
-    padding: 20,
+    width: '100%',
+    maxWidth: layout.formMaxWidth,
+    alignSelf: 'center',
+    padding: layout.gutter,
     gap: 18,
     paddingBottom: 34,
   },
@@ -240,15 +250,16 @@ const createStyles = (colors) => StyleSheet.create({
     fontWeight: '700',
   },
   input: {
+    minHeight: 50,
     backgroundColor: colors.inputBackground,
-    borderRadius: 20,
+    borderRadius: 14,
     paddingHorizontal: 16,
     paddingVertical: 14,
     color: colors.text,
     fontSize: 15,
     shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.06,
     shadowRadius: 16,
     elevation: 2,
     borderWidth: 1,
@@ -297,7 +308,7 @@ const createStyles = (colors) => StyleSheet.create({
     lineHeight: 18,
   },
   scopeCards: {
-    flexDirection: 'row',
+    flexDirection: layout.isCompact ? 'column' : 'row',
     gap: 12,
     marginTop: 4,
   },
@@ -368,8 +379,9 @@ const createStyles = (colors) => StyleSheet.create({
   submitButton: {
     marginTop: 8,
     backgroundColor: colors.primary,
-    borderRadius: 20,
-    paddingVertical: 16,
+    minHeight: 52,
+    borderRadius: 16,
+    paddingVertical: 14,
     alignItems: 'center',
   },
   submitButtonDisabled: {

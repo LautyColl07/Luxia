@@ -22,7 +22,15 @@ export default function EmptyState({
       <Text style={styles.title}>{title}</Text>
       <Text style={styles.message}>{message}</Text>
       {actionLabel && onAction ? (
-        <Pressable onPress={onAction} style={styles.button}>
+        <Pressable
+          onPress={onAction}
+          style={({ focused, hovered, pressed }) => [
+            styles.button,
+            hovered && styles.buttonHovered,
+            focused && styles.buttonFocused,
+            pressed && styles.buttonPressed,
+          ]}
+        >
           <Text style={styles.buttonText}>{actionLabel}</Text>
         </Pressable>
       ) : null}
@@ -32,6 +40,9 @@ export default function EmptyState({
 
 const createStyles = (colors) => StyleSheet.create({
   card: {
+    width: '100%',
+    maxWidth: 640,
+    alignSelf: 'center',
     backgroundColor: colors.card,
     borderRadius: 24,
     padding: 24,
@@ -67,11 +78,24 @@ const createStyles = (colors) => StyleSheet.create({
     marginTop: 8,
   },
   button: {
+    minHeight: 44,
     marginTop: 18,
     backgroundColor: colors.primary,
+    borderWidth: 1,
+    borderColor: 'transparent',
     borderRadius: 16,
     paddingHorizontal: 18,
     paddingVertical: 12,
+    justifyContent: 'center',
+  },
+  buttonHovered: {
+    backgroundColor: colors.primaryHover,
+  },
+  buttonFocused: {
+    borderColor: colors.focusRing,
+  },
+  buttonPressed: {
+    opacity: 0.86,
   },
   buttonText: {
     color: colors.textOnPrimary,

@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useAppTheme } from '../context/ThemeContext';
+import { useResponsiveLayout } from '../theme/layout';
 import { formatDateTime, formatShortDate, formatTime } from '../utils/date';
 import StatusBadge from './StatusBadge';
 
@@ -13,7 +14,8 @@ export default function HearingTimelineCard({
   onPressAction,
 }) {
   const { colors } = useAppTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const layout = useResponsiveLayout();
+  const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
 
   return (
     <View style={styles.row}>
@@ -71,10 +73,11 @@ export default function HearingTimelineCard({
   );
 }
 
-const createStyles = (colors) => StyleSheet.create({
+const createStyles = (colors, layout) => StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'stretch',
+    paddingHorizontal: layout.gutter,
   },
   timeline: {
     width: 26,
@@ -164,6 +167,7 @@ const createStyles = (colors) => StyleSheet.create({
     flex: 1,
   },
   actionButton: {
+    minHeight: 46,
     marginTop: 16,
     backgroundColor: colors.primary,
     borderRadius: 16,

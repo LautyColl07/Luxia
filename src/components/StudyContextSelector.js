@@ -34,7 +34,15 @@ export default function StudyContextSelector({ inverse = false }) {
 
   return (
     <View style={styles.wrapper}>
-      <Pressable onPress={() => setOpen((current) => !current)} style={styles.trigger}>
+      <Pressable
+        onPress={() => setOpen((current) => !current)}
+        style={({ focused, hovered, pressed }) => [
+          styles.trigger,
+          hovered && styles.triggerHovered,
+          focused && styles.triggerFocused,
+          pressed && styles.triggerPressed,
+        ]}
+      >
         <MaterialCommunityIcons color={styles.triggerIcon.color} name={icon} size={18} />
         <Text numberOfLines={1} style={styles.triggerText}>{label}</Text>
         <MaterialCommunityIcons
@@ -111,10 +119,10 @@ const createStyles = (colors, inverse) => {
       color: foreground,
     },
     trigger: {
-      minWidth: 156,
-      maxWidth: 230,
-      minHeight: 42,
-      borderRadius: 18,
+      minWidth: 144,
+      maxWidth: 220,
+      minHeight: 46,
+      borderRadius: 16,
       paddingHorizontal: 12,
       backgroundColor: triggerBackground,
       borderWidth: 1,
@@ -129,9 +137,18 @@ const createStyles = (colors, inverse) => {
       fontSize: 13,
       fontWeight: '800',
     },
+    triggerHovered: {
+      borderColor: inverse ? 'rgba(255,255,255,0.38)' : colors.primary,
+    },
+    triggerFocused: {
+      borderColor: colors.focusRing,
+    },
+    triggerPressed: {
+      opacity: 0.84,
+    },
     menu: {
       position: 'absolute',
-      top: 48,
+      top: 52,
       right: 0,
       width: 250,
       borderRadius: 18,

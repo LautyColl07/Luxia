@@ -3,7 +3,8 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { signOut } from 'firebase/auth';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View, Modal, TextInput } from 'react-native';
+import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
@@ -13,6 +14,7 @@ import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { getMe, getNotifications, joinLegalStudy } from '../services/api';
 import { authClient } from '../services/authClient';
+import { useResponsiveLayout } from '../theme/layout';
 import { buildDisplayUser } from '../utils/userDisplay';
 
 const APPEARANCE_OPTIONS = [
@@ -25,7 +27,12 @@ export default function MoreScreen({ navigation }) {
   const { currentUser } = useAuth();
   const { legalStudies, refreshLegalStudies } = useStudyContext();
   const { colors, isDark, resolvedTheme, setThemePreference, themePreference } = useAppTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const insets = useSafeAreaInsets();
+  const layout = useResponsiveLayout();
+  const styles = useMemo(
+    () => createStyles(colors, layout, insets.top),
+    [colors, insets.top, layout]
+  );
   const [profile, setProfile] = useState(null);
   const [notifications, setNotifications] = useState([]);
   const [settings, setSettings] = useState({
@@ -189,7 +196,7 @@ export default function MoreScreen({ navigation }) {
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} style={styles.screen}>
       <View style={styles.topBar}>
-        <Text style={styles.topBarTitle}>Mas</Text>
+        <Text style={styles.topBarTitle}>Más</Text>
       </View>
 
       <View style={styles.heroCard}>
@@ -420,7 +427,10 @@ export default function MoreScreen({ navigation }) {
         transparent={true}
         onRequestClose={() => setShowStudyModal(false)}
       >
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
           <View style={styles.modalContainer}>
             <View style={styles.modalHeader}>
               <View style={styles.modalIconContainer}>
@@ -456,7 +466,7 @@ export default function MoreScreen({ navigation }) {
               </Pressable>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </ScrollView>
   );
@@ -520,14 +530,17 @@ function ActionRow({ colors, description, icon, onPress, styles, title }) {
   );
 }
 
-const createStyles = (colors) => StyleSheet.create({
+const createStyles = (colors, layout, topInset) => StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
   },
   content: {
-    paddingTop: 32,
-    paddingHorizontal: 20,
+    width: '100%',
+    maxWidth: layout.readingMaxWidth,
+    alignSelf: 'center',
+    paddingTop: Math.max(topInset + 16, layout.topSpacing),
+    paddingHorizontal: layout.gutter,
     paddingBottom: 34,
     gap: 18,
   },
@@ -720,10 +733,11 @@ const createStyles = (colors) => StyleSheet.create({
     marginTop: 4,
   },
   actionRow: {
+    minHeight: 52,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    paddingVertical: 4,
+    paddingVertical: 6,
   },
   actionIcon: {
     width: 40,
@@ -750,9 +764,11 @@ const createStyles = (colors) => StyleSheet.create({
   summaryRow: {
     flexDirection: 'row',
     gap: 12,
+    flexWrap: 'wrap',
   },
   summaryCard: {
     flex: 1,
+    minWidth: layout.isCompact ? '100%' : 140,
     borderRadius: 22,
     backgroundColor: colors.cardElevated,
     borderWidth: 1,
@@ -773,6 +789,7 @@ const createStyles = (colors) => StyleSheet.create({
     marginTop: 6,
   },
   logoutButton: {
+    minHeight: 52,
     backgroundColor: colors.card,
     borderRadius: 22,
     padding: 18,
@@ -873,6 +890,7 @@ const createStyles = (colors) => StyleSheet.create({
   modalActions: {
     flexDirection: 'row',
     gap: 12,
+    flexWrap: 'wrap',
   },
   modalButtonSecondary: {
     flex: 1,

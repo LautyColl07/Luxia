@@ -38,5 +38,7 @@ const createStyles = (colors) => StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
     marginTop: 8,
+    lineHeight: 21,
+    maxWidth: 480,
   },
 });

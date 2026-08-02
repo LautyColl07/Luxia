@@ -11,12 +11,14 @@ import StatusBadge from '../components/StatusBadge';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { getCaseById } from '../services/api';
+import { useResponsiveLayout } from '../theme/layout';
 import { formatDate, formatDateTime } from '../utils/date';
 
 export default function CaseDetailScreen({ navigation, route }) {
   const { colors } = useAppTheme();
   const { activeContextKey } = useStudyContext();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const layout = useResponsiveLayout();
+  const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
   const caseId = route?.params?.caseId;
   const [caseDetail, setCaseDetail] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -205,13 +207,16 @@ function Section({ children, styles, title }) {
   );
 }
 
-const createStyles = (colors) => StyleSheet.create({
+const createStyles = (colors, layout) => StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
   },
   content: {
-    padding: 20,
+    width: '100%',
+    maxWidth: layout.readingMaxWidth,
+    alignSelf: 'center',
+    padding: layout.gutter,
     gap: 22,
     paddingBottom: 34,
   },
@@ -260,9 +265,10 @@ const createStyles = (colors) => StyleSheet.create({
     flex: 1,
   },
   primaryButton: {
+    minHeight: 48,
     marginTop: 18,
     backgroundColor: colors.primary,
-    borderRadius: 18,
+    borderRadius: 16,
     paddingHorizontal: 16,
     paddingVertical: 13,
     flexDirection: 'row',

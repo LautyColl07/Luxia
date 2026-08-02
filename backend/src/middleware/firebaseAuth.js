@@ -9,43 +9,21 @@ function normalizeOptionalString(value) {
   return normalized || null;
 }
 
-function decodeJwtPayload(token) {
-  const [, payload] = String(token || '').split('.');
-
-  if (!payload) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-  } catch {
-    return null;
-  }
-}
-
 async function verifyWithFirebaseAdmin(token) {
-  try {
-    const admin = getFirebaseAdmin();
-    return admin.auth().verifyIdToken(token);
-  } catch (error) {
-    if (process.env.FIREBASE_AUTH_STRICT === 'true') {
-      throw error;
-    }
-
-    return null;
-  }
+  const admin = getFirebaseAdmin();
+  return admin.auth().verifyIdToken(token);
 }
 
 async function getAuthenticatedUserFromRequest(req) {
   const header = req.headers.authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+  const bearerMatch = header.match(/^Bearer\s+(.+)$/i);
+  const token = bearerMatch?.[1]?.trim() || '';
 
   if (!token) {
     return null;
   }
 
-  const verified = await verifyWithFirebaseAdmin(token);
-  const decoded = verified || decodeJwtPayload(token);
+  const decoded = await verifyWithFirebaseAdmin(token);
   const id = normalizeOptionalString(decoded?.uid || decoded?.user_id || decoded?.sub);
 
   if (!id) {

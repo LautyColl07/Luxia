@@ -10,6 +10,7 @@ import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
 import { useAppTheme } from '../context/ThemeContext';
 import { getActivityHistory } from '../services/activityService';
+import { useResponsiveLayout } from '../theme/layout';
 
 const FILTERS = [
   { key: 'all', label: 'Todas' },
@@ -89,7 +90,8 @@ function groupActivitiesByDate(items) {
 
 export default function ActivityHistoryScreen({ navigation }) {
   const { colors } = useAppTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const layout = useResponsiveLayout();
+  const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
   const [activities, setActivities] = useState([]);
   const [selectedFilter, setSelectedFilter] = useState('all');
   const [loading, setLoading] = useState(true);
@@ -243,14 +245,17 @@ export default function ActivityHistoryScreen({ navigation }) {
   );
 }
 
-const createStyles = (colors) => StyleSheet.create({
+const createStyles = (colors, layout) => StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
   },
   content: {
+    width: '100%',
+    maxWidth: layout.readingMaxWidth,
+    alignSelf: 'center',
     paddingTop: 22,
-    paddingHorizontal: 20,
+    paddingHorizontal: layout.gutter,
     paddingBottom: 34,
     gap: 18,
   },
@@ -302,7 +307,7 @@ const createStyles = (colors) => StyleSheet.create({
     fontSize: 14,
     lineHeight: 21,
     marginTop: 8,
-    maxWidth: '88%',
+    maxWidth: layout.copyMaxWidth,
   },
   heroMetaRow: {
     flexDirection: 'row',

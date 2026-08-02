@@ -3,17 +3,21 @@ import { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useAppTheme } from '../context/ThemeContext';
+import { useResponsiveLayout } from '../theme/layout';
 
 export default function QuickActionButton({ title, subtitle, icon, onPress, fullWidth = false }) {
   const { colors } = useAppTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const layout = useResponsiveLayout();
+  const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
 
   return (
     <Pressable
       onPress={onPress}
-      style={({ pressed }) => [
+      style={({ focused, hovered, pressed }) => [
         styles.card,
         fullWidth && styles.cardFullWidth,
+        hovered && styles.cardHovered,
+        focused && styles.cardFocused,
         pressed && styles.cardPressed,
       ]}
     >
@@ -26,9 +30,9 @@ export default function QuickActionButton({ title, subtitle, icon, onPress, full
   );
 }
 
-const createStyles = (colors) => StyleSheet.create({
+const createStyles = (colors, layout) => StyleSheet.create({
   card: {
-    width: '48%',
+    width: layout.isDesktop ? '31.5%' : '48%',
     backgroundColor: colors.card,
     borderRadius: 24,
     padding: 18,
@@ -43,11 +47,18 @@ const createStyles = (colors) => StyleSheet.create({
     borderColor: colors.borderSoft,
   },
   cardFullWidth: {
-    width: '100%',
+    width: layout.isDesktop ? '31.5%' : '100%',
     minHeight: 150,
   },
   cardPressed: {
     transform: [{ scale: 0.99 }],
+  },
+  cardHovered: {
+    borderColor: colors.primary,
+    shadowOpacity: 0.24,
+  },
+  cardFocused: {
+    borderColor: colors.focusRing,
   },
   iconWrapper: {
     width: 44,

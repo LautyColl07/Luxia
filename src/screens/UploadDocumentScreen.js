@@ -8,6 +8,7 @@ import LoadingState from '../components/LoadingState';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { getHearings, uploadDocument } from '../services/api';
+import { useResponsiveLayout } from '../theme/layout';
 import { formatDateTime } from '../utils/date';
 import { showSuccessAndGoBack } from '../utils/formFeedback';
 
@@ -16,7 +17,8 @@ const DOCUMENT_TYPES = ['Demanda', 'Escrito', 'Prueba', 'Anexo'];
 export default function UploadDocumentScreen({ navigation }) {
   const { colors } = useAppTheme();
   const { activeContextKey } = useStudyContext();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const layout = useResponsiveLayout();
+  const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
   const [hearings, setHearings] = useState([]);
   const [loadingHearings, setLoadingHearings] = useState(true);
   const [hearingsError, setHearingsError] = useState('');
@@ -238,13 +240,16 @@ function Field({ children, label, styles }) {
   );
 }
 
-const createStyles = (colors) => StyleSheet.create({
+const createStyles = (colors, layout) => StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
   },
   content: {
-    padding: 20,
+    width: '100%',
+    maxWidth: layout.formMaxWidth,
+    alignSelf: 'center',
+    padding: layout.gutter,
     gap: 18,
     paddingBottom: 34,
   },
@@ -323,8 +328,9 @@ const createStyles = (colors) => StyleSheet.create({
   },
   secondaryButton: {
     backgroundColor: colors.card,
-    borderRadius: 20,
-    paddingVertical: 16,
+    minHeight: 52,
+    borderRadius: 16,
+    paddingVertical: 14,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: colors.border,
@@ -359,8 +365,9 @@ const createStyles = (colors) => StyleSheet.create({
   },
   submitButton: {
     backgroundColor: colors.primary,
-    borderRadius: 20,
-    paddingVertical: 16,
+    minHeight: 52,
+    borderRadius: 16,
+    paddingVertical: 14,
     alignItems: 'center',
   },
   submitButtonDisabled: {

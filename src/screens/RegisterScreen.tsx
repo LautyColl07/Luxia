@@ -660,7 +660,7 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: COLORS.gold,
     borderRadius: 22,
-    paddingHorizontal: 22,
+    paddingHorizontal: 20,
     paddingVertical: 28,
     gap: 16,
     ...CARD_SHADOW,
@@ -725,7 +725,7 @@ const styles = StyleSheet.create({
   },
   halfWidth: {
     flex: 1,
-    minWidth: 260,
+    minWidth: 220,
   },
   fieldBlock: {
     gap: 8,

@@ -9,6 +9,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
@@ -17,6 +18,7 @@ import StudyContextSelector from '../components/StudyContextSelector';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { getCaseById, getCases, getHearings } from '../services/api';
+import { useResponsiveLayout } from '../theme/layout';
 import {
   addMonths,
   AREA_CONFIG,
@@ -43,7 +45,12 @@ const CATEGORY_OPTIONS = [
 export default function CalendarScreen({ navigation }) {
   const { colors } = useAppTheme();
   const { activeContextKey } = useStudyContext();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const insets = useSafeAreaInsets();
+  const layout = useResponsiveLayout();
+  const styles = useMemo(
+    () => createStyles(colors, layout, insets.top),
+    [colors, insets.top, layout]
+  );
   const today = useMemo(() => startOfDay(new Date()) || new Date(), []);
   const [calendarMonth, setCalendarMonth] = useState(today);
   const [selectedDate, setSelectedDate] = useState(today);
@@ -430,14 +437,17 @@ export default function CalendarScreen({ navigation }) {
   );
 }
 
-const createStyles = (colors) => StyleSheet.create({
+const createStyles = (colors, layout, topInset) => StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.backgroundAlt,
   },
   content: {
-    paddingTop: 28,
-    paddingHorizontal: 16,
+    width: '100%',
+    maxWidth: layout.readingMaxWidth,
+    alignSelf: 'center',
+    paddingTop: Math.max(topInset + 16, layout.topSpacing),
+    paddingHorizontal: layout.gutter,
     paddingBottom: 34,
     gap: 16,
   },
@@ -513,8 +523,8 @@ const createStyles = (colors) => StyleSheet.create({
     justifyContent: 'space-between',
   },
   monthButton: {
-    width: 36,
-    height: 36,
+    width: 44,
+    height: 44,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
@@ -545,7 +555,7 @@ const createStyles = (colors) => StyleSheet.create({
   },
   dayCell: {
     width: '14.2857%',
-    minHeight: 42,
+    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 12,
@@ -642,8 +652,8 @@ const createStyles = (colors) => StyleSheet.create({
     gap: 8,
   },
   iconButton: {
-    width: 34,
-    height: 34,
+    width: 42,
+    height: 42,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.borderSoft,
@@ -702,8 +712,8 @@ const createStyles = (colors) => StyleSheet.create({
     elevation: 3,
   },
   checkbox: {
-    width: 18,
-    height: 18,
+    width: 20,
+    height: 20,
     borderRadius: 4,
     borderWidth: 1,
     borderColor: colors.border,

@@ -13,6 +13,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
@@ -22,12 +23,19 @@ import { API_ROOT_URL } from '../config/api';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { getDocuments } from '../services/api';
+import { useResponsiveLayout } from '../theme/layout';
 import { formatDate } from '../utils/date';
 
 export default function DocumentsScreen({ navigation }) {
   const { colors } = useAppTheme();
+  const insets = useSafeAreaInsets();
+  const layout = useResponsiveLayout();
   const { activeContextKey } = useStudyContext();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const styles = useMemo(
+    () => createStyles(colors, layout, insets.top),
+    [colors, insets.top, layout]
+  );
+  const listColumns = layout.isDesktop ? 2 : 1;
 
   const [documents, setDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -182,10 +190,12 @@ export default function DocumentsScreen({ navigation }) {
               Accede al repositorio documental vinculado a tus causas y audiencias.
             </Text>
           </View>
+        </View>
 
-          <View style={styles.searchWrapper}>
-            <StudyContextSelector />
+        <View style={styles.headerTools}>
+          <StudyContextSelector />
 
+          <View style={[styles.searchWrapper, !searchOpen && styles.searchWrapperCollapsed]}>
             {searchOpen && (
               <TextInput
                 style={styles.searchInput}
@@ -229,7 +239,11 @@ export default function DocumentsScreen({ navigation }) {
       </View>
 
       <FlatList
+        key={`documents-${listColumns}`}
+        numColumns={listColumns}
+        columnWrapperStyle={listColumns > 1 ? styles.columnRow : undefined}
         contentContainerStyle={styles.listContent}
+        keyboardShouldPersistTaps="handled"
         data={filteredDocuments}
         keyExtractor={(item) => String(item?.id)}
         renderItem={({ item }) => {
@@ -360,15 +374,18 @@ export default function DocumentsScreen({ navigation }) {
   );
 }
 
-const createStyles = (colors) =>
+const createStyles = (colors, layout, topInset) =>
   StyleSheet.create({
     screen: {
       flex: 1,
       backgroundColor: colors.background,
     },
     header: {
-      paddingTop: 62,
-      paddingHorizontal: 22,
+      width: '100%',
+      maxWidth: layout.contentMaxWidth,
+      alignSelf: 'center',
+      paddingTop: Math.max(topInset + 20, layout.topSpacing),
+      paddingHorizontal: layout.gutter,
       paddingBottom: 18,
       gap: 16,
     },
@@ -381,6 +398,13 @@ const createStyles = (colors) =>
     titleContent: {
       flex: 1,
     },
+    headerTools: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      flexWrap: 'wrap',
+      gap: 12,
+    },
     title: {
       color: colors.text,
       fontSize: 28,
@@ -391,33 +415,41 @@ const createStyles = (colors) =>
       fontSize: 14,
       lineHeight: 20,
       marginTop: 6,
-      maxWidth: '92%',
+      maxWidth: layout.copyMaxWidth,
     },
     searchWrapper: {
-      minHeight: 44,
+      flex: 1,
+      width: '100%',
+      minWidth: layout.isPhone ? '100%' : 240,
+      maxWidth: 320,
+      minHeight: 48,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'flex-end',
       gap: 10,
-      marginTop: 2,
+    },
+    searchWrapperCollapsed: {
+      flexGrow: 0,
+      width: 48,
+      minWidth: 48,
     },
     searchInput: {
-      width: 210,
-      height: 44,
+      flex: 1,
+      minWidth: 0,
+      height: 48,
       backgroundColor: colors.card,
       borderRadius: 16,
       paddingLeft: 16,
-      paddingRight: 48,
+      paddingRight: 14,
       color: colors.text,
       borderWidth: 1,
       borderColor: colors.borderSoft,
-      marginRight: -44,
       fontSize: 14,
     },
     searchButton: {
-      width: 44,
-      height: 44,
-      borderRadius: 22,
+      width: 48,
+      height: 48,
+      borderRadius: 16,
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: colors.card,
@@ -425,9 +457,10 @@ const createStyles = (colors) =>
       borderColor: colors.borderSoft,
     },
     primaryButton: {
+      minHeight: 48,
       alignSelf: 'flex-start',
       backgroundColor: colors.primary,
-      borderRadius: 18,
+      borderRadius: 16,
       paddingHorizontal: 16,
       paddingVertical: 12,
       flexDirection: 'row',
@@ -440,11 +473,18 @@ const createStyles = (colors) =>
       fontWeight: '700',
     },
     listContent: {
-      paddingHorizontal: 18,
+      width: '100%',
+      maxWidth: layout.contentMaxWidth,
+      alignSelf: 'center',
+      paddingHorizontal: layout.gutter,
       paddingBottom: 28,
       gap: 12,
     },
+    columnRow: {
+      gap: 12,
+    },
     card: {
+      flex: 1,
       backgroundColor: colors.card,
       borderRadius: 24,
       padding: 18,
@@ -502,7 +542,7 @@ const createStyles = (colors) =>
       marginTop: 12,
     },
     actionsRow: {
-      flexDirection: 'row',
+      flexDirection: layout.isCompact ? 'column' : 'row',
       gap: 10,
       marginTop: 16,
     },

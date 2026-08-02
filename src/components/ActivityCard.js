@@ -148,9 +148,11 @@ const createStyles = (colors) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 10,
+    flexWrap: 'wrap',
   },
   referencePill: {
     flex: 1,
+    minWidth: 160,
     borderRadius: 999,
     backgroundColor: colors.backgroundAlt,
     paddingHorizontal: 12,
@@ -166,5 +168,6 @@ const createStyles = (colors) => StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     textAlign: 'right',
+    flexShrink: 0,
   },
 });

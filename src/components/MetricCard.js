@@ -14,8 +14,10 @@ export default function MetricCard({ label, value, icon, accentColor, onPress })
       accessibilityRole="button"
       disabled={!onPress}
       onPress={onPress}
-      style={({ pressed }) => [
+      style={({ focused, hovered, pressed }) => [
         styles.card,
+        hovered && styles.cardHovered,
+        focused && styles.cardFocused,
         pressed && styles.cardPressed,
       ]}
     >
@@ -47,6 +49,13 @@ const createStyles = (colors) => StyleSheet.create({
   cardPressed: {
     opacity: 0.92,
     transform: [{ scale: 0.985 }],
+  },
+  cardHovered: {
+    borderColor: colors.primary,
+    shadowOpacity: 0.24,
+  },
+  cardFocused: {
+    borderColor: colors.focusRing,
   },
   iconWrapper: {
     width: 44,

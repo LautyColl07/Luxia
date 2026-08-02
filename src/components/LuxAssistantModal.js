@@ -326,8 +326,11 @@ const createStyles = (colors, bottomInset) => StyleSheet.create({
   },
   sheet: {
     flex: 1,
-    maxHeight: '82%',
-    minHeight: 480,
+    width: '100%',
+    maxWidth: 720,
+    alignSelf: 'center',
+    maxHeight: '88%',
+    minHeight: 280,
     backgroundColor: colors.card,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,

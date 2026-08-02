@@ -2,6 +2,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useMemo } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import StudyContextSelector from '../components/StudyContextSelector';
 import { useAppTheme } from '../context/ThemeContext';
@@ -17,12 +18,14 @@ import NewCaseScreen from '../screens/NewCaseScreen';
 import NewHearingScreen from '../screens/NewHearingScreen';
 import TranscriptionTestScreen from '../screens/TranscriptionTestScreen';
 import UploadDocumentScreen from '../screens/UploadDocumentScreen';
+import { useResponsiveLayout } from '../theme/layout';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
 function DashboardTabs() {
   const { colors } = useAppTheme();
+  const insets = useSafeAreaInsets();
   const icons = useMemo(
     () => ({
       Inicio: 'view-dashboard-outline',
@@ -41,10 +44,12 @@ function DashboardTabs() {
         tabBarShowLabel: true,
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textMuted,
+        tabBarActiveBackgroundColor: colors.accentSoft,
+        tabBarHideOnKeyboard: true,
         tabBarStyle: {
-          height: 72,
-          paddingBottom: 10,
-          paddingTop: 10,
+          height: 64 + insets.bottom,
+          paddingBottom: Math.max(insets.bottom, 8),
+          paddingTop: 8,
           backgroundColor: colors.card,
           borderTopWidth: 1,
           borderTopColor: colors.borderSoft,
@@ -57,6 +62,13 @@ function DashboardTabs() {
         tabBarLabelStyle: {
           fontSize: 12,
           fontWeight: '600',
+          marginTop: 2,
+        },
+        tabBarItemStyle: {
+          maxWidth: 180,
+          marginHorizontal: 3,
+          marginVertical: 2,
+          borderRadius: 14,
         },
         tabBarIcon: ({ color, size }) => (
           <MaterialCommunityIcons color={color} name={icons[route.name]} size={size + 2} />
@@ -67,13 +79,14 @@ function DashboardTabs() {
       <Tab.Screen component={CasesScreen} name="Causas" />
       <Tab.Screen component={CalendarScreen} name="Calendario" />
       <Tab.Screen component={DocumentsScreen} name="Documentos" />
-      <Tab.Screen component={MoreScreen} name="Mas" options={{ title: 'Mas' }} />
+      <Tab.Screen component={MoreScreen} name="Mas" options={{ title: 'Más' }} />
     </Tab.Navigator>
   );
 }
 
 export default function DashboardNavigator() {
   const { colors } = useAppTheme();
+  const layout = useResponsiveLayout();
 
   return (
     <Stack.Navigator
@@ -81,12 +94,14 @@ export default function DashboardNavigator() {
         headerTintColor: colors.text,
         headerTitleStyle: {
           fontWeight: '700',
+          fontSize: layout.isPhone ? 16 : 18,
         },
+        headerBackButtonDisplayMode: 'minimal',
         headerShadowVisible: false,
         headerStyle: {
           backgroundColor: colors.background,
         },
-        headerRight: () => <StudyContextSelector />,
+        headerRight: layout.isPhone ? undefined : () => <StudyContextSelector />,
         contentStyle: {
           backgroundColor: colors.background,
         },

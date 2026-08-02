@@ -2,6 +2,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
@@ -16,12 +17,18 @@ import { useAuth } from '../context/AuthContext';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { getDashboardBootstrap } from '../services/api';
+import { useResponsiveLayout } from '../theme/layout';
 
 export default function DashboardScreen({ navigation }) {
   const { colors } = useAppTheme();
+  const insets = useSafeAreaInsets();
+  const layout = useResponsiveLayout();
   const { currentUser, isAuthReady } = useAuth();
   const { activeContextKey } = useStudyContext();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const styles = useMemo(
+    () => createStyles(colors, layout, insets.top),
+    [colors, insets.top, layout]
+  );
   const [dashboard, setDashboard] = useState(null);
   const [notificationCount, setNotificationCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -316,13 +323,15 @@ export default function DashboardScreen({ navigation }) {
             );
           })
         ) : (
-          <EmptyState
-            actionLabel="Programar audiencia"
-            icon="calendar-blank"
-            message="No hay audiencias programadas para los proximos dias."
-            onAction={handleCreateHearing}
-            title="Agenda sin actividad proxima"
-          />
+          <View style={styles.emptySection}>
+            <EmptyState
+              actionLabel="Programar audiencia"
+              icon="calendar-blank"
+              message="No hay audiencias programadas para los proximos dias."
+              onAction={handleCreateHearing}
+              title="Agenda sin actividad proxima"
+            />
+          </View>
         )}
 
         <View style={[styles.sectionHeader, styles.quickActionsHeader]}>
@@ -365,7 +374,7 @@ export default function DashboardScreen({ navigation }) {
   );
 }
 
-const createStyles = (colors) => StyleSheet.create({
+const createStyles = (colors, layout, topInset) => StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: colors.background,
@@ -375,14 +384,17 @@ const createStyles = (colors) => StyleSheet.create({
     backgroundColor: colors.background,
   },
   content: {
+    width: '100%',
+    maxWidth: layout.contentMaxWidth,
+    alignSelf: 'center',
     paddingBottom: 34,
   },
   hero: {
     backgroundColor: colors.primaryDeep,
     borderBottomLeftRadius: 34,
     borderBottomRightRadius: 34,
-    paddingTop: 62,
-    paddingHorizontal: 22,
+    paddingTop: Math.max(topInset + 20, layout.topSpacing),
+    paddingHorizontal: layout.gutter,
     paddingBottom: 28,
     overflow: 'hidden',
   },
@@ -458,22 +470,22 @@ const createStyles = (colors) => StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
     marginTop: 8,
-    maxWidth: '82%',
+    maxWidth: layout.copyMaxWidth,
   },
   metricGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    paddingHorizontal: 18,
+    paddingHorizontal: layout.gutter - 4,
     marginTop: -18,
   },
   metricCell: {
-    width: '50%',
+    width: layout.isDesktop ? '25%' : '50%',
     padding: 6,
-    aspectRatio: 1.05,
+    aspectRatio: layout.isDesktop ? 1.18 : layout.isCompact ? 0.92 : 1.05,
   },
   activityShortcut: {
     marginTop: 8,
-    marginHorizontal: 22,
+    marginHorizontal: layout.gutter,
     borderRadius: 24,
     backgroundColor: colors.card,
     borderWidth: 1,
@@ -512,7 +524,7 @@ const createStyles = (colors) => StyleSheet.create({
     marginTop: 4,
   },
   sectionHeader: {
-    paddingHorizontal: 22,
+    paddingHorizontal: layout.gutter,
     marginTop: 24,
     marginBottom: 14,
     flexDirection: 'row',
@@ -534,14 +546,17 @@ const createStyles = (colors) => StyleSheet.create({
     marginBottom: 12,
   },
   quickActionsGrid: {
-    paddingHorizontal: 18,
+    paddingHorizontal: layout.gutter - 4,
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 12,
   },
+  emptySection: {
+    paddingHorizontal: layout.gutter,
+  },
   inlineAlert: {
     marginTop: 18,
-    marginHorizontal: 22,
+    marginHorizontal: layout.gutter,
     backgroundColor: colors.dangerSoft,
     borderRadius: 16,
     paddingHorizontal: 14,

@@ -18,7 +18,15 @@ export default function ErrorState({ title = 'No pudimos cargar esta vista', mes
         {message || 'No pudimos cargar la informacion. Verifica tu conexion e intenta nuevamente.'}
       </Text>
       {onRetry ? (
-        <Pressable onPress={onRetry} style={styles.button}>
+        <Pressable
+          onPress={onRetry}
+          style={({ focused, hovered, pressed }) => [
+            styles.button,
+            hovered && styles.buttonHovered,
+            focused && styles.buttonFocused,
+            pressed && styles.buttonPressed,
+          ]}
+        >
           <Text style={styles.buttonText}>Reintentar</Text>
         </Pressable>
       ) : null}
@@ -55,13 +63,27 @@ const createStyles = (colors) => StyleSheet.create({
     textAlign: 'center',
     marginTop: 8,
     lineHeight: 21,
+    maxWidth: 480,
   },
   button: {
+    minHeight: 44,
     marginTop: 18,
     backgroundColor: colors.primary,
+    borderWidth: 1,
+    borderColor: 'transparent',
     borderRadius: 16,
     paddingHorizontal: 18,
     paddingVertical: 12,
+    justifyContent: 'center',
+  },
+  buttonHovered: {
+    backgroundColor: colors.primaryHover,
+  },
+  buttonFocused: {
+    borderColor: colors.focusRing,
+  },
+  buttonPressed: {
+    opacity: 0.86,
   },
   buttonText: {
     color: colors.textOnPrimary,

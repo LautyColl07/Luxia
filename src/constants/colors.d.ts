@@ -2,6 +2,8 @@ export type AppColors = {
   primary: string;
   primaryDeep: string;
   primaryHover: string;
+  gold: string;
+  focusRing: string;
   background: string;
   backgroundAlt: string;
   card: string;

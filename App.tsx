@@ -27,7 +27,9 @@ const AppNavigator = () => {
 
   return (
     <>
-      <StatusBar style={isDark ? "light" : "dark"} />
+      <StatusBar
+        style={!isAuthReady ? (isDark ? "light" : "dark") : currentUser && isDark ? "light" : "dark"}
+      />
       <NavigationContainer theme={navigationTheme}>
         {!isAuthReady ? (
           <View style={styles.loadingScreen}>

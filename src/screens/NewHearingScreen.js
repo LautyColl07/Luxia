@@ -7,6 +7,7 @@ import LoadingState from '../components/LoadingState';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { createHearing, getCases } from '../services/api';
+import { useResponsiveLayout } from '../theme/layout';
 import {
   formatDateTextInput,
   formatDateTimeInput,
@@ -21,7 +22,8 @@ const TIME_PRESETS = ['09:00', '11:15', '15:00', '17:30'];
 export default function NewHearingScreen({ navigation, route }) {
   const { colors } = useAppTheme();
   const { activeContextKey } = useStudyContext();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const layout = useResponsiveLayout();
+  const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
   const initialCaseId = route?.params?.caseId ? String(route.params.caseId) : '';
   const [cases, setCases] = useState([]);
   const [loadingCases, setLoadingCases] = useState(true);
@@ -172,7 +174,12 @@ export default function NewHearingScreen({ navigation, route }) {
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} style={styles.screen}>
+    <ScrollView
+      contentContainerStyle={styles.content}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+      style={styles.screen}
+    >
       <Text style={styles.title}>Registrar audiencia</Text>
       <Text style={styles.subtitle}>
         Programa una audiencia y vinculala con la causa correspondiente.
@@ -335,13 +342,16 @@ function Field({ children, label, styles }) {
   );
 }
 
-const createStyles = (colors) => StyleSheet.create({
+const createStyles = (colors, layout) => StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
   },
   content: {
-    padding: 20,
+    width: '100%',
+    maxWidth: layout.formMaxWidth,
+    alignSelf: 'center',
+    padding: layout.gutter,
     gap: 18,
     paddingBottom: 34,
   },
@@ -365,15 +375,16 @@ const createStyles = (colors) => StyleSheet.create({
     fontWeight: '700',
   },
   input: {
+    minHeight: 50,
     backgroundColor: colors.inputBackground,
-    borderRadius: 20,
+    borderRadius: 14,
     paddingHorizontal: 16,
     paddingVertical: 14,
     color: colors.text,
     fontSize: 15,
     shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.06,
     shadowRadius: 16,
     elevation: 2,
     borderWidth: 1,
@@ -410,7 +421,7 @@ const createStyles = (colors) => StyleSheet.create({
     color: colors.primary,
   },
   dualRow: {
-    flexDirection: 'row',
+    flexDirection: layout.isCompact ? 'column' : 'row',
     gap: 12,
   },
   optionRow: {
@@ -500,8 +511,9 @@ const createStyles = (colors) => StyleSheet.create({
   submitButton: {
     marginTop: 8,
     backgroundColor: colors.primary,
-    borderRadius: 20,
-    paddingVertical: 16,
+    minHeight: 52,
+    borderRadius: 16,
+    paddingVertical: 14,
     alignItems: 'center',
   },
   submitButtonDisabled: {

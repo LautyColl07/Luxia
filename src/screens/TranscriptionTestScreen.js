@@ -11,6 +11,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 
 import { AI_BASE_URL, SERVER_IP } from '../config/api';
 import { useAppTheme } from '../context/ThemeContext';
+import { useResponsiveLayout } from '../theme/layout';
 import {
   exportTranscriptionAsPdf,
   exportTranscriptionAsWordCompatible,
@@ -83,7 +84,8 @@ function getNetworkErrorMessage(error) {
 
 export default function TranscriptionTestScreen() {
   const { colors } = useAppTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const layout = useResponsiveLayout();
+  const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder, 250);
   const [status, setStatus] = useState('Lista para iniciar.');
@@ -373,13 +375,16 @@ export default function TranscriptionTestScreen() {
   );
 }
 
-const createStyles = (colors) => StyleSheet.create({
+const createStyles = (colors, layout) => StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
   },
   content: {
-    padding: 20,
+    width: '100%',
+    maxWidth: layout.formMaxWidth,
+    alignSelf: 'center',
+    padding: layout.gutter,
     paddingBottom: 34,
     gap: 16,
   },

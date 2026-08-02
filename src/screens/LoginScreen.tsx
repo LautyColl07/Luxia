@@ -19,6 +19,7 @@ export default function LoginScreen({ navigation }: any) {
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [focusedField, setFocusedField] = useState<"identifier" | "password" | null>(null);
   const [rememberMe, setRememberMe] = useState(false);
   const [emailError, setEmailError] = useState("");
   const [passwordError, setPasswordError] = useState("");
@@ -93,6 +94,7 @@ export default function LoginScreen({ navigation }: any) {
                 <View
                   style={[
                     styles.inputWrapper,
+                    focusedField === "identifier" ? styles.inputFocused : null,
                     emailError ? styles.inputError : null,
                   ]}
                 >
@@ -100,6 +102,8 @@ export default function LoginScreen({ navigation }: any) {
 
                   <TextInput
                     value={identifier}
+                    onFocus={() => setFocusedField("identifier")}
+                    onBlur={() => setFocusedField(null)}
                     onChangeText={setIdentifier}
                     placeholder="tu.email@estudio.com o tuusuario"
                     placeholderTextColor="#5B6776"
@@ -120,6 +124,7 @@ export default function LoginScreen({ navigation }: any) {
                 <View
                   style={[
                     styles.inputWrapper,
+                    focusedField === "password" ? styles.inputFocused : null,
                     passwordError ? styles.inputError : null,
                   ]}
                 >
@@ -127,6 +132,8 @@ export default function LoginScreen({ navigation }: any) {
 
                   <TextInput
                     value={password}
+                    onFocus={() => setFocusedField("password")}
+                    onBlur={() => setFocusedField(null)}
                     onChangeText={setPassword}
                     placeholder="Ingresa tu contrasena"
                     placeholderTextColor="#5B6776"
@@ -231,14 +238,16 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#F3F5F7",
     justifyContent: "center",
+    alignItems: "center",
     paddingHorizontal: 24,
     paddingVertical: 48,
   },
   card: {
     width: "100%",
+    maxWidth: 520,
     backgroundColor: "#FBFBFC",
-    borderRadius: 20,
-    borderWidth: 2,
+    borderRadius: 22,
+    borderWidth: 1.5,
     borderColor: "#C4A77D",
     padding: 28,
     shadowColor: "#000",
@@ -280,15 +289,21 @@ const styles = StyleSheet.create({
   inputWrapper: {
     height: 52,
     backgroundColor: "#FFFFFF",
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: "#C4A77D",
-    borderRadius: 10,
+    borderRadius: 14,
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 12,
   },
   inputError: {
     borderColor: "#EF4444",
+  },
+  inputFocused: {
+    borderColor: "#123A67",
+    shadowColor: "#123A67",
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
   },
   icon: {
     marginRight: 10,
@@ -299,13 +314,17 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   eyeButton: {
-    padding: 4,
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
   },
   errorText: {
     color: "#EF4444",
     fontSize: 12,
   },
   rememberRow: {
+    minHeight: 44,
     flexDirection: "row",
     alignItems: "center",
   },
@@ -336,7 +355,7 @@ const styles = StyleSheet.create({
   loginButton: {
     height: 54,
     backgroundColor: "#123A67",
-    borderRadius: 10,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     shadowColor: "#000",

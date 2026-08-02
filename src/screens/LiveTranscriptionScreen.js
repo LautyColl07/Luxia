@@ -11,6 +11,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 
 import { auth } from '../config/firebase';
 import { useAppTheme } from '../context/ThemeContext';
+import { useResponsiveLayout } from '../theme/layout';
 import {
   finishLiveTranscription,
   startLiveTranscription,
@@ -49,7 +50,8 @@ function getApiErrorMessage(error) {
 
 export default function LiveTranscriptionScreen({ route }) {
   const { colors } = useAppTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const layout = useResponsiveLayout();
+  const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder, 250);
   const routeParams = route?.params || {};
@@ -448,13 +450,16 @@ function ActionButton({ colors, disabled, icon, label, onPress, styles, variant 
   );
 }
 
-const createStyles = (colors) => StyleSheet.create({
+const createStyles = (colors, layout) => StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
   },
   content: {
-    padding: 20,
+    width: '100%',
+    maxWidth: layout.formMaxWidth,
+    alignSelf: 'center',
+    padding: layout.gutter,
     paddingBottom: 34,
     gap: 16,
   },
@@ -492,7 +497,7 @@ const createStyles = (colors) => StyleSheet.create({
     marginTop: 5,
   },
   controls: {
-    flexDirection: 'row',
+    flexDirection: layout.isCompact ? 'column' : 'row',
     gap: 10,
   },
   primaryButton: {

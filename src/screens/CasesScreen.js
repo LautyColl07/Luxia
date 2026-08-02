@@ -2,6 +2,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Animated, FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View, ActivityIndicator, Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
@@ -10,6 +11,7 @@ import StatusBadge from '../components/StatusBadge';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { getCases } from '../services/api';
+import { useResponsiveLayout } from '../theme/layout';
 import { formatDate } from '../utils/date';
 
 const STATUS_OPTIONS = [
@@ -23,8 +25,14 @@ const STATUS_OPTIONS = [
 
 export default function CasesScreen({ navigation }) {
   const { colors } = useAppTheme();
+  const insets = useSafeAreaInsets();
+  const layout = useResponsiveLayout();
   const { activeContextKey, legalStudies, activeLegalStudy, selectPersonalContext, selectStudyContext } = useStudyContext();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const styles = useMemo(
+    () => createStyles(colors, layout, insets.top),
+    [colors, insets.top, layout]
+  );
+  const listColumns = layout.isDesktop ? 2 : 1;
   const hasStudy = legalStudies.length > 0;
 
   const [context, setContext] = useState('private');
@@ -333,7 +341,11 @@ export default function CasesScreen({ navigation }) {
       </View>
 
       <FlatList
+        key={`cases-${listColumns}`}
+        numColumns={listColumns}
+        columnWrapperStyle={listColumns > 1 ? styles.columnRow : undefined}
         contentContainerStyle={styles.listContent}
+        keyboardShouldPersistTaps="handled"
         data={cases}
         keyExtractor={(item) => String(item?.id)}
         refreshControl={
@@ -392,14 +404,17 @@ export default function CasesScreen({ navigation }) {
   );
 }
 
-const createStyles = (colors) => StyleSheet.create({
+const createStyles = (colors, layout, topInset) => StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
   },
   header: {
-    paddingTop: 62,
-    paddingHorizontal: 22,
+    width: '100%',
+    maxWidth: layout.contentMaxWidth,
+    alignSelf: 'center',
+    paddingTop: Math.max(topInset + 20, layout.topSpacing),
+    paddingHorizontal: layout.gutter,
     paddingBottom: 8,
     gap: 16,
   },
@@ -422,12 +437,13 @@ const createStyles = (colors) => StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 14,
     lineHeight: 20,
-    maxWidth: '88%',
+    maxWidth: layout.copyMaxWidth,
   },
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    flexWrap: 'wrap',
   },
   primaryButton: {
     backgroundColor: colors.primary,
@@ -480,7 +496,7 @@ const createStyles = (colors) => StyleSheet.create({
     elevation: 2,
   },
   filterRow: {
-    flexDirection: 'row',
+    flexDirection: layout.isPhone ? 'column' : 'row',
     gap: 12,
   },
   filterGroup: {
@@ -495,10 +511,11 @@ const createStyles = (colors) => StyleSheet.create({
     letterSpacing: 0.5,
   },
   filterInput: {
+    minHeight: 46,
     backgroundColor: colors.background,
     borderWidth: 1,
     borderColor: colors.borderSoft,
-    borderRadius: 12,
+    borderRadius: 14,
     paddingHorizontal: 14,
     paddingVertical: Platform.OS === 'ios' ? 12 : 8,
     color: colors.text,
@@ -541,8 +558,10 @@ const createStyles = (colors) => StyleSheet.create({
     borderTopColor: colors.borderSoft,
   },
   clearButton: {
+    minHeight: 44,
     paddingHorizontal: 16,
     paddingVertical: 10,
+    justifyContent: 'center',
   },
   clearButtonText: {
     color: colors.textSecondary,
@@ -550,10 +569,12 @@ const createStyles = (colors) => StyleSheet.create({
     fontWeight: '600',
   },
   applyButton: {
+    minHeight: 44,
     backgroundColor: colors.primary,
     paddingHorizontal: 20,
     paddingVertical: 10,
     borderRadius: 12,
+    justifyContent: 'center',
   },
   applyButtonText: {
     color: colors.textOnPrimary,
@@ -595,11 +616,13 @@ const createStyles = (colors) => StyleSheet.create({
     paddingHorizontal: 8,
     borderRadius: 13,
     zIndex: 1,
+    minHeight: 48,
   },
   segmentedLabel: {
     fontSize: 13,
     fontWeight: '600',
     color: colors.textSecondary,
+    textAlign: 'center',
   },
   segmentedLabelActive: {
     color: colors.textOnPrimary,
@@ -614,11 +637,18 @@ const createStyles = (colors) => StyleSheet.create({
     fontWeight: '500',
   },
   listContent: {
-    paddingHorizontal: 18,
+    width: '100%',
+    maxWidth: layout.contentMaxWidth,
+    alignSelf: 'center',
+    paddingHorizontal: layout.gutter,
     paddingBottom: 28,
     gap: 12,
   },
+  columnRow: {
+    gap: 12,
+  },
   card: {
+    flex: 1,
     backgroundColor: colors.card,
     borderRadius: 24,
     padding: 18,
