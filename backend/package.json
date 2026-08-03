@@ -9,22 +9,22 @@
     "start": "node src/server.js"
   },
   "dependencies": {
-    "@prisma/client": "6.19.0",
-    "axios": "^1.6.8",
+    "@prisma/client": "^6.19.3",
+    "axios": "^1.19.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^4.19.2",
     "express-rate-limit": "^8.5.2",
-    "firebase-admin": "^13.10.0",
-    "form-data": "^4.0.5",
+    "firebase-admin": "^14.2.0",
+    "form-data": "^4.0.6",
     "helmet": "^8.1.0",
-    "multer": "^2.1.1",
+    "multer": "^2.2.0",
     "pdfkit": "^0.18.0"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "devDependencies": {
-    "prisma": "^6.19.0"
+    "prisma": "^6.19.3"
   }
 }

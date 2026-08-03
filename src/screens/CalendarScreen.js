@@ -17,7 +17,7 @@ import LoadingState from '../components/LoadingState';
 import StudyContextSelector from '../components/StudyContextSelector';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
-import { getCaseById, getCases, getHearings } from '../services/api';
+import { getAllCases, getCaseById, getHearings } from '../services/api';
 import { useResponsiveLayout } from '../theme/layout';
 import {
   addMonths,
@@ -72,13 +72,13 @@ export default function CalendarScreen({ navigation }) {
       setLoading(true);
       setError('');
 
-      const [hearings, cases] = await Promise.all([getHearings(), getCases()]);
+      const [hearings, cases] = await Promise.all([getHearings(), getAllCases()]);
       const detailedCases = await Promise.all(
-        (Array.isArray(cases) ? cases : []).map(async (caseItem) => {
+        cases.map(async (caseItem) => {
           try {
             return await getCaseById(caseItem?.id);
           } catch (detailError) {
-            console.error('[CalendarScreen] Error cargando detalle de causa:', detailError);
+            console.error('[CalendarScreen] No se pudo cargar el detalle de la causa.');
             return caseItem;
           }
         })
@@ -86,11 +86,11 @@ export default function CalendarScreen({ navigation }) {
 
       setCalendarData({
         hearings: Array.isArray(hearings) ? hearings : [],
-        cases: Array.isArray(cases) ? cases : [],
+        cases,
         caseDetails: detailedCases.filter(Boolean),
       });
     } catch (loadError) {
-      console.error('[CalendarScreen] Error cargando calendario:', loadError);
+      console.error('[CalendarScreen] No se pudo cargar el calendario.');
       setError(
         loadError instanceof Error
           ? loadError.message

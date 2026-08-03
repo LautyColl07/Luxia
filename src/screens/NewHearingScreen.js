@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+import { useCallback, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import EmptyState from '../components/EmptyState';
@@ -6,7 +7,7 @@ import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
-import { createHearing, getCases } from '../services/api';
+import { createHearing, getAllCases } from '../services/api';
 import { useResponsiveLayout } from '../theme/layout';
 import {
   formatDateTextInput,
@@ -38,18 +39,14 @@ export default function NewHearingScreen({ navigation, route }) {
     location: '',
   });
 
-  useEffect(() => {
-    void loadCases();
-  }, [activeContextKey]);
-
-  async function loadCases() {
+  const loadCases = useCallback(async () => {
     try {
       setLoadingCases(true);
       setCasesError('');
-      const items = await getCases();
-      setCases(Array.isArray(items) ? items : []);
+      const items = await getAllCases();
+      setCases(items);
     } catch (error) {
-      console.error('[NewHearingScreen] Error cargando causas:', error);
+      console.error('[NewHearingScreen] No se pudieron cargar las causas.');
       setCases([]);
       setCasesError(
         error instanceof Error ? error.message : 'No pudimos cargar las causas disponibles.'
@@ -57,7 +54,13 @@ export default function NewHearingScreen({ navigation, route }) {
     } finally {
       setLoadingCases(false);
     }
-  }
+  }, [activeContextKey]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadCases();
+    }, [loadCases])
+  );
 
   const selectedCase = useMemo(
     () => cases.find((item) => String(item?.id) === form.caseId) || null,
@@ -132,7 +135,7 @@ export default function NewHearingScreen({ navigation, route }) {
 
       showSuccessAndGoBack(navigation, 'Audiencia cargada', 'La audiencia se guardo correctamente.');
     } catch (error) {
-      console.error('[NewHearingScreen] Error creando audiencia:', error);
+      console.error('[NewHearingScreen] No se pudo crear la audiencia.');
       Alert.alert(
         'No pudimos registrar la audiencia',
         error instanceof Error ? error.message : 'Intenta nuevamente.'

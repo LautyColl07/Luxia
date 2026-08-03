@@ -72,6 +72,28 @@ function toArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
+function normalizePaginatedResponse(response, normalizer) {
+  const source = response && typeof response === 'object' ? response : {};
+  const rawItems = Array.isArray(response)
+    ? response
+    : Array.isArray(source.items)
+      ? source.items
+      : toArray(source.data);
+  const items = rawItems.map((item) => normalizer(item));
+  const total = Number(source.total);
+  const page = Number(source.page);
+  const limit = Number(source.limit);
+  const totalPages = Number(source.totalPages);
+
+  return {
+    items,
+    total: Number.isSafeInteger(total) && total >= 0 ? total : items.length,
+    page: Number.isSafeInteger(page) && page > 0 ? page : 1,
+    limit: Number.isSafeInteger(limit) && limit > 0 ? limit : Math.max(items.length, 1),
+    totalPages: Number.isSafeInteger(totalPages) && totalPages > 0 ? totalPages : 1,
+  };
+}
+
 function toNumber(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
@@ -593,8 +615,12 @@ function isTransientConnectionError(error) {
 }
 
 function getErrorMessage(status, data) {
-  if (status === 401 || status === 403) {
+  if (status === 401) {
     return EXPIRED_SESSION_MESSAGE;
+  }
+
+  if (status === 403) {
+    return 'No tenes permisos para realizar esta operacion.';
   }
 
   if (status === 0 || status >= 500) {
@@ -980,7 +1006,7 @@ export async function getDashboardResumen(options = {}) {
   return dashboardResumenInFlight;
 }
 
-export async function getCases(context = 'private', params = {}) {
+export async function getCases(context = null, params = {}) {
   if (USE_MOCKS) {
     let cases = sortByDateDesc(mockStore.cases, 'createdAt').map((item) => normalizeCase(item));
     
@@ -1015,13 +1041,16 @@ export async function getCases(context = 'private', params = {}) {
     });
   }
 
-  // Build scope query based on context
+  // Explicit callers can request a scope; callers without one use the active
+  // workspace so selectors and calendar stay aligned with the visible tenant.
   const scopeQuery = {};
   if (context === 'studio' && activeWorkContext?.legalStudyId) {
     scopeQuery.scope = 'study';
     scopeQuery.legalStudyId = activeWorkContext.legalStudyId;
-  } else {
+  } else if (context === 'private') {
     scopeQuery.scope = 'personal';
+  } else {
+    Object.assign(scopeQuery, getActiveWorkContextQuery());
   }
 
   // Build remaining query params
@@ -1042,24 +1071,23 @@ export async function getCases(context = 'private', params = {}) {
     `/causas${queryStr}`
   );
 
-  // If response has items (new paginated format), map items and return
-  if (response && response.items) {
-    return {
-      ...response,
-      items: response.items.map((item) => normalizeCase(item))
-    };
+  const page = normalizePaginatedResponse(response, normalizeCase);
+  return {
+    ...page,
+    items: sortByDateDesc(page.items, 'createdAt'),
+  };
+}
+
+export async function getAllCases(params = {}) {
+  const firstPage = await getCases(null, { ...params, page: 1, limit: 100 });
+  const byId = new Map(firstPage.items.map((item) => [String(item.id), item]));
+
+  for (let page = 2; page <= firstPage.totalPages; page += 1) {
+    const nextPage = await getCases(null, { ...params, page, limit: 100 });
+    nextPage.items.forEach((item) => byId.set(String(item.id), item));
   }
 
-  // Fallback for older backend returning an array directly
-  const arrayData = Array.isArray(response) ? response : (response?.data || []);
-  const items = sortByDateDesc(toArray(arrayData).map((item) => normalizeCase(item)), 'createdAt');
-  return {
-    items,
-    total: items.length,
-    page: 1,
-    limit: items.length || 20,
-    totalPages: 1
-  };
+  return sortByDateDesc(Array.from(byId.values()), 'createdAt');
 }
 
 export async function getCaseById(id) {
@@ -1144,12 +1172,15 @@ export async function createCase(data) {
   }
 
   const endpoint = withWorkScope('/cases');
+  const requestedStudyId = safeOptionalString(data.legalStudyId);
   const caseData = {
     ...normalizeCasePayload(data),
     ...(data.scope ? { scope: data.scope } : {}),
-    ...(data.scope === 'LEGAL_STUDY' && activeWorkContext?.legalStudyId
-      ? { legalStudyId: activeWorkContext.legalStudyId }
-      : activeWorkContext?.type === 'study' && activeWorkContext?.legalStudyId
+    ...(data.scope === 'LEGAL_STUDY' && requestedStudyId
+      ? { legalStudyId: requestedStudyId }
+      : data.scope === 'LEGAL_STUDY' && activeWorkContext?.legalStudyId
+        ? { legalStudyId: activeWorkContext.legalStudyId }
+      : !data.scope && activeWorkContext?.type === 'study' && activeWorkContext?.legalStudyId
         ? { legalStudyId: activeWorkContext.legalStudyId }
         : {}),
   };
@@ -1214,8 +1245,17 @@ export async function getHearings() {
     return simulateDelay(items);
   }
 
-  const data = await request(withWorkScope('/audiencias'));
-  return sortByDateAsc(toArray(data).map((item) => normalizeHearing(item)), 'date');
+  const firstResponse = await request(appendQueryParams(withWorkScope('/audiencias'), { page: 1, limit: 100 }));
+  const firstPage = normalizePaginatedResponse(firstResponse, normalizeHearing);
+  const byId = new Map(firstPage.items.map((item) => [String(item.id), item]));
+
+  for (let page = 2; page <= firstPage.totalPages; page += 1) {
+    const response = await request(appendQueryParams(withWorkScope('/audiencias'), { page, limit: 100 }));
+    const nextPage = normalizePaginatedResponse(response, normalizeHearing);
+    nextPage.items.forEach((item) => byId.set(String(item.id), item));
+  }
+
+  return sortByDateAsc(Array.from(byId.values()), 'date');
 }
 
 export async function getUpcomingHearings() {
@@ -1230,7 +1270,7 @@ export async function getUpcomingHearings() {
 function normalizeHearingPayload(data = {}) {
   const title = safeString(data.title ?? data.titulo, '').trim();
   const normalizedDate = combineDateTime(data.date ?? data.fecha, data.time ?? data.hora);
-  const caseId = toNumber(data.caseId ?? data.causaId);
+  const caseId = safeOptionalString(data.caseId ?? data.causaId);
   const modality = safeString(data.modality ?? data.modalidad, '').trim();
   const location = safeString(data.location ?? data.ubicacion, '').trim();
 
@@ -1309,7 +1349,7 @@ export async function getDocuments() {
 
 function normalizeDocumentPayload(data = {}) {
   const fileName = safeString(data.fileName ?? data.nombreArchivo, '').trim();
-  const hearingId = toNumber(data.hearingId ?? data.audienciaId);
+  const hearingId = safeOptionalString(data.hearingId ?? data.audienciaId);
   const documentType = safeString(data.documentType ?? data.tipo, '').trim();
   const path = safeString(data.path ?? data.ruta, '/uploads/' + (fileName || 'documento-simulado.pdf'));
 

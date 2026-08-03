@@ -2,16 +2,16 @@ const express = require('express');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
-const multer = require('multer');
 
 const prisma = require('../lib/prisma');
 const { documentsRateLimit } = require('../lib/rateLimit');
 const { validateDocumentFile } = require('../lib/fileValidation');
+const { STORAGE_ROOT, createUpload, ensureInsideStorage, removeTemporaryUpload } = require('../lib/upload');
 const { requireFirebaseAuth } = require('../middleware/firebaseAuth');
 const { logActivity } = require('../utils/activityLogger');
 
 const router = express.Router();
-const upload = multer({
+const upload = createUpload({
   limits: {
     fieldNameSize: 100,
     fieldSize: 16 * 1024,
@@ -20,12 +20,10 @@ const upload = multer({
     fields: 8,
     parts: 10,
   },
-  storage: multer.memoryStorage(),
 });
 const MAX_DOCUMENT_TYPE_LENGTH = 120;
-const STORAGE_ROOT =
-  process.env.LUXIA_STORAGE_ROOT ||
-  (process.platform === 'win32' ? path.resolve(process.cwd(), 'storage') : '/opt/luxia/storage');
+const MAX_PAGE = 10000;
+const MAX_LIMIT = 100;
 
 function normalizeOptionalString(value) {
   if (value === undefined || value === null) {
@@ -43,22 +41,6 @@ function slugify(value, fallback = 'documento') {
     .replace(/[^a-zA-Z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '')
     .replace(/_+/g, '_') || fallback;
-}
-
-function ensureInsideStorage(targetPath) {
-  const resolvedRoot = path.resolve(STORAGE_ROOT);
-  const resolvedTarget = path.resolve(targetPath);
-  const relativePath = path.relative(resolvedRoot, resolvedTarget);
-
-  if (
-    relativePath === '..' ||
-    relativePath.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(relativePath)
-  ) {
-    throw new Error('Ruta de storage invalida.');
-  }
-
-  return resolvedTarget;
 }
 
 function getDocumentDir(userId, hearingId) {
@@ -98,13 +80,13 @@ async function getOwnedHearing(hearingId, userId) {
 }
 
 async function saveUploadedDocument({ baseName, file, hearingId, userId }) {
-  if (!file?.buffer) {
+  if (!file?.path) {
     const error = new Error('El archivo es obligatorio.');
     error.status = 400;
     throw error;
   }
 
-  const validatedFile = validateDocumentFile(file);
+  const validatedFile = await validateDocumentFile(file);
 
   const extension = validatedFile.extension;
   const safeBaseName = slugify(baseName || path.basename(file.originalname || 'documento', extension), 'documento');
@@ -113,13 +95,39 @@ async function saveUploadedDocument({ baseName, file, hearingId, userId }) {
   const targetPath = ensureInsideStorage(path.join(targetDir, finalFileName));
 
   await fsp.mkdir(targetDir, { recursive: true });
-  await fsp.writeFile(targetPath, file.buffer);
+  await fsp.rename(file.path, targetPath);
 
   return {
     fileName: finalFileName,
     mimeType: validatedFile.mimeType,
     path: targetPath,
   };
+}
+
+function parsePositiveInteger(value, fallback, maximum, field) {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) {
+    const error = new Error(`${field} no es valido.`);
+    error.status = 400;
+    throw error;
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > maximum) {
+    const error = new Error(`${field} no es valido.`);
+    error.status = 400;
+    throw error;
+  }
+  return parsed;
+}
+
+function validateDocumentId(value) {
+  const id = normalizeOptionalString(value);
+  if (!id || id.length > 191 || !/^[A-Za-z0-9_-]+$/.test(id)) {
+    const error = new Error('El identificador del documento no es valido.');
+    error.status = 400;
+    throw error;
+  }
+  return id;
 }
 
 function buildDocumentDownloadPath(file) {
@@ -149,6 +157,7 @@ router.use(requireFirebaseAuth);
 router.use(documentsRateLimit);
 
 router.post('/', upload.single('file'), async (req, res) => {
+  let savedFile = null;
   try {
     const hearingId = normalizeOptionalString(req.body?.hearingId || req.body?.audienciaId);
     const documentType = normalizeOptionalString(req.body?.documentType || req.body?.tipo) || 'Documento';
@@ -176,7 +185,7 @@ router.post('/', upload.single('file'), async (req, res) => {
       });
     }
 
-    const savedFile = await saveUploadedDocument({
+    savedFile = await saveUploadedDocument({
       baseName,
       file: req.file,
       hearingId: hearing.id,
@@ -217,6 +226,11 @@ router.post('/', upload.single('file'), async (req, res) => {
 
     return res.status(201).json(normalizeFileResponse(created));
   } catch (error) {
+    if (savedFile?.path) {
+      await fsp.unlink(savedFile.path).catch(() => null);
+    } else {
+      await removeTemporaryUpload(req.file);
+    }
     const status = Number.isInteger(error?.status) && error.status >= 400 && error.status < 500
       ? error.status
       : 500;
@@ -231,6 +245,8 @@ router.post('/', upload.single('file'), async (req, res) => {
 
 router.get('/', async (req, res) => {
   try {
+    const page = parsePositiveInteger(req.query?.page, 1, MAX_PAGE, 'page');
+    const limit = parsePositiveInteger(req.query?.limit, 50, MAX_LIMIT, 'limit');
     const files = await prisma.file.findMany({
       include: {
         case: true,
@@ -246,10 +262,15 @@ router.get('/', async (req, res) => {
       where: {
         userId: req.authUser.id,
       },
+      skip: (page - 1) * limit,
+      take: limit,
     });
 
     return res.json(files.map((file) => normalizeFileResponse(file)));
   } catch (error) {
+    if (error?.status === 400) {
+      return res.status(400).json({ error: error.message });
+    }
     console.error('[DOCUMENTS] No se pudieron listar los documentos.');
     return res.status(500).json({
       error: 'No se pudieron cargar los documentos.',
@@ -259,9 +280,10 @@ router.get('/', async (req, res) => {
 
 router.get('/:id/download', async (req, res) => {
   try {
+    const documentId = validateDocumentId(req.params.id);
     const file = await prisma.file.findFirst({
       where: {
-        id: req.params.id,
+        id: documentId,
         userId: req.authUser.id,
       },
     });
@@ -272,9 +294,13 @@ router.get('/:id/download', async (req, res) => {
       });
     }
 
-    await fs.promises.access(file.path, fs.constants.R_OK);
-    return res.download(file.path, path.basename(file.fileName || file.path));
+    const downloadPath = ensureInsideStorage(file.path);
+    await fs.promises.access(downloadPath, fs.constants.R_OK);
+    return res.download(downloadPath, path.basename(file.fileName || downloadPath));
   } catch (error) {
+    if (error?.status === 400) {
+      return res.status(400).json({ error: error.message });
+    }
     console.error('[DOCUMENTS] No se pudo descargar el documento.');
     return res.status(500).json({
       error: 'No se pudo descargar el documento.',
@@ -282,8 +308,9 @@ router.get('/:id/download', async (req, res) => {
   }
 });
 
-router.use((error, _req, res, next) => {
-  if (error instanceof multer.MulterError) {
+router.use((error, req, res, next) => {
+  if (error?.name === 'MulterError') {
+    void removeTemporaryUpload(req.file);
     const status = error.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
     return res.status(status).json({ error: 'El archivo no cumple los limites permitidos.' });
   }

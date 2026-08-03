@@ -1,5 +1,6 @@
 const axios = require('axios');
 const FormData = require('form-data');
+const fs = require('fs');
 
 const DEFAULT_AI_BASE_URL = 'http://127.0.0.1:5000';
 
@@ -28,12 +29,13 @@ function getTranscriptFromPayload(payload) {
 }
 
 async function transcribeAudioChunk(file) {
-  if (!file?.buffer) {
+  if (!file?.buffer && !file?.path) {
     throw new Error('No se recibio ningun archivo de audio.');
   }
 
   const formData = new FormData();
-  formData.append('audio', file.buffer, {
+  const audio = file.buffer || fs.createReadStream(file.path);
+  formData.append('audio', audio, {
     contentType: file.mimetype || 'audio/m4a',
     filename: file.originalname || `chunk-${Date.now()}.m4a`,
   });
@@ -42,8 +44,8 @@ async function transcribeAudioChunk(file) {
 
   const response = await axios.post(`${AI_BASE_URL}/api/transcribir`, formData, {
     headers: formData.getHeaders(),
-    maxBodyLength: Infinity,
-    maxContentLength: Infinity,
+    maxBodyLength: Number(process.env.TRANSCRIPTION_CHUNK_MAX_BYTES || 50 * 1024 * 1024),
+    maxContentLength: 1024 * 1024,
     timeout: Number(process.env.TRANSCRIPTION_TIMEOUT_MS || 120000),
   });
 

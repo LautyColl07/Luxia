@@ -87,7 +87,7 @@ export default function LiveTranscriptionScreen({ route }) {
   }, []);
 
   const registerChunkError = useCallback((chunkIndex, error) => {
-    console.log('[LiveTranscription] chunk error', chunkIndex, error?.message || error);
+    console.warn('[LiveTranscription] No se pudo procesar un bloque de audio.');
     setErrors((current) => [
       ...current,
       {
@@ -253,7 +253,7 @@ export default function LiveTranscriptionScreen({ route }) {
       loopPromiseRef.current = recordLoop();
     } catch (error) {
       const message = getApiErrorMessage(error);
-      console.error('[LiveTranscription] Error iniciando transcripcion:', error);
+      console.error('[LiveTranscription] No se pudo iniciar la transcripcion.');
       isRecordingRef.current = false;
       setIsRecording(false);
       setStatusText('Error');
@@ -310,7 +310,7 @@ export default function LiveTranscriptionScreen({ route }) {
       console.log('[LiveTranscription] finished');
     } catch (error) {
       const message = getApiErrorMessage(error);
-      console.error('[LiveTranscription] Error finalizando transcripcion:', error);
+      console.error('[LiveTranscription] No se pudo finalizar la transcripcion.');
       setStatusText('Error');
       setErrors((current) => [
         ...current,

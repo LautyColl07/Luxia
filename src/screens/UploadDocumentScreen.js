@@ -40,7 +40,7 @@ export default function UploadDocumentScreen({ navigation }) {
       const items = await getHearings();
       setHearings(Array.isArray(items) ? items : []);
     } catch (error) {
-      console.error('[UploadDocumentScreen] Error cargando audiencias:', error);
+      console.error('[UploadDocumentScreen] No se pudieron cargar las audiencias.');
       setHearings([]);
       setHearingsError(
         error instanceof Error ? error.message : 'No pudimos cargar las audiencias disponibles.'
@@ -84,7 +84,7 @@ export default function UploadDocumentScreen({ navigation }) {
       setSelectedAsset(asset);
       Alert.alert('Archivo seleccionado', `${asset.name || 'Documento'} quedo listo para subirse.`);
     } catch (error) {
-      console.error('[UploadDocumentScreen] Error seleccionando archivo:', error);
+      console.error('[UploadDocumentScreen] No se pudo seleccionar el archivo.');
       Alert.alert('No se pudo seleccionar el archivo', 'Intenta nuevamente.');
     }
   };
@@ -112,7 +112,7 @@ export default function UploadDocumentScreen({ navigation }) {
         'El documento se vinculo correctamente con la audiencia.'
       );
     } catch (error) {
-      console.error('[UploadDocumentScreen] Error subiendo documento:', error);
+      console.error('[UploadDocumentScreen] No se pudo subir el documento.');
       Alert.alert(
         'No se pudo subir el documento.',
         error instanceof Error ? error.message : 'No se pudo subir el documento.'

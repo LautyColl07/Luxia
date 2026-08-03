@@ -53,28 +53,20 @@ const ForgotPasswordScreen = ({ navigation }: ForgotPasswordScreenProps) => {
       setError("");
       setMessage("");
 
-      console.log("[FORGOT_PASSWORD] email:", trimmedEmail);
-
       if (!auth) {
         throw new Error("Firebase Auth no esta configurado");
       }
 
       await sendPasswordResetEmail(auth, trimmedEmail);
-      console.log("[FORGOT_PASSWORD] reset email enviado o solicitado");
       setMessage(safeSuccessMessage);
     } catch (error) {
-      console.error("[FORGOT_PASSWORD_ERROR]", error);
-
       if (
         error instanceof FirebaseError &&
         error.code === "auth/operation-not-allowed"
       ) {
-        console.error(
-          "[FORGOT_PASSWORD_ERROR] Falta habilitar Email/Password en Firebase Console.",
-        );
+        console.warn("[FORGOT_PASSWORD] La recuperacion no esta disponible.");
       }
 
-      console.log("[FORGOT_PASSWORD] reset email enviado o solicitado");
       setMessage(safeSuccessMessage);
       setError("");
     } finally {

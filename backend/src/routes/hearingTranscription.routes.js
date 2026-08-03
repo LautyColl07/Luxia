@@ -2,18 +2,20 @@ const express = require('express');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
-const multer = require('multer');
+const crypto = require('crypto');
 const PDFDocument = require('pdfkit');
 
 const prisma = require('../lib/prisma');
 const { transcriptionRateLimit } = require('../lib/rateLimit');
 const { validateAudioFile } = require('../lib/fileValidation');
+const { STORAGE_ROOT, createUpload, ensureInsideStorage, removeTemporaryUpload } = require('../lib/upload');
 const { requireFirebaseAuth } = require('../middleware/firebaseAuth');
+const { getCaseScopeWhere, handleScopeError } = require('../lib/studyScope');
 const { transcribeAudioChunk } = require('../services/transcription.service');
 const { logActivity } = require('../utils/activityLogger');
 
 const router = express.Router();
-const upload = multer({
+const upload = createUpload({
   limits: {
     fieldNameSize: 100,
     fieldSize: 16 * 1024,
@@ -22,13 +24,12 @@ const upload = multer({
     fields: 12,
     parts: 14,
   },
-  storage: multer.memoryStorage(),
 });
 const sseClients = new Map();
-
-const STORAGE_ROOT =
-  process.env.LUXIA_STORAGE_ROOT ||
-  (process.platform === 'win32' ? path.resolve(process.cwd(), 'storage') : '/opt/luxia/storage');
+const MAX_ID_LENGTH = 191;
+const MAX_TEXT_LENGTH = 500;
+const MAX_PAGE = 10000;
+const MAX_LIMIT = 100;
 
 function normalizeOptionalString(value) {
   if (value === undefined || value === null) {
@@ -40,7 +41,23 @@ function normalizeOptionalString(value) {
 }
 
 function safeId(value, fallback = null) {
-  return normalizeOptionalString(value) || fallback;
+  const id = normalizeOptionalString(value) || fallback;
+  if (!id || id.length > MAX_ID_LENGTH || !/^[A-Za-z0-9_-]+$/.test(id)) {
+    const error = new Error('El identificador no es valido.');
+    error.status = 400;
+    throw error;
+  }
+  return id;
+}
+
+function safeText(value, field) {
+  const text = normalizeOptionalString(value);
+  if (text && text.length > MAX_TEXT_LENGTH) {
+    const error = new Error(`${field} supera la longitud permitida.`);
+    error.status = 400;
+    throw error;
+  }
+  return text;
 }
 
 function parseDate(value) {
@@ -52,6 +69,32 @@ function parseDate(value) {
 
   const date = new Date(normalized);
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function requiredDate(value, field) {
+  const date = parseDate(value);
+  if (!date) {
+    const error = new Error(`${field} es obligatoria y debe ser valida.`);
+    error.status = 400;
+    throw error;
+  }
+  return date;
+}
+
+function parsePositiveInteger(value, fallback, maximum, field) {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) {
+    const error = new Error(`${field} no es valido.`);
+    error.status = 400;
+    throw error;
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > maximum) {
+    const error = new Error(`${field} no es valido.`);
+    error.status = 400;
+    throw error;
+  }
+  return parsed;
 }
 
 function hasSameDateTime(first, second) {
@@ -76,22 +119,6 @@ function slugify(value, fallback = 'audiencia') {
     .replace(/[^a-zA-Z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '')
     .replace(/_+/g, '_') || fallback;
-}
-
-function ensureInsideStorage(targetPath) {
-  const resolvedRoot = path.resolve(STORAGE_ROOT);
-  const resolvedTarget = path.resolve(targetPath);
-  const relativePath = path.relative(resolvedRoot, resolvedTarget);
-
-  if (
-    relativePath === '..' ||
-    relativePath.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(relativePath)
-  ) {
-    throw new Error('Ruta de storage invalida.');
-  }
-
-  return resolvedTarget;
 }
 
 function getAudioDir(hearingId) {
@@ -126,11 +153,11 @@ function normalizeTranscriptResponse(transcript, hearing) {
 
 function getMetadata(req, hearingId) {
   return {
-    hearingId: String(hearingId),
-    hearingTitle: normalizeOptionalString(req.body?.hearingTitle || req.body?.title),
+    hearingId: safeId(hearingId),
+    hearingTitle: safeText(req.body?.hearingTitle || req.body?.title, 'title'),
     hearingDate: parseDate(req.body?.hearingDate || req.body?.date),
     caseId: safeId(req.body?.caseId || req.body?.causaId, `case-${hearingId}`),
-    caseTitle: normalizeOptionalString(req.body?.caseTitle || req.body?.causa || req.body?.caseName) || 'Causa sin referencia',
+    caseTitle: safeText(req.body?.caseTitle || req.body?.causa || req.body?.caseName, 'caseTitle') || 'Causa sin referencia',
   };
 }
 
@@ -146,6 +173,19 @@ function getDefinedData(values) {
   );
 }
 
+function normalizeHearingResponse(hearing) {
+  return {
+    id: hearing.id,
+    title: hearing.title || null,
+    date: hearing.date || null,
+    createdAt: hearing.createdAt,
+    updatedAt: hearing.updatedAt,
+    caseId: hearing.caseId,
+    caseTitle: hearing.case?.title || 'Causa sin referencia',
+    court: hearing.case?.court || null,
+  };
+}
+
 async function upsertUser(user) {
   return prisma.user.upsert({
     create: {
@@ -159,6 +199,65 @@ async function upsertUser(user) {
     }),
     where: { id: user.id },
   });
+}
+
+async function createHearingForUser({
+  prismaClient = prisma,
+  req,
+  user,
+  body,
+  activityLogger = logActivity,
+}) {
+  const caseId = safeId(body?.caseId || body?.causaId);
+  const title = safeText(body?.title || body?.titulo, 'title');
+  if (!title) {
+    const error = new Error('title es obligatorio.');
+    error.status = 400;
+    throw error;
+  }
+  const date = requiredDate(body?.date || body?.fechaHora, 'date');
+  const caseScopeWhere = await getCaseScopeWhere(prismaClient, {
+    ...req,
+    authUser: user,
+  });
+  const legalCase = await prismaClient.legalCase.findFirst({
+    where: { id: caseId, ...caseScopeWhere },
+  });
+  if (!legalCase) {
+    const error = new Error('No encontramos la causa seleccionada.');
+    error.status = 404;
+    throw error;
+  }
+
+  await prismaClient.user.upsert({
+    create: { email: user.email, id: user.id, name: user.name },
+    update: getUpdateData({ email: user.email, name: user.name }),
+    where: { id: user.id },
+  });
+  const created = await prismaClient.hearing.create({
+    data: {
+      id: crypto.randomUUID(),
+      caseId: legalCase.id,
+      userId: user.id,
+      title,
+      date,
+    },
+    include: { case: true },
+  });
+
+  await activityLogger({
+    userId: user.id,
+    userEmail: user.email,
+    userName: user.name,
+    type: 'hearing',
+    title: 'Audiencia registrada',
+    description: 'Se registro una audiencia.',
+    relatedEntityType: 'hearing',
+    relatedEntityId: created.id,
+    relatedEntityName: created.title || created.id,
+  });
+
+  return created;
 }
 
 async function getOrCreateHearing(req, { allowCreate }) {
@@ -380,13 +479,13 @@ async function upsertTranscript(hearing, userId, data = {}) {
 }
 
 async function saveAudioFile(hearingId, file, prefix = 'audio') {
-  if (!file?.buffer) {
+  if (!file?.path) {
     const error = new Error('El archivo de audio es obligatorio.');
     error.status = 400;
     throw error;
   }
 
-  const validatedFile = validateAudioFile(file);
+  const validatedFile = await validateAudioFile(file);
 
   const extension = validatedFile.extension;
   const fileName = `${prefix}_${Date.now()}${extension}`;
@@ -394,20 +493,26 @@ async function saveAudioFile(hearingId, file, prefix = 'audio') {
   const targetPath = ensureInsideStorage(path.join(targetDir, fileName));
 
   await fsp.mkdir(targetDir, { recursive: true });
-  await fsp.writeFile(targetPath, file.buffer);
+  await fsp.rename(file.path, targetPath);
 
   return { mimeType: validatedFile.mimeType, path: targetPath };
 }
 
 async function saveChunkFile(hearingId, file, chunkIndex) {
-  const validatedFile = validateAudioFile(file);
+  if (!file?.path) {
+    const error = new Error('El archivo de audio es obligatorio.');
+    error.status = 400;
+    throw error;
+  }
+
+  const validatedFile = await validateAudioFile(file);
   const extension = validatedFile.extension;
   const fileName = `chunk_${String(chunkIndex).padStart(5, '0')}_${Date.now()}${extension}`;
   const targetDir = getChunkDir(hearingId);
   const targetPath = ensureInsideStorage(path.join(targetDir, fileName));
 
   await fsp.mkdir(targetDir, { recursive: true });
-  await fsp.writeFile(targetPath, file.buffer);
+  await fsp.rename(file.path, targetPath);
 
   return { mimeType: validatedFile.mimeType, path: targetPath };
 }
@@ -520,6 +625,73 @@ function handleRouteError(res, error, fallbackMessage) {
 router.use(requireFirebaseAuth);
 router.use(transcriptionRateLimit);
 
+router.get('/', async (req, res) => {
+  try {
+    const page = parsePositiveInteger(req.query?.page, 1, MAX_PAGE, 'page');
+    const limit = parsePositiveInteger(req.query?.limit, 50, MAX_LIMIT, 'limit');
+    const caseScopeWhere = await getCaseScopeWhere(prisma, req);
+    const where = { case: caseScopeWhere };
+    const [total, items] = await Promise.all([
+      prisma.hearing.count({ where }),
+      prisma.hearing.findMany({
+        where,
+        include: { case: true },
+        orderBy: { date: 'asc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+    ]);
+
+    return res.json({
+      items: items.map(normalizeHearingResponse),
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    });
+  } catch (error) {
+    if (handleScopeError(res, error)) return undefined;
+    if (error?.status === 400) return res.status(400).json({ error: error.message });
+    console.error('[HEARING] No se pudieron cargar las audiencias.');
+    return res.status(500).json({ error: 'No pudimos cargar las audiencias.' });
+  }
+});
+
+router.get('/proximas', async (req, res) => {
+  try {
+    const caseScopeWhere = await getCaseScopeWhere(prisma, req);
+    const items = await prisma.hearing.findMany({
+      where: { case: caseScopeWhere, date: { gte: new Date() } },
+      include: { case: true },
+      orderBy: { date: 'asc' },
+      take: 20,
+    });
+    return res.json(items.map(normalizeHearingResponse));
+  } catch (error) {
+    if (handleScopeError(res, error)) return undefined;
+    if (error?.status === 400) return res.status(400).json({ error: error.message });
+    console.error('[HEARING] No se pudieron cargar las proximas audiencias.');
+    return res.status(500).json({ error: 'No pudimos cargar las proximas audiencias.' });
+  }
+});
+
+router.post('/', async (req, res) => {
+  try {
+    const created = await createHearingForUser({
+      req,
+      user: req.authUser,
+      body: req.body,
+    });
+
+    return res.status(201).json(normalizeHearingResponse(created));
+  } catch (error) {
+    if (handleScopeError(res, error)) return undefined;
+    if (error?.status === 400) return res.status(400).json({ error: error.message });
+    console.error('[HEARING] No se pudo registrar la audiencia.');
+    return res.status(500).json({ error: 'No pudimos registrar la audiencia.' });
+  }
+});
+
 router.get('/:id/transcripcion', async (req, res) => {
   try {
     const hearing = await getOrCreateHearing(req, { allowCreate: false });
@@ -565,6 +737,7 @@ router.post('/:id/audio', upload.single('audio'), async (req, res) => {
       },
     });
   } catch (error) {
+    await removeTemporaryUpload(req.file);
     return handleRouteError(res, error, 'No se pudo guardar el audio.');
   }
 });
@@ -585,9 +758,8 @@ router.post('/:id/transcripcion', async (req, res) => {
 
     await upsertTranscript(hearing, req.authUser.id, { status: 'transcribing' });
 
-    const audioBuffer = await fsp.readFile(currentTranscript.audioPath);
     const text = await transcribeAudioChunk({
-      buffer: audioBuffer,
+      path: ensureInsideStorage(currentTranscript.audioPath),
       mimetype: 'audio/m4a',
       originalname: path.basename(currentTranscript.audioPath),
     });
@@ -658,7 +830,11 @@ router.post('/:id/transcripcion/live/chunk', upload.single('audio'), async (req,
     const hearing = await getOrCreateHearing(req, { allowCreate: true });
     const chunkIndex = Number(req.body?.chunkIndex || 0);
     const savedChunk = await saveChunkFile(hearing.id, req.file, Number.isFinite(chunkIndex) ? chunkIndex : 0);
-    const text = await transcribeAudioChunk(req.file);
+    const text = await transcribeAudioChunk({
+      mimetype: savedChunk.mimeType,
+      originalname: path.basename(savedChunk.path),
+      path: savedChunk.path,
+    });
     const currentTranscript = await getTranscriptForHearing(hearing, req.authUser.id);
     const fullText = [currentTranscript?.text, text].filter(Boolean).join('\n');
     const transcript = await upsertTranscript(hearing, req.authUser.id, {
@@ -683,6 +859,7 @@ router.post('/:id/transcripcion/live/chunk', upload.single('audio'), async (req,
       text,
     });
   } catch (error) {
+    await removeTemporaryUpload(req.file);
     return handleRouteError(res, error, 'No se pudo procesar el segmento de audio.');
   }
 });
@@ -838,15 +1015,17 @@ router.get('/:id/transcripcion/pdf', async (req, res) => {
       return res.status(404).json({ error: 'La transcripcion todavia no tiene PDF generado.' });
     }
 
-    await fsp.access(transcript.pdfPath, fs.constants.R_OK);
-    return res.download(transcript.pdfPath, path.basename(transcript.pdfPath));
+    const downloadPath = ensureInsideStorage(transcript.pdfPath);
+    await fsp.access(downloadPath, fs.constants.R_OK);
+    return res.download(downloadPath, path.basename(downloadPath));
   } catch (error) {
     return handleRouteError(res, error, 'No se pudo descargar el PDF.');
   }
 });
 
-router.use((error, _req, res, next) => {
-  if (error instanceof multer.MulterError) {
+router.use((error, req, res, next) => {
+  if (error?.name === 'MulterError') {
+    void removeTemporaryUpload(req.file);
     const status = error.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
     return res.status(status).json({ error: 'El archivo de audio no cumple los limites permitidos.' });
   }
@@ -859,3 +1038,7 @@ router.use((error, _req, res, next) => {
 });
 
 module.exports = router;
+module.exports.__testables = {
+  createHearingForUser,
+  normalizeHearingResponse,
+};

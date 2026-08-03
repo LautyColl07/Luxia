@@ -1,8 +1,8 @@
 const express = require('express');
-const multer = require('multer');
 
 const prisma = require('../lib/prisma');
 const { validateAudioFile } = require('../lib/fileValidation');
+const { createUpload, removeTemporaryUpload } = require('../lib/upload');
 const { transcriptionRateLimit } = require('../lib/rateLimit');
 const { getTranscriptSessionScopeWhere, handleScopeError } = require('../lib/studyScope');
 const { requireFirebaseAuth } = require('../middleware/firebaseAuth');
@@ -12,7 +12,7 @@ const { logActivity } = require('../utils/activityLogger');
 const router = express.Router();
 const MAX_ID_LENGTH = 191;
 const MAX_TITLE_LENGTH = 191;
-const upload = multer({
+const upload = createUpload({
   limits: {
     fieldNameSize: 100,
     fieldSize: 16 * 1024,
@@ -21,7 +21,6 @@ const upload = multer({
     fields: 8,
     parts: 10,
   },
-  storage: multer.memoryStorage(),
 });
 
 function normalizeOptionalString(value) {
@@ -165,7 +164,7 @@ router.post('/:sessionId/chunk', upload.single('audio'), async (req, res) => {
   }
 
   try {
-    validateAudioFile(req.file);
+    await validateAudioFile(req.file);
     const session = await getAuthorizedSession(req, req.params.sessionId);
 
     if (!session) {
@@ -202,6 +201,8 @@ router.post('/:sessionId/chunk', upload.single('audio'), async (req, res) => {
     });
   } catch (error) {
     return sendRouteError(res, error, 'No se pudo transcribir y guardar el bloque de audio.');
+  } finally {
+    await removeTemporaryUpload(req.file);
   }
 });
 
@@ -253,8 +254,9 @@ router.get('/:sessionId', async (req, res) => {
   }
 });
 
-router.use((error, _req, res, next) => {
-  if (error instanceof multer.MulterError) {
+router.use((error, req, res, next) => {
+  if (error?.name === 'MulterError') {
+    void removeTemporaryUpload(req.file);
     const status = error.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
     return res.status(status).json({ error: 'El archivo de audio no cumple los limites permitidos.' });
   }

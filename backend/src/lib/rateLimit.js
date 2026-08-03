@@ -1,5 +1,6 @@
 const { ipKeyGenerator } = require('express-rate-limit');
 const rateLimit = require('express-rate-limit');
+const crypto = require('crypto');
 
 function readPositiveInteger(value, fallback, maximum) {
   const parsed = Number(value);
@@ -15,7 +16,20 @@ function createJsonRateLimit({ max, message, windowMs }) {
   return rateLimit({
     keyGenerator(req) {
       const uid = typeof req.authUser?.id === 'string' ? req.authUser.id.trim() : '';
-      return uid ? `uid:${uid}` : `ip:${ipKeyGenerator(req.ip)}`;
+      // Keep raw UIDs and IPs out of the in-process store. req.ip is safe here
+      // because app explicitly keeps trust proxy disabled until infrastructure
+      // provides a bounded proxy configuration.
+      const keySource = uid || ipKeyGenerator(req.ip);
+      const keyType = uid ? 'uid' : 'ip';
+      const digest = crypto.createHash('sha256').update(keySource).digest('hex');
+      return `${keyType}:${digest}`;
+    },
+    handler(_req, res, _next, options) {
+      return res.status(options.statusCode).json({
+        error: message,
+        message,
+        success: false,
+      });
     },
     legacyHeaders: false,
     max,

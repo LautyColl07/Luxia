@@ -82,7 +82,7 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
 
       return result;
     } catch (error) {
-      console.error('[HearingRecordingPanel] Error cargando transcripcion:', error);
+      console.error('[HearingRecordingPanel] No se pudo cargar la transcripcion.');
       if (!preserveEmptyStatus) {
         setStatusText('No pudimos cargar la transcripción guardada.');
       }
@@ -151,10 +151,6 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
           sessionId,
           startTime,
         });
-        console.log('[HearingRecordingPanel] chunk enviado', {
-          chunkIndex,
-          endpoint: `POST /audiencias/${sessionId}/chunk`,
-        });
         const nextText = response?.fullText || [transcriptText.trim(), response?.text].filter(Boolean).join('\n');
 
         if (nextText) {
@@ -168,7 +164,7 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
           text: nextText,
         }));
       } catch (error) {
-        console.error('[HearingRecordingPanel] Error procesando bloque:', error);
+        console.error('[HearingRecordingPanel] No se pudo procesar el bloque de audio.');
         setStatusText(getErrorMessage(error, 'No se pudo transcribir un bloque de audio.'));
       } finally {
         setIsTranscribing(false);
@@ -199,10 +195,8 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
         shouldRouteThroughEarpiece: false,
       });
 
-      console.log('[HearingRecordingPanel] start endpoint', 'POST /audiencias/start');
       const started = await startHearingLiveTranscription({ caseDetail, hearing });
       sessionIdRef.current = started?.sessionId || null;
-      console.log('[HearingRecordingPanel] sessionId creado', sessionIdRef.current);
       setTranscriptInfo(started);
       setTranscriptText('');
       setStatusText('Grabando audiencia...');
@@ -212,7 +206,7 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
       loopPromiseRef.current = recordLoop();
     } catch (error) {
       const message = getErrorMessage(error, 'No se pudo iniciar la grabacion.');
-      console.error('[HearingRecordingPanel] Error iniciando grabacion:', error);
+      console.error('[HearingRecordingPanel] No se pudo iniciar la grabacion.');
       Alert.alert('No se pudo iniciar la grabación', message);
       recordingRef.current = false;
       sessionIdRef.current = null;
@@ -241,7 +235,6 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
       }
 
       const finished = await finishHearingLiveTranscription({ hearingId, sessionId });
-      console.log('[HearingRecordingPanel] finish enviado', `POST /audiencias/${sessionId}/finish`);
       setTranscriptInfo(finished);
 
       if (finished?.text) {
@@ -252,7 +245,7 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
       await onDocumentsChanged?.();
     } catch (error) {
       const message = getErrorMessage(error, 'No se pudo detener la grabación.');
-      console.error('[HearingRecordingPanel] Error deteniendo grabacion:', error);
+      console.error('[HearingRecordingPanel] No se pudo detener la grabacion.');
       Alert.alert('No se pudo detener la grabación', message);
     } finally {
       setIsRecording(false);
@@ -293,7 +286,6 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
         throw new Error(uploadResponse?.error || uploadResponse?.message || 'No se pudo subir el audio');
       }
 
-      console.log('[HearingRecordingPanel] Audio subido OK');
       setTranscriptInfo((current) => ({
         ...(current || {}),
         ...(uploadResponse || {}),
@@ -321,7 +313,7 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
       }
     } catch (error) {
       const message = getErrorMessage(error, 'No se pudo subir el audio.');
-      console.error('[HearingRecordingPanel] Error subiendo audio:', error);
+      console.error('[HearingRecordingPanel] No se pudo subir el audio.');
       Alert.alert('No se pudo subir el audio', message);
     } finally {
       setIsUploadingAudio(false);
@@ -350,11 +342,7 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
       });
       const pdfUri = pdf.uri;
 
-      console.log('[PDF URI]', pdfUri);
-
       const info = await FileSystem.getInfoAsync(pdfUri);
-
-      console.log('[PDF INFO]', info);
 
       if (!info.exists || !info.size || info.size <= 0) {
         throw new Error('El PDF generado está vacío o no existe');
@@ -378,7 +366,7 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
         await onDocumentsChanged?.();
       } catch (uploadError) {
         setStatusText('PDF generado, pero no se pudo guardar en Documentos.');
-        console.error('[HearingRecordingPanel] Error subiendo PDF a Documentos:', uploadError);
+        console.error('[HearingRecordingPanel] No se pudo subir el PDF a documentos.');
         Alert.alert(
           'PDF generado',
           'El PDF se generó, pero no se pudo guardar en Documentos.'
@@ -386,7 +374,7 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
       }
     } catch (error) {
       const message = getErrorMessage(error, 'No se pudo generar el PDF.');
-      console.error('[HearingRecordingPanel] Error generando PDF:', error);
+      console.error('[HearingRecordingPanel] No se pudo generar el PDF.');
       Alert.alert('No se pudo guardar el PDF', message);
     } finally {
       setIsGeneratingPdf(false);
@@ -415,7 +403,7 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
       }
     } catch (error) {
       const message = getErrorMessage(error, 'No se pudo descargar el PDF.');
-      console.error('[HearingRecordingPanel] Error descargando PDF:', error);
+      console.error('[HearingRecordingPanel] No se pudo descargar el PDF.');
       Alert.alert('No se pudo descargar el PDF', message);
     } finally {
       setIsDownloadingPdf(false);

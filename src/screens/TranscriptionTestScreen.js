@@ -166,7 +166,7 @@ export default function TranscriptionTestScreen() {
       setStatus('Grabando audiencia...');
     } catch (error) {
       const message = getNetworkErrorMessage(error);
-      console.error('[TranscriptionScreen] Error iniciando grabacion:', error);
+      console.error('[TranscriptionScreen] No se pudo iniciar la grabacion.');
       setStatus('Error');
       Alert.alert('No se pudo iniciar la grabacion', message);
     }
@@ -189,7 +189,7 @@ export default function TranscriptionTestScreen() {
               await exportTranscriptionAsPdf(exportText);
             } catch (error) {
               const message = error instanceof Error ? error.message : 'No se pudo generar el PDF.';
-              console.error('[TranscriptionScreen] Error exportando PDF:', error);
+              console.error('[TranscriptionScreen] No se pudo exportar el PDF.');
               Alert.alert('No se pudo guardar el PDF', message);
             } finally {
               setIsExporting(false);
@@ -206,7 +206,7 @@ export default function TranscriptionTestScreen() {
               await exportTranscriptionAsWordCompatible(exportText);
             } catch (error) {
               const message = error instanceof Error ? error.message : 'No se pudo generar el archivo compatible con Word.';
-              console.error('[TranscriptionScreen] Error exportando Word:', error);
+              console.error('[TranscriptionScreen] No se pudo exportar el documento.');
               Alert.alert('No se pudo guardar el archivo', message);
             } finally {
               setIsExporting(false);
@@ -258,7 +258,7 @@ export default function TranscriptionTestScreen() {
       askToSaveTranscript([transcriptText.trim(), text].filter(Boolean).join('\n\n'));
     } catch (error) {
       const message = getNetworkErrorMessage(error);
-      console.error('[TranscriptionScreen] Error deteniendo/transcribiendo:', error);
+      console.error('[TranscriptionScreen] No se pudo completar la transcripcion.');
       setStatus('Error');
       Alert.alert('No se pudo completar la transcripcion', message);
     } finally {

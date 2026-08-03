@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View, ActivityIndicator, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -27,7 +27,7 @@ export default function CasesScreen({ navigation }) {
   const { colors } = useAppTheme();
   const insets = useSafeAreaInsets();
   const layout = useResponsiveLayout();
-  const { activeContextKey, legalStudies, activeLegalStudy, selectPersonalContext, selectStudyContext } = useStudyContext();
+  const { activeContext, activeContextKey, legalStudies, activeLegalStudy, selectPersonalContext, selectStudyContext } = useStudyContext();
   const styles = useMemo(
     () => createStyles(colors, layout, insets.top),
     [colors, insets.top, layout]
@@ -57,6 +57,10 @@ export default function CasesScreen({ navigation }) {
     startDate: '',
     endDate: '',
   });
+
+  useEffect(() => {
+    setContext(activeContext?.type === 'study' ? 'studio' : 'private');
+  }, [activeContextKey, activeContext?.type]);
 
   const handleContextChange = useCallback((nextContext) => {
     setContext(nextContext);
@@ -109,7 +113,7 @@ export default function CasesScreen({ navigation }) {
       setTotalPages(response.totalPages || 1);
       
     } catch (loadError) {
-      console.error('[CasesScreen] Error cargando causas:', loadError);
+      console.error('[CasesScreen] No se pudieron cargar las causas.');
       if (fetchPage === 1) {
         setError(
           loadError instanceof Error

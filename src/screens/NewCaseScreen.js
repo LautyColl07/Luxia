@@ -13,7 +13,7 @@ const STATUS_OPTIONS = ['Activa', 'Pendiente', 'En proceso', 'Archivada'];
 
 export default function NewCaseScreen({ navigation }) {
   const { colors } = useAppTheme();
-  const { legalStudies, activeLegalStudy } = useStudyContext();
+  const { legalStudies, activeLegalStudy, selectPersonalContext, selectStudyContext } = useStudyContext();
   const layout = useResponsiveLayout();
   const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
   const hasStudy = legalStudies.length > 0;
@@ -46,13 +46,22 @@ export default function NewCaseScreen({ navigation }) {
         ...(scope === 'LEGAL_STUDY' && studyId ? { legalStudyId: studyId } : {}),
       };
 
-      console.log('[NewCaseScreen] Payload creando causa:', JSON.stringify(payload, null, 2));
       await createCase(payload);
+
+      // Keep the workspace aligned with the scope that the server accepted so
+      // the hearing selector refetches the same authorized tenant on return.
+      if (scope === 'LEGAL_STUDY' && studyId) {
+        const selectedStudy = legalStudies.find((study) => String(study.id) === String(studyId));
+        if (selectedStudy) {
+          selectStudyContext(selectedStudy);
+        }
+      } else {
+        selectPersonalContext();
+      }
 
       showSuccessAndGoBack(navigation, 'Causa cargada', 'La causa se guardo correctamente.');
     } catch (error) {
-      console.error('[NewCaseScreen] Error creando causa:', error);
-      console.error('[NewCaseScreen] Error backend:', error?.response || error?.data || error?.message);
+      console.error('[NewCaseScreen] No se pudo crear la causa.');
       Alert.alert(
         'No pudimos registrar la causa',
         error instanceof Error ? error.message : 'Intenta nuevamente.'

@@ -6,7 +6,6 @@ import * as Sharing from 'expo-sharing';
 import {
   Alert,
   FlatList,
-  Linking,
   Pressable,
   StyleSheet,
   Text,
@@ -22,7 +21,7 @@ import StudyContextSelector from '../components/StudyContextSelector';
 import { API_ROOT_URL } from '../config/api';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
-import { getDocuments } from '../services/api';
+import { getCurrentIdToken, getDocuments } from '../services/api';
 import { useResponsiveLayout } from '../theme/layout';
 import { formatDate } from '../utils/date';
 
@@ -52,7 +51,7 @@ export default function DocumentsScreen({ navigation }) {
       const items = await getDocuments();
       setDocuments(Array.isArray(items) ? items : []);
     } catch (loadError) {
-      console.error('[DocumentsScreen] Error cargando documentos:', loadError);
+      console.error('[DocumentsScreen] No se pudieron cargar los documentos.');
       setError(
         loadError instanceof Error
           ? loadError.message
@@ -123,12 +122,9 @@ export default function DocumentsScreen({ navigation }) {
         return;
       }
 
-      try {
-        await Linking.openURL(fileUrl);
-      } catch {
-        console.error('[DocumentsScreen] No se pudo abrir el documento.');
-        Alert.alert('No se pudo abrir el documento.', 'Intenta nuevamente.');
-      }
+      // Opening a URL externally cannot attach Firebase credentials. Use the
+      // authenticated download flow so backend authorization remains enforced.
+      return downloadDocument(document);
     },
     [getFileUrl]
   );
@@ -155,7 +151,15 @@ export default function DocumentsScreen({ navigation }) {
         );
 
         const localUri = `${FileSystem.documentDirectory}${safeFileName}`;
-        const result = await FileSystem.downloadAsync(fileUrl, localUri);
+        const token = await getCurrentIdToken();
+        const result = await FileSystem.downloadAsync(fileUrl, localUri, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (result.status < 200 || result.status >= 300) {
+          await FileSystem.deleteAsync(localUri, { idempotent: true }).catch(() => undefined);
+          throw new Error('La descarga fue rechazada por el servidor.');
+        }
 
         if (await Sharing.isAvailableAsync()) {
           await Sharing.shareAsync(result.uri);
@@ -166,7 +170,7 @@ export default function DocumentsScreen({ navigation }) {
           'La descarga se completó correctamente.'
         );
       } catch (downloadError) {
-        console.error('[DocumentsScreen] Error descargando documento:', downloadError);
+      console.error('[DocumentsScreen] No se pudo descargar el documento.');
         Alert.alert('No se pudo descargar el documento.', 'Intenta nuevamente.');
       } finally {
         setDownloadingId(null);

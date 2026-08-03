@@ -31,7 +31,7 @@ export default function CaseDetailScreen({ navigation, route }) {
       const item = await getCaseById(caseId);
       setCaseDetail(item);
     } catch (loadError) {
-      console.error('[CaseDetailScreen] Error cargando causa:', loadError);
+      console.error('[CaseDetailScreen] No se pudo cargar la causa.');
       setError(
         loadError instanceof Error
           ? loadError.message

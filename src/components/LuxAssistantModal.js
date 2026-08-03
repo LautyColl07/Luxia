@@ -195,7 +195,7 @@ export default function LuxAssistantModal({ context = {}, onClose, visible }) {
 
       await streamAssistantReply(reply, assistantMessage.id);
     } catch (error) {
-      console.error('[LUX] Error enviando mensaje:', error);
+      console.error('[LUX] No se pudo enviar el mensaje.');
       await streamAssistantReply(LUX_FALLBACK_REPLY, assistantMessage.id);
     } finally {
       setIsSending(false);

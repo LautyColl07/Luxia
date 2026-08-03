@@ -57,7 +57,7 @@ export default function MoreScreen({ navigation }) {
       setProfile(user);
       setNotifications(Array.isArray(items) ? items : []);
     } catch (loadError) {
-      console.error('[MoreScreen] Error cargando perfil:', loadError);
+      console.error('[MoreScreen] No se pudo cargar el perfil.');
       setError(
         loadError instanceof Error
           ? loadError.message
@@ -113,7 +113,7 @@ export default function MoreScreen({ navigation }) {
           try {
             await signOut(auth);
           } catch (logoutError) {
-            console.error('[MoreScreen] Error cerrando sesion:', logoutError);
+            console.error('[MoreScreen] No se pudo cerrar la sesion.');
             Alert.alert(
               'No pudimos cerrar la sesion',
               logoutError instanceof Error
@@ -139,7 +139,7 @@ export default function MoreScreen({ navigation }) {
       await authClient.resetPassword(email);
       Alert.alert('Correo enviado', `Te enviamos las instrucciones de recuperacion a ${email}.`);
     } catch (resetError) {
-      console.error('[MoreScreen] Error enviando recuperacion:', resetError);
+      console.error('[MoreScreen] No se pudo solicitar la recuperacion.');
       Alert.alert(
         'No pudimos enviar el correo',
         resetError instanceof Error ? resetError.message : 'Intenta nuevamente en unos instantes.'
@@ -163,7 +163,7 @@ export default function MoreScreen({ navigation }) {
       setShowStudyModal(false);
       Alert.alert('Estudio actualizado', `Te vinculaste al estudio ${name} exitosamente.`);
     } catch (err) {
-      console.error('[MoreScreen] Error vinculando estudio:', err);
+      console.error('[MoreScreen] No se pudo vincular el estudio.');
       Alert.alert('No pudimos vincularte', 'Ocurrio un error al intentar vincular el estudio. Intenta nuevamente.');
     } finally {
       setSavingStudy(false);
