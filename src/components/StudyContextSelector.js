@@ -11,8 +11,10 @@ export default function StudyContextSelector({ inverse = false }) {
     activeContext,
     isLoadingStudies,
     legalStudies,
+    refreshLegalStudies,
     selectPersonalContext,
     selectStudyContext,
+    studiesError,
   } = useStudyContext();
   const [open, setOpen] = useState(false);
   const styles = useMemo(() => createStyles(colors, inverse), [colors, inverse]);
@@ -79,6 +81,12 @@ export default function StudyContextSelector({ inverse = false }) {
 
           {isLoadingStudies ? (
             <Text style={styles.loadingText}>Actualizando estudios...</Text>
+          ) : null}
+
+          {studiesError ? (
+            <Pressable onPress={() => void refreshLegalStudies()} style={styles.retryRow}>
+              <Text style={styles.retryText}>No pudimos actualizar los estudios. Reintentar</Text>
+            </Pressable>
           ) : null}
         </View>
       ) : null}
@@ -198,6 +206,16 @@ const createStyles = (colors, inverse) => {
       fontWeight: '600',
       paddingHorizontal: 10,
       paddingVertical: 8,
+    },
+    retryRow: {
+      minHeight: 42,
+      justifyContent: 'center',
+      paddingHorizontal: 10,
+    },
+    retryText: {
+      color: colors.primary,
+      fontSize: 12,
+      fontWeight: '700',
     },
   });
 };

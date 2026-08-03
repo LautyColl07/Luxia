@@ -2,7 +2,8 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 
-const { getAuthenticatedUserFromRequest } = require('../middleware/firebaseAuth');
+const { requireFirebaseAuth } = require('../middleware/firebaseAuth');
+const { luxRateLimit } = require('../lib/rateLimit');
 const { sendMessageToLux } = require('../services/luxAi.service');
 const { logActivity } = require('../utils/activityLogger');
 
@@ -10,6 +11,8 @@ const router = express.Router();
 const PENAL_SOURCE_PATH = path.resolve(__dirname, '../../../src/legal_sources/codigo_penal.json');
 const LEGAL_FALLBACK_REPLY = 'No tengo información suficiente en la base legal cargada para responder con seguridad.';
 const MAX_LEGAL_ARTICLES = 3;
+const MAX_CONTEXT_LENGTH = 12000;
+const MAX_MESSAGE_LENGTH = 8000;
 const STOP_WORDS = new Set([
   'sobre',
   'para',
@@ -149,7 +152,7 @@ function loadPenalArticles() {
     return cachedPenalArticles;
   } catch (error) {
     if (error?.code !== 'ENOENT') {
-      console.error('[LUX] Error leyendo codigo_penal.json:', error.message);
+      console.error('[LUX] No se pudo cargar la fuente legal local.');
     }
 
     cachedPenalArticles = [];
@@ -262,20 +265,65 @@ ${formatLegalContext(articles)}
 Respuesta:`;
 }
 
-router.post('/chat', async (req, res) => {
-  const { message, context = {} } = req.body || {};
+function validateChatBody(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { error: 'El cuerpo de la solicitud debe ser un objeto JSON.' };
+  }
+
+  const message = typeof body.message === 'string' ? body.message.trim() : '';
 
   if (!message) {
+    return { error: 'El mensaje es obligatorio.' };
+  }
+
+  if (message.length > MAX_MESSAGE_LENGTH) {
+    return { error: 'El mensaje supera la longitud permitida.' };
+  }
+
+  const context = body.context === undefined ? {} : body.context;
+
+  if (!context || typeof context !== 'object' || Array.isArray(context)) {
+    return { error: 'El contexto debe ser un objeto JSON.' };
+  }
+
+  if (JSON.stringify(context).length > MAX_CONTEXT_LENGTH) {
+    return { error: 'El contexto supera la longitud permitida.' };
+  }
+
+  return { context, message };
+}
+
+async function logLuxActivity(authUser) {
+  return logActivity({
+    userId: authUser.id,
+    userEmail: authUser.email,
+    userName: authUser.name,
+    type: 'lux',
+    title: 'Consulta realizada a LUX',
+    description: 'Se realizo una consulta a LUX.',
+    relatedEntityType: 'lux',
+  });
+}
+
+router.use(requireFirebaseAuth);
+router.use(luxRateLimit);
+
+router.post('/chat', async (req, res) => {
+  const validation = validateChatBody(req.body);
+
+  if (validation.error) {
     return res.status(400).json({
       success: false,
-      error: 'El mensaje es obligatorio.',
+      error: validation.error,
     });
   }
+
+  const { context, message } = validation;
 
   console.log('[LUX] Consulta recibida');
 
   try {
-    const authUser = await getAuthenticatedUserFromRequest(req).catch(() => null);
+    const authUser = req.authUser;
     const relatedArticles = findRelatedPenalArticles(message);
 
     if (relatedArticles.length) {
@@ -288,18 +336,7 @@ router.post('/chat', async (req, res) => {
         })),
       });
 
-      if (authUser?.id) {
-        await logActivity({
-          userId: authUser.id,
-          userEmail: authUser.email,
-          userName: authUser.name,
-          type: 'lux',
-          title: 'Consulta realizada a LUX',
-          description: `Se realizo una consulta a LUX: ${String(message).slice(0, 120)}.`,
-          relatedEntityType: 'lux',
-          relatedEntityName: String(message).slice(0, 80),
-        });
-      }
+      await logLuxActivity(authUser);
 
       return res.json({
         success: true,
@@ -308,18 +345,7 @@ router.post('/chat', async (req, res) => {
     }
 
     if (isPenalQuestion(message)) {
-      if (authUser?.id) {
-        await logActivity({
-          userId: authUser.id,
-          userEmail: authUser.email,
-          userName: authUser.name,
-          type: 'lux',
-          title: 'Consulta realizada a LUX',
-          description: `Se realizo una consulta a LUX: ${String(message).slice(0, 120)}.`,
-          relatedEntityType: 'lux',
-          relatedEntityName: String(message).slice(0, 80),
-        });
-      }
+      await logLuxActivity(authUser);
 
       return res.json({
         success: true,
@@ -329,18 +355,7 @@ router.post('/chat', async (req, res) => {
 
     const reply = await sendMessageToLux(message, context);
 
-    if (authUser?.id) {
-      await logActivity({
-        userId: authUser.id,
-        userEmail: authUser.email,
-        userName: authUser.name,
-        type: 'lux',
-        title: 'Consulta realizada a LUX',
-        description: `Se realizo una consulta a LUX: ${String(message).slice(0, 120)}.`,
-        relatedEntityType: 'lux',
-        relatedEntityName: String(message).slice(0, 80),
-      });
-    }
+    await logLuxActivity(authUser);
 
     return res.json({
       success: true,

@@ -1,6 +1,7 @@
 const express = require('express');
 
 const prisma = require('../lib/prisma');
+const { activityRateLimit } = require('../lib/rateLimit');
 const { requireFirebaseAuth } = require('../middleware/firebaseAuth');
 
 const router = express.Router();
@@ -28,6 +29,7 @@ function normalizeActivity(item) {
 }
 
 router.use(requireFirebaseAuth);
+router.use(activityRateLimit);
 
 router.get('/', async (req, res) => {
   try {
@@ -47,7 +49,7 @@ router.get('/', async (req, res) => {
       data: data.map((item) => normalizeActivity(item)),
     });
   } catch (error) {
-    console.error('[ACTIVITY] Error obteniendo historial:', error);
+    console.error('[ACTIVITY] No se pudo cargar el historial.');
     return res.status(500).json({
       success: false,
       error: 'No se pudo cargar el historial de actividad.',

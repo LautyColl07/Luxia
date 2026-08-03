@@ -19,6 +19,21 @@ export const RADII = {
   pill: 999,
 };
 
+export const CARD_LAYOUT = {
+  borderRadius: 24,
+  iconRadius: 16,
+  iconSize: 44,
+  padding: 18,
+};
+
+export function getMetricCardHeight(layout) {
+  if (layout.isDesktop) {
+    return 178;
+  }
+
+  return layout.isCompact ? 142 : 158;
+}
+
 export const CONTROL_HEIGHT = 48;
 export const CONTENT_MAX_WIDTH = 1120;
 export const READING_MAX_WIDTH = 920;

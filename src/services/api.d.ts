@@ -1,4 +1,7 @@
 export function setAuthToken(token: string | null): void;
+export function setAuthState(
+  state: "initializing" | "authenticated" | "unauthenticated" | "temporarilyOffline"
+): void;
 export function syncRegister(
   payload: {
     firstName: string;

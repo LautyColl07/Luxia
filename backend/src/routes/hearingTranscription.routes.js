@@ -6,6 +6,8 @@ const multer = require('multer');
 const PDFDocument = require('pdfkit');
 
 const prisma = require('../lib/prisma');
+const { transcriptionRateLimit } = require('../lib/rateLimit');
+const { validateAudioFile } = require('../lib/fileValidation');
 const { requireFirebaseAuth } = require('../middleware/firebaseAuth');
 const { transcribeAudioChunk } = require('../services/transcription.service');
 const { logActivity } = require('../utils/activityLogger');
@@ -13,7 +15,12 @@ const { logActivity } = require('../utils/activityLogger');
 const router = express.Router();
 const upload = multer({
   limits: {
+    fieldNameSize: 100,
+    fieldSize: 16 * 1024,
     fileSize: Number(process.env.HEARING_AUDIO_MAX_BYTES || 200 * 1024 * 1024),
+    files: 1,
+    fields: 12,
+    parts: 14,
   },
   storage: multer.memoryStorage(),
 });
@@ -74,8 +81,13 @@ function slugify(value, fallback = 'audiencia') {
 function ensureInsideStorage(targetPath) {
   const resolvedRoot = path.resolve(STORAGE_ROOT);
   const resolvedTarget = path.resolve(targetPath);
+  const relativePath = path.relative(resolvedRoot, resolvedTarget);
 
-  if (!resolvedTarget.startsWith(resolvedRoot)) {
+  if (
+    relativePath === '..' ||
+    relativePath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativePath)
+  ) {
     throw new Error('Ruta de storage invalida.');
   }
 
@@ -155,7 +167,7 @@ async function getOrCreateHearing(req, { allowCreate }) {
 
   await upsertUser(user);
 
-  const existing = await prisma.hearing.findUnique({
+  const existing = await prisma.hearing.findFirst({
     include: {
       case: true,
       transcripts: {
@@ -163,16 +175,16 @@ async function getOrCreateHearing(req, { allowCreate }) {
         take: 1,
       },
     },
-    where: { id: metadata.hearingId },
+    where: {
+      id: metadata.hearingId,
+      userId: user.id,
+      case: {
+        userId: user.id,
+      },
+    },
   });
 
   if (existing) {
-    if (existing.userId !== user.id || existing.case?.userId !== user.id) {
-      const error = new Error('No tenes permisos para acceder a esta audiencia.');
-      error.status = 403;
-      throw error;
-    }
-
     const hearingUpdate = getUpdateData({
       date: metadata.hearingDate,
       title: metadata.hearingTitle,
@@ -246,15 +258,12 @@ async function getOrCreateHearing(req, { allowCreate }) {
     return null;
   }
 
-  const existingCase = await prisma.legalCase.findUnique({
-    where: { id: metadata.caseId },
+  const existingCase = await prisma.legalCase.findFirst({
+    where: {
+      id: metadata.caseId,
+      userId: user.id,
+    },
   });
-
-  if (existingCase && existingCase.userId !== user.id) {
-    const error = new Error('No tenes permisos para acceder a esta causa.');
-    error.status = 403;
-    throw error;
-  }
 
   let caseRecord = existingCase;
 
@@ -377,7 +386,9 @@ async function saveAudioFile(hearingId, file, prefix = 'audio') {
     throw error;
   }
 
-  const extension = path.extname(file.originalname || '') || '.m4a';
+  const validatedFile = validateAudioFile(file);
+
+  const extension = validatedFile.extension;
   const fileName = `${prefix}_${Date.now()}${extension}`;
   const targetDir = getAudioDir(hearingId);
   const targetPath = ensureInsideStorage(path.join(targetDir, fileName));
@@ -385,11 +396,12 @@ async function saveAudioFile(hearingId, file, prefix = 'audio') {
   await fsp.mkdir(targetDir, { recursive: true });
   await fsp.writeFile(targetPath, file.buffer);
 
-  return targetPath;
+  return { mimeType: validatedFile.mimeType, path: targetPath };
 }
 
 async function saveChunkFile(hearingId, file, chunkIndex) {
-  const extension = path.extname(file.originalname || '') || '.m4a';
+  const validatedFile = validateAudioFile(file);
+  const extension = validatedFile.extension;
   const fileName = `chunk_${String(chunkIndex).padStart(5, '0')}_${Date.now()}${extension}`;
   const targetDir = getChunkDir(hearingId);
   const targetPath = ensureInsideStorage(path.join(targetDir, fileName));
@@ -397,7 +409,7 @@ async function saveChunkFile(hearingId, file, chunkIndex) {
   await fsp.mkdir(targetDir, { recursive: true });
   await fsp.writeFile(targetPath, file.buffer);
 
-  return targetPath;
+  return { mimeType: validatedFile.mimeType, path: targetPath };
 }
 
 function buildPdfBuffer({ caseTitle, hearingDate, hearingId, text }) {
@@ -492,18 +504,21 @@ function sendSseEvent(hearingId, userId, payload) {
 }
 
 function handleRouteError(res, error, fallbackMessage) {
-  const status = error?.status || 500;
+  const status = Number.isInteger(error?.status) && error.status >= 400 && error.status < 500
+    ? error.status
+    : 500;
 
   if (status >= 500) {
-    console.error('[HEARING_TRANSCRIPTION]', error);
+    console.error('[HEARING_TRANSCRIPTION] No se pudo procesar la solicitud.');
   }
 
   return res.status(status).json({
-    error: error?.message || fallbackMessage,
+    error: status < 500 ? error.message : fallbackMessage,
   });
 }
 
 router.use(requireFirebaseAuth);
+router.use(transcriptionRateLimit);
 
 router.get('/:id/transcripcion', async (req, res) => {
   try {
@@ -523,9 +538,9 @@ router.get('/:id/transcripcion', async (req, res) => {
 router.post('/:id/audio', upload.single('audio'), async (req, res) => {
   try {
     const hearing = await getOrCreateHearing(req, { allowCreate: true });
-    const audioPath = await saveAudioFile(hearing.id, req.file, 'audiencia');
+    const savedAudio = await saveAudioFile(hearing.id, req.file, 'audiencia');
     const transcript = await upsertTranscript(hearing, req.authUser.id, {
-      audioPath,
+      audioPath: savedAudio.path,
       status: 'recording',
     });
 
@@ -533,10 +548,10 @@ router.post('/:id/audio', upload.single('audio'), async (req, res) => {
       data: {
         caseId: hearing.caseId,
         documentType: 'audio',
-        fileName: req.file?.originalname || path.basename(audioPath),
+        fileName: path.basename(savedAudio.path),
         hearingId: hearing.id,
-        mimeType: req.file?.mimetype || 'audio/m4a',
-        path: audioPath,
+        mimeType: savedAudio.mimeType,
+        path: savedAudio.path,
         userId: req.authUser.id,
       },
     });
@@ -545,8 +560,8 @@ router.post('/:id/audio', upload.single('audio'), async (req, res) => {
       success: true,
       transcriptId: transcript.id,
       audio: {
-        fileName: path.basename(audioPath),
-        mimeType: req.file?.mimetype || 'audio/m4a',
+        fileName: path.basename(savedAudio.path),
+        mimeType: savedAudio.mimeType,
       },
     });
   } catch (error) {
@@ -599,9 +614,17 @@ router.post('/:id/transcripcion', async (req, res) => {
     });
   } catch (error) {
     if (req.params?.id) {
-      const hearing = await prisma.hearing.findUnique({ where: { id: String(req.params.id) } }).catch(() => null);
+      const hearing = await prisma.hearing.findFirst({
+        where: {
+          id: String(req.params.id),
+          userId: req.authUser?.id,
+          case: {
+            userId: req.authUser?.id,
+          },
+        },
+      }).catch(() => null);
 
-      if (hearing?.userId === req.authUser?.id) {
+      if (hearing) {
         await upsertTranscript(hearing, req.authUser.id, { status: 'failed' }).catch(() => null);
       }
     }
@@ -634,7 +657,7 @@ router.post('/:id/transcripcion/live/chunk', upload.single('audio'), async (req,
   try {
     const hearing = await getOrCreateHearing(req, { allowCreate: true });
     const chunkIndex = Number(req.body?.chunkIndex || 0);
-    const chunkPath = await saveChunkFile(hearing.id, req.file, Number.isFinite(chunkIndex) ? chunkIndex : 0);
+    const savedChunk = await saveChunkFile(hearing.id, req.file, Number.isFinite(chunkIndex) ? chunkIndex : 0);
     const text = await transcribeAudioChunk(req.file);
     const currentTranscript = await getTranscriptForHearing(hearing, req.authUser.id);
     const fullText = [currentTranscript?.text, text].filter(Boolean).join('\n');
@@ -654,7 +677,7 @@ router.post('/:id/transcripcion/live/chunk', upload.single('audio'), async (req,
 
     return res.json({
       chunkIndex,
-      chunkFileName: path.basename(chunkPath),
+      chunkFileName: path.basename(savedChunk.path),
       fullText,
       status: transcript.status,
       text,
@@ -820,6 +843,19 @@ router.get('/:id/transcripcion/pdf', async (req, res) => {
   } catch (error) {
     return handleRouteError(res, error, 'No se pudo descargar el PDF.');
   }
+});
+
+router.use((error, _req, res, next) => {
+  if (error instanceof multer.MulterError) {
+    const status = error.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+    return res.status(status).json({ error: 'El archivo de audio no cumple los limites permitidos.' });
+  }
+
+  if (error) {
+    return res.status(500).json({ error: 'No se pudo procesar el archivo de audio.' });
+  }
+
+  return next();
 });
 
 module.exports = router;

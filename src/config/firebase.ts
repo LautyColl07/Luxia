@@ -1,5 +1,8 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { FirebaseOptions, getApp, getApps, initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
+// TypeScript resolves Firebase's generic declaration, while Metro resolves the React Native entrypoint.
+// @ts-expect-error getReactNativePersistence is declared only in Firebase Auth's React Native condition.
+import { getAuth, getReactNativePersistence, initializeAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
 const firebaseFallbackConfig = {
@@ -43,7 +46,31 @@ export const firebaseConfig: FirebaseOptions | null = isFirebaseConfigured
 
 const app = firebaseConfig ? (getApps().length > 0 ? getApp() : initializeApp(firebaseConfig)) : null;
 
-export const auth = app ? getAuth(app) : null;
+const isAuthAlreadyInitializedError = (error: unknown) =>
+  typeof error === "object" &&
+  error !== null &&
+  "code" in error &&
+  (error as { code?: unknown }).code === "auth/already-initialized";
+
+const initializePersistentAuth = () => {
+  if (!app) {
+    return null;
+  }
+
+  try {
+    return initializeAuth(app, {
+      persistence: getReactNativePersistence(AsyncStorage),
+    });
+  } catch (error) {
+    if (isAuthAlreadyInitializedError(error)) {
+      return getAuth(app);
+    }
+
+    throw error;
+  }
+};
+
+export const auth = initializePersistentAuth();
 export const db = app ? getFirestore(app) : null;
 
 export default app;

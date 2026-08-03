@@ -5,7 +5,9 @@ function normalizeOptionalString(value) {
     return null;
   }
 
-  const normalized = String(value).trim();
+  const normalized = String(value)
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .trim();
   return normalized || null;
 }
 
@@ -57,7 +59,7 @@ async function logActivity({
       },
     });
   } catch (error) {
-    console.error('[ACTIVITY_LOGGER] No se pudo registrar actividad:', error?.message || error);
+    console.error('[ACTIVITY_LOGGER] No se pudo registrar actividad.');
     return null;
   }
 }

@@ -1,10 +1,39 @@
 const express = require('express');
 const prisma = require('../lib/prisma');
+const { searchRateLimit } = require('../lib/rateLimit');
 const { requireFirebaseAuth } = require('../middleware/firebaseAuth');
 
 const router = express.Router();
+const MAX_PAGE = 10000;
+const MAX_QUERY_LENGTH = 120;
+
+function optionalQueryString(value, field) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+
+  if (typeof value !== 'string' || value.trim().length > MAX_QUERY_LENGTH) {
+    const error = new Error(`${field} no es valido.`);
+    error.status = 400;
+    throw error;
+  }
+
+  return value.trim();
+}
+
+function optionalDate(value, field) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    const error = new Error(`${field} no es valida.`);
+    error.status = 400;
+    throw error;
+  }
+  return date;
+}
 
 router.use(requireFirebaseAuth);
+router.use(searchRateLimit);
 
 router.get('/', async (req, res) => {
   try {
@@ -18,7 +47,7 @@ router.get('/', async (req, res) => {
       search 
     } = req.query;
 
-    const pageNumber = Math.max(1, parseInt(page, 10) || 1);
+    const pageNumber = Math.min(MAX_PAGE, Math.max(1, parseInt(page, 10) || 1));
     const limitNumber = Math.max(1, Math.min(100, parseInt(limit, 10) || 20));
     const skip = (pageNumber - 1) * limitNumber;
 
@@ -28,32 +57,37 @@ router.get('/', async (req, res) => {
       userId: req.authUser.id,
     };
 
-    if (status && status !== 'all') {
-      where.status = status;
+    const normalizedStatus = optionalQueryString(status, 'status');
+    const normalizedCourt = optionalQueryString(court, 'court');
+    const normalizedSearch = optionalQueryString(search, 'search');
+    if (normalizedStatus && normalizedStatus !== 'all') {
+      where.status = normalizedStatus;
     }
 
-    if (court) {
+    if (normalizedCourt) {
       where.court = {
-        contains: court,
+        contains: normalizedCourt,
       };
     }
 
     if (startDate || endDate) {
       where.createdAt = {};
-      if (startDate) {
-        where.createdAt.gte = new Date(startDate);
+      const normalizedStartDate = optionalDate(startDate, 'startDate');
+      const normalizedEndDate = optionalDate(endDate, 'endDate');
+      if (normalizedStartDate) {
+        where.createdAt.gte = normalizedStartDate;
       }
-      if (endDate) {
+      if (normalizedEndDate) {
         // Include the entire end day
-        const end = new Date(endDate);
+        const end = normalizedEndDate;
         end.setHours(23, 59, 59, 999);
         where.createdAt.lte = end;
       }
     }
 
-    if (search) {
+    if (normalizedSearch) {
       where.title = {
-        contains: search,
+        contains: normalizedSearch,
       };
     }
 
@@ -77,7 +111,10 @@ router.get('/', async (req, res) => {
       totalPages: Math.ceil(total / limitNumber),
     });
   } catch (error) {
-    console.error('[CASES_ROUTES] Error fetching cases:', error);
+    if (error?.status === 400) {
+      return res.status(400).json({ error: error.message });
+    }
+    console.error('[CASES_ROUTES] No se pudieron cargar las causas.');
     res.status(500).json({ error: 'No pudimos cargar las causas registradas.' });
   }
 });

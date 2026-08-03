@@ -9,8 +9,8 @@ import {
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { AI_BASE_URL, SERVER_IP } from '../config/api';
 import { useAppTheme } from '../context/ThemeContext';
+import { request } from '../services/api';
 import { useResponsiveLayout } from '../theme/layout';
 import {
   exportTranscriptionAsPdf,
@@ -18,38 +18,12 @@ import {
 } from '../utils/exportTranscription';
 
 const DEFAULT_AUDIO_MIME_TYPE = 'audio/m4a';
-const TRANSCRIPTION_TIMEOUT_MS = 120000;
 
 function formatDuration(durationMillis) {
   const totalSeconds = Math.max(0, Math.floor((Number(durationMillis) || 0) / 1000));
   const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, '0');
   const seconds = String(totalSeconds % 60).padStart(2, '0');
   return `${minutes}:${seconds}`;
-}
-
-async function parseApiResponse(response) {
-  const contentType = response.headers.get('content-type') || '';
-
-  if (contentType.includes('application/json')) {
-    return response.json();
-  }
-
-  const text = await response.text();
-  return text ? { raw: text } : {};
-}
-
-async function fetchWithTimeout(url, options = {}, timeoutMs = TRANSCRIPTION_TIMEOUT_MS) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    return await fetch(url, {
-      ...options,
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeoutId);
-  }
 }
 
 function getTranscriptText(payload = {}) {
@@ -76,10 +50,10 @@ function getNetworkErrorMessage(error) {
   }
 
   if (message.includes('network request failed')) {
-    return `No se pudo conectar con el servidor de transcripcion (${SERVER_IP}).`;
+    return 'No se pudo conectar con el servidor de transcripcion.';
   }
 
-  return error instanceof Error ? error.message : 'Ocurrio un error inesperado.';
+  return 'No pudimos completar la transcripcion. Intentá nuevamente.';
 }
 
 export default function TranscriptionTestScreen() {
@@ -126,21 +100,32 @@ export default function TranscriptionTestScreen() {
       name: audio.fileName || `audiencia-${Date.now()}.m4a`,
       type: audio.mimeType || DEFAULT_AUDIO_MIME_TYPE,
     });
+    formData.append('chunkIndex', '0');
+    formData.append('startTime', '0');
+    formData.append('endTime', String(Math.max(0, Number(audio.durationMillis) || 0) / 1000));
 
-    const response = await fetchWithTimeout(`${AI_BASE_URL}/api/transcribir`, {
+    const started = await request('/transcriptions/start', {
+      method: 'POST',
+      body: {
+        title: 'Transcripcion de prueba',
+      },
+    });
+    const sessionId = started?.sessionId;
+
+    if (!sessionId) {
+      throw new Error('No se pudo iniciar la sesion de transcripcion.');
+    }
+
+    const payload = await request(`/transcriptions/${encodeURIComponent(sessionId)}/chunk`, {
       body: formData,
       method: 'POST',
+      timeout: 120000,
+      timeoutMessage: 'La transcripcion tardo demasiado. Intentá nuevamente.',
     });
-    const payload = await parseApiResponse(response);
 
-    if (!response.ok || payload?.ok === false) {
-      throw new Error(
-        payload?.details ||
-          payload?.message ||
-          payload?.error ||
-          `El servidor respondio con estado ${response.status}.`
-      );
-    }
+    await request(`/transcriptions/${encodeURIComponent(sessionId)}/finish`, {
+      method: 'POST',
+    });
 
     const text = String(getTranscriptText(payload) || '').trim();
 

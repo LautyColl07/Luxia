@@ -94,7 +94,21 @@ export default function DocumentsScreen({ navigation }) {
       return null;
     }
 
-    return `${API_ROOT_URL}${document.path}`;
+    try {
+      const apiRoot = new URL(API_ROOT_URL);
+      const fileUrl = new URL(document.path, apiRoot);
+
+      if (
+        fileUrl.origin !== apiRoot.origin ||
+        !fileUrl.pathname.startsWith('/api/v1/documentos/')
+      ) {
+        return null;
+      }
+
+      return fileUrl.toString();
+    } catch {
+      return null;
+    }
   }, []);
 
   const openDocument = useCallback(
@@ -111,8 +125,8 @@ export default function DocumentsScreen({ navigation }) {
 
       try {
         await Linking.openURL(fileUrl);
-      } catch (openError) {
-        console.error('[DocumentsScreen] Error abriendo documento:', openError);
+      } catch {
+        console.error('[DocumentsScreen] No se pudo abrir el documento.');
         Alert.alert('No se pudo abrir el documento.', 'Intenta nuevamente.');
       }
     },

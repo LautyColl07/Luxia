@@ -3,7 +3,7 @@ import { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useAppTheme } from '../context/ThemeContext';
-import { useResponsiveLayout } from '../theme/layout';
+import { CARD_LAYOUT, useResponsiveLayout } from '../theme/layout';
 
 export default function QuickActionButton({ title, subtitle, icon, onPress, fullWidth = false }) {
   const { colors } = useAppTheme();
@@ -34,8 +34,8 @@ const createStyles = (colors, layout) => StyleSheet.create({
   card: {
     width: layout.isDesktop ? '31.5%' : '48%',
     backgroundColor: colors.card,
-    borderRadius: 24,
-    padding: 18,
+    borderRadius: CARD_LAYOUT.borderRadius,
+    padding: CARD_LAYOUT.padding,
     minHeight: 164,
     shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 10 },
@@ -48,7 +48,6 @@ const createStyles = (colors, layout) => StyleSheet.create({
   },
   cardFullWidth: {
     width: layout.isDesktop ? '31.5%' : '100%',
-    minHeight: 150,
   },
   cardPressed: {
     transform: [{ scale: 0.99 }],
@@ -61,9 +60,9 @@ const createStyles = (colors, layout) => StyleSheet.create({
     borderColor: colors.focusRing,
   },
   iconWrapper: {
-    width: 44,
-    height: 44,
-    borderRadius: 16,
+    width: CARD_LAYOUT.iconSize,
+    height: CARD_LAYOUT.iconSize,
+    borderRadius: CARD_LAYOUT.iconRadius,
     backgroundColor: colors.accentSoft,
     alignItems: 'center',
     justifyContent: 'center',

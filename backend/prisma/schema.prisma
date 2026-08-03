@@ -21,6 +21,7 @@ model User {
   hearings       Hearing[]
   transcripts    Transcript[]
   studyMembers   LegalStudyMember[]
+  activityLogs   ActivityLog[]
 }
 
 model LegalStudy {

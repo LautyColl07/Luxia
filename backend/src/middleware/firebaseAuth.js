@@ -11,7 +11,8 @@ function normalizeOptionalString(value) {
 
 async function verifyWithFirebaseAdmin(token) {
   const admin = getFirebaseAdmin();
-  return admin.auth().verifyIdToken(token);
+  // Check revocation as well as signature and expiry for every protected route.
+  return admin.auth().verifyIdToken(token, true);
 }
 
 async function getAuthenticatedUserFromRequest(req) {
@@ -50,7 +51,7 @@ function requireFirebaseAuth(req, res, next) {
       return next();
     })
     .catch((error) => {
-      console.error('[AUTH] Error validando token Firebase:', error);
+      console.warn('[AUTH] Token Firebase rechazado.', error?.code || 'unknown');
       return res.status(401).json({
         error: 'Token Firebase ausente o invalido.',
       });

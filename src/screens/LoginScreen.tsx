@@ -19,7 +19,6 @@ export default function LoginScreen({ navigation }: any) {
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [focusedField, setFocusedField] = useState<"identifier" | "password" | null>(null);
   const [rememberMe, setRememberMe] = useState(false);
   const [emailError, setEmailError] = useState("");
   const [passwordError, setPasswordError] = useState("");
@@ -76,7 +75,8 @@ export default function LoginScreen({ navigation }: any) {
     >
       <ScrollView
         contentContainerStyle={styles.scrollContainer}
-        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="none"
+        keyboardShouldPersistTaps="always"
       >
         <View style={styles.container}>
           <View style={styles.card}>
@@ -94,7 +94,6 @@ export default function LoginScreen({ navigation }: any) {
                 <View
                   style={[
                     styles.inputWrapper,
-                    focusedField === "identifier" ? styles.inputFocused : null,
                     emailError ? styles.inputError : null,
                   ]}
                 >
@@ -102,10 +101,8 @@ export default function LoginScreen({ navigation }: any) {
 
                   <TextInput
                     value={identifier}
-                    onFocus={() => setFocusedField("identifier")}
-                    onBlur={() => setFocusedField(null)}
                     onChangeText={setIdentifier}
-                    placeholder="tu.email@estudio.com o tuusuario"
+                    placeholder="tu.email@estudio.com o tu usuario"
                     placeholderTextColor="#5B6776"
                     autoCapitalize="none"
                     autoCorrect={false}
@@ -124,7 +121,6 @@ export default function LoginScreen({ navigation }: any) {
                 <View
                   style={[
                     styles.inputWrapper,
-                    focusedField === "password" ? styles.inputFocused : null,
                     passwordError ? styles.inputError : null,
                   ]}
                 >
@@ -132,8 +128,6 @@ export default function LoginScreen({ navigation }: any) {
 
                   <TextInput
                     value={password}
-                    onFocus={() => setFocusedField("password")}
-                    onBlur={() => setFocusedField(null)}
                     onChangeText={setPassword}
                     placeholder="Ingresa tu contrasena"
                     placeholderTextColor="#5B6776"
@@ -298,12 +292,6 @@ const styles = StyleSheet.create({
   },
   inputError: {
     borderColor: "#EF4444",
-  },
-  inputFocused: {
-    borderColor: "#123A67",
-    shadowColor: "#123A67",
-    shadowOpacity: 0.12,
-    shadowRadius: 6,
   },
   icon: {
     marginRight: 10,

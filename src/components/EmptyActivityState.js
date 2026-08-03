@@ -5,7 +5,7 @@ export default function EmptyActivityState() {
     <EmptyState
       icon="history"
       message="Cuando crees causas, audiencias, tareas o documentos, apareceran aca."
-      title="No hay actividad registrada todavia"
+      title="Todavía no hay actividad registrada."
     />
   );
 }

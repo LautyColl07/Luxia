@@ -1,5 +1,6 @@
 import { API_BASE_URL as CONFIG_API_BASE_URL, API_ROOT_URL } from '../config/api';
 import { auth } from '../config/firebase';
+import { signOut } from 'firebase/auth';
 import mockData from '../data/mockData';
 import { normalizeStatusLabel } from '../utils/status';
 import { getUserDisplayName, getUserEmail, getUserRole } from '../utils/userDisplay';
@@ -13,13 +14,16 @@ export const API_BASE_URL = CONFIG_API_BASE_URL;
 export const FILE_BASE_URL = API_ROOT_URL;
 
 let authToken = null;
+let authState = 'initializing';
 let mockStore = JSON.parse(JSON.stringify(mockData));
 const REQUEST_TIMEOUT_MS = 8000;
 const LUX_REQUEST_TIMEOUT_MS = 120000;
+const AUTH_INITIALIZING_MESSAGE = 'Estamos restaurando tu sesión. Intentá nuevamente en unos instantes.';
+const CONNECTION_ERROR_MESSAGE = 'No pudimos conectarnos. Revisá tu conexión e intentá nuevamente.';
 const EXPIRED_SESSION_MESSAGE = 'Tu sesión expiró. Iniciá sesión nuevamente.';
-const MISSING_SESSION_MESSAGE = 'No hay una sesión activa. Iniciá sesión nuevamente.';
 const PROTECTED_ENDPOINT_PREFIXES = [
   '/auth',
+  '/activity',
   '/dashboard/resumen',
   '/notificaciones',
   '/causas',
@@ -507,8 +511,10 @@ async function enrichDashboardResumenWithCases(resumen) {
         'date'
       ),
     };
-  } catch (error) {
-    console.error('[DASHBOARD] No pudimos enriquecer audiencias con causas:', error);
+  } catch {
+    if (__DEV__) {
+      console.warn('[DASHBOARD] No se pudieron enriquecer las audiencias.');
+    }
     return resumen;
   }
 }
@@ -571,9 +577,28 @@ function createRequestError(message, status = 0, data = null) {
   return error;
 }
 
+function isTransientConnectionError(error) {
+  const code = String(error?.code || '').toLowerCase();
+  const message = String(error?.message || '').toLowerCase();
+
+  return (
+    code.includes('network') ||
+    code.includes('unavailable') ||
+    code.includes('offline') ||
+    message.includes('network') ||
+    message.includes('offline') ||
+    message.includes('unavailable') ||
+    message.includes('failed to fetch')
+  );
+}
+
 function getErrorMessage(status, data) {
   if (status === 401 || status === 403) {
     return EXPIRED_SESSION_MESSAGE;
+  }
+
+  if (status === 0 || status >= 500) {
+    return CONNECTION_ERROR_MESSAGE;
   }
 
   if (typeof data === 'string' && data.trim()) {
@@ -584,24 +609,12 @@ function getErrorMessage(status, data) {
     return data.message;
   }
 
-  if (status >= 500 && data?.details) {
-    return typeof data.details === 'string' ? data.details : JSON.stringify(data.details);
-  }
-
-  if (status >= 500 && data?.error) {
-    return data.error;
-  }
-
   if (status >= 400 && status < 500 && data?.error) {
     if (Array.isArray(data?.missingFields) && data.missingFields.length) {
       return data.error + ': ' + data.missingFields.join(', ');
     }
 
     return data.error;
-  }
-
-  if (status >= 500) {
-    return 'No pudimos procesar la solicitud en este momento. Intenta nuevamente en unos minutos.';
   }
 
   return 'No pudimos completar la solicitud. Intenta nuevamente.';
@@ -611,7 +624,13 @@ function isProtectedEndpoint(path) {
   return PROTECTED_ENDPOINT_PREFIXES.some((prefix) => path === prefix || path.startsWith(prefix + '/'));
 }
 
-async function getRequestAuthHeaders(path, customHeaders = {}) {
+function omitAuthorizationHeader(headers = {}) {
+  return Object.fromEntries(
+    Object.entries(headers).filter(([key]) => key.toLowerCase() !== 'authorization')
+  );
+}
+
+async function getRequestAuthHeaders(path, customHeaders = {}, forceRefresh = false) {
   const hasAuthorizationHeader = Object.keys(customHeaders).some(
     (key) => key.toLowerCase() === 'authorization'
   );
@@ -620,6 +639,7 @@ async function getRequestAuthHeaders(path, customHeaders = {}) {
     return {
       headers: {},
       token: null,
+      usesFirebaseToken: false,
     };
   }
 
@@ -627,37 +647,40 @@ async function getRequestAuthHeaders(path, customHeaders = {}) {
     return {
       headers: getAuthHeaders(),
       token: authToken,
+      usesFirebaseToken: false,
     };
+  }
+
+  if (authState === 'initializing') {
+    throw createRequestError(AUTH_INITIALIZING_MESSAGE, 425);
   }
 
   const currentUser = auth?.currentUser;
 
   if (!currentUser) {
-    throw createRequestError(MISSING_SESSION_MESSAGE, 401);
+    throw createRequestError(EXPIRED_SESSION_MESSAGE, 401);
   }
 
   try {
-    const token = await currentUser.getIdToken();
+    const token = await currentUser.getIdToken(forceRefresh);
 
     if (!token) {
-      throw createRequestError(MISSING_SESSION_MESSAGE, 401);
+      throw createRequestError(EXPIRED_SESSION_MESSAGE, 401);
     }
 
     setAuthToken(token);
     return {
       headers: { Authorization: `Bearer ${token}` },
       token,
+      usesFirebaseToken: true,
     };
   } catch (error) {
     if (error?.status) {
       throw error;
     }
 
-    if (authToken) {
-      return {
-        headers: { Authorization: `Bearer ${authToken}` },
-        token: authToken,
-      };
+    if (isTransientConnectionError(error)) {
+      throw createRequestError(CONNECTION_ERROR_MESSAGE, 0, error);
     }
 
     setAuthToken(null);
@@ -679,43 +702,46 @@ export async function request(endpoint, options = {}) {
   const { timeout, timeoutMessage, ...fetchOptions } = options;
   const path = endpoint.startsWith('/') ? endpoint : '/' + endpoint;
   const url = API_BASE_URL + path;
+  const requestHeaders = isProtectedEndpoint(path)
+    ? omitAuthorizationHeader(fetchOptions.headers)
+    : fetchOptions.headers;
   const hasJsonBody =
     fetchOptions.body !== undefined &&
     fetchOptions.body !== null &&
     !(fetchOptions.body instanceof FormData) &&
     typeof fetchOptions.body !== 'string';
   const body = hasJsonBody ? JSON.stringify(fetchOptions.body) : fetchOptions.body;
-  console.log('[API] baseURL:', API_BASE_URL);
-  console.log('[API] endpoint:', endpoint);
-  console.log('[API] url:', url);
-  console.log('[API] currentUser uid:', auth?.currentUser?.uid || null);
-  const { headers: authHeaders, token } = await getRequestAuthHeaders(path, fetchOptions.headers);
-  console.log('[API] token presente:', Boolean(token));
+  const makeRequest = async (authHeaders) => {
+    try {
+      return await runWithTimeout(
+        fetch(url, {
+          ...fetchOptions,
+          body,
+          headers: {
+            Accept: 'application/json',
+            ...(body !== undefined && body !== null && !(body instanceof FormData)
+              ? { 'Content-Type': 'application/json' }
+              : {}),
+            ...authHeaders,
+            ...requestHeaders,
+          },
+        }),
+        requestTimeoutMs,
+        requestTimeoutMessage
+      );
+    } catch (error) {
+      throw createRequestError(CONNECTION_ERROR_MESSAGE, 0, error);
+    }
+  };
 
-  let response;
-  let responseText = '';
+  let authInfo = await getRequestAuthHeaders(path, requestHeaders);
+  let response = await makeRequest(authInfo.headers);
+  let retriedWithFreshToken = false;
 
-  try {
-    response = await runWithTimeout(
-      fetch(url, {
-        ...fetchOptions,
-        body,
-        headers: {
-          Accept: 'application/json',
-          ...(body !== undefined && body !== null && !(body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
-          ...authHeaders,
-          ...fetchOptions.headers,
-        },
-      }),
-      requestTimeoutMs,
-      requestTimeoutMessage
-    );
-  } catch (error) {
-    throw createRequestError(
-      error?.message || 'No pudimos conectar con el servidor. Verifica tu conexion e intenta nuevamente.',
-      0,
-      error
-    );
+  if (response.status === 401 && authInfo.usesFirebaseToken) {
+    authInfo = await getRequestAuthHeaders(path, requestHeaders, true);
+    response = await makeRequest(authInfo.headers);
+    retriedWithFreshToken = true;
   }
 
   if (response.status === 204) {
@@ -723,7 +749,6 @@ export async function request(endpoint, options = {}) {
   }
 
   const rawText = await response.text();
-  responseText = rawText;
   let data = null;
 
   if (rawText) {
@@ -735,6 +760,10 @@ export async function request(endpoint, options = {}) {
   }
 
   if (!response.ok) {
+    if (response.status === 401 && retriedWithFreshToken && authInfo.usesFirebaseToken) {
+      setAuthToken(null);
+      void signOut(auth).catch(() => undefined);
+    }
     throw createRequestError(getErrorMessage(response.status, data), response.status, data);
   }
 
@@ -745,22 +774,30 @@ export function setAuthToken(token) {
   authToken = token;
 }
 
+export function setAuthState(nextState) {
+  authState = nextState;
+}
+
 export function getAuthHeaders() {
   return authToken ? { Authorization: `Bearer ${authToken}` } : {};
 }
 
 export async function getCurrentIdToken() {
+  if (authState === 'initializing') {
+    throw createRequestError(AUTH_INITIALIZING_MESSAGE, 425);
+  }
+
   const currentUser = auth?.currentUser;
 
   if (!currentUser) {
-    throw createRequestError(MISSING_SESSION_MESSAGE, 401);
+    throw createRequestError(EXPIRED_SESSION_MESSAGE, 401);
   }
 
   try {
     const token = await currentUser.getIdToken();
 
     if (!token) {
-      throw createRequestError(MISSING_SESSION_MESSAGE, 401);
+      throw createRequestError(EXPIRED_SESSION_MESSAGE, 401);
     }
 
     setAuthToken(token);
@@ -768,6 +805,10 @@ export async function getCurrentIdToken() {
   } catch (error) {
     if (error?.status) {
       throw error;
+    }
+
+    if (isTransientConnectionError(error)) {
+      throw createRequestError(CONNECTION_ERROR_MESSAGE, 0, error);
     }
 
     setAuthToken(null);
@@ -908,12 +949,9 @@ async function requestWithFallback(endpoint, fallbackEndpoint, options) {
 }
 
 export async function syncRegister(payload, token = null) {
-  const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
-
   return request('/auth/register', {
     method: 'POST',
     body: payload,
-    headers,
     timeout: 20000,
   });
 }
@@ -933,9 +971,6 @@ export async function getDashboardResumen(options = {}) {
 
   dashboardResumenInFlight = (async () => {
     const data = await request(withWorkScope(DASHBOARD_RESUMEN_ENDPOINT));
-    toArray(data?.proximasAudiencias ?? data?.upcomingHearings).forEach((audiencia) => {
-      console.log('[DASHBOARD] Audiencia recibida:', JSON.stringify(audiencia, null, 2));
-    });
 
     return enrichDashboardResumenWithCases(normalizeDashboardResumen(data));
   })().finally(() => {
@@ -1118,8 +1153,6 @@ export async function createCase(data) {
         ? { legalStudyId: activeWorkContext.legalStudyId }
         : {}),
   };
-  console.log('[API] createCase payload:', JSON.stringify(caseData, null, 2));
-  console.log('[API] endpoint:', endpoint);
   const response = await requestWithFallback(endpoint, withWorkScope('/causas'), { method: 'POST', body: caseData });
   return normalizeCase({
     ...response,
@@ -1363,20 +1396,6 @@ export async function uploadPdfDocumentFromHearing({ fileUri, hearingId, fileNam
     throw createRequestError('No hay una audiencia o archivo PDF valido para guardar.', 400);
   }
 
-  const currentUser = auth?.currentUser;
-
-  if (!currentUser) {
-    throw createRequestError(MISSING_SESSION_MESSAGE, 401);
-  }
-
-  const token = await currentUser.getIdToken();
-
-  if (!token) {
-    throw createRequestError(MISSING_SESSION_MESSAGE, 401);
-  }
-
-  setAuthToken(token);
-
   const formData = new FormData();
 
   formData.append('file', {
@@ -1391,25 +1410,10 @@ export async function uploadPdfDocumentFromHearing({ fileUri, hearingId, fileNam
     formData.append('legalStudyId', String(activeWorkContext.legalStudyId));
   }
 
-  const response = await fetch(`${API_BASE_URL}${withWorkScope('/documentos')}`, {
+  return request(withWorkScope('/documentos'), {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
     body: formData,
   });
-
-  const data = await response.json().catch(() => null);
-
-  if (!response.ok) {
-    throw createRequestError(
-      data?.error || 'No se pudo guardar el PDF en Documentos',
-      response.status,
-      data
-    );
-  }
-
-  return data;
 }
 
 export async function transcribeDocument(documentId) {
@@ -1854,7 +1858,9 @@ export async function sendLuxMessage(message, context = {}) {
       raw: data,
     };
   } catch (error) {
-    console.error('[LUX] No pudimos conectar con el asistente:', error);
+    if (__DEV__) {
+      console.warn('[LUX] No se pudo conectar con el asistente.');
+    }
     const isTimeout = error?.message === LUX_TIMEOUT_ERROR_MESSAGE;
 
     return {

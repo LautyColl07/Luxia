@@ -17,13 +17,13 @@ import { useAuth } from '../context/AuthContext';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { getDashboardBootstrap } from '../services/api';
-import { useResponsiveLayout } from '../theme/layout';
+import { getMetricCardHeight, useResponsiveLayout } from '../theme/layout';
 
 export default function DashboardScreen({ navigation }) {
   const { colors } = useAppTheme();
   const insets = useSafeAreaInsets();
   const layout = useResponsiveLayout();
-  const { currentUser, isAuthReady } = useAuth();
+  const { authStatus, currentUser, isAuthReady } = useAuth();
   const { activeContextKey } = useStudyContext();
   const styles = useMemo(
     () => createStyles(colors, layout, insets.top),
@@ -40,11 +40,11 @@ export default function DashboardScreen({ navigation }) {
   const isFocusedRef = useRef(false);
 
   const loadDashboard = useCallback(async (isRefresh = false) => {
-    if (!isAuthReady) {
+    if (!isAuthReady || authStatus === 'initializing') {
       return;
     }
 
-    if (!currentUser) {
+    if (!currentUser || authStatus === 'unauthenticated') {
       setDashboard(null);
       setNotificationCount(0);
       setError('No hay una sesión activa. Iniciá sesión nuevamente.');
@@ -53,7 +53,14 @@ export default function DashboardScreen({ navigation }) {
       return;
     }
 
-    if (!isRefresh && activeLoadRef.current) {
+    if (authStatus !== 'authenticated') {
+      setLoading(false);
+      setRefreshing(false);
+      setError('No pudimos conectarnos. Revisá tu conexión e intentá nuevamente.');
+      return;
+    }
+
+    if (activeLoadRef.current) {
       return activeLoadRef.current;
     }
 
@@ -86,11 +93,13 @@ export default function DashboardScreen({ navigation }) {
       await loadPromise;
     } catch (loadError) {
       if (isFocusedRef.current && loadSequenceRef.current === loadId) {
-        console.error('[DashboardScreen] Error cargando metricas:', loadError);
+        if (__DEV__) {
+          console.warn('[DashboardScreen] No se pudieron actualizar las metricas.');
+        }
         setError(
-          loadError instanceof Error
-            ? loadError.message
-            : 'No pudimos cargar la informacion del panel inicial.'
+          loadError && (loadError.status === 401 || loadError.status === 403)
+            ? 'Tu sesión expiró. Iniciá sesión nuevamente.'
+            : 'No pudimos conectarnos. Revisá tu conexión e intentá nuevamente.'
         );
       }
     } finally {
@@ -103,11 +112,11 @@ export default function DashboardScreen({ navigation }) {
         setRefreshing(false);
       }
     }
-  }, [activeContextKey, currentUser, isAuthReady]);
+  }, [activeContextKey, authStatus, currentUser?.uid, isAuthReady]);
 
   useFocusEffect(
     useCallback(() => {
-      if (!isAuthReady) {
+      if (!isAuthReady || authStatus === 'initializing') {
         return undefined;
       }
 
@@ -116,7 +125,7 @@ export default function DashboardScreen({ navigation }) {
       return () => {
         isFocusedRef.current = false;
       };
-    }, [isAuthReady, loadDashboard])
+    }, [authStatus, isAuthReady, loadDashboard])
   );
 
   const handleRefresh = useCallback(() => {
@@ -311,8 +320,6 @@ export default function DashboardScreen({ navigation }) {
 
         {proximasAudiencias.length ? (
           proximasAudiencias.map((hearing, index) => {
-            console.log('[Dashboard] audiencia recibida:', JSON.stringify(hearing, null, 2));
-
             return (
               <HearingTimelineCard
                 hearing={hearing}
@@ -476,12 +483,13 @@ const createStyles = (colors, layout, topInset) => StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     paddingHorizontal: layout.gutter - 4,
-    marginTop: -18,
+    // The cells include 6px padding, leaving an 18px visual gap after the hero.
+    marginTop: 12,
   },
   metricCell: {
     width: layout.isDesktop ? '25%' : '50%',
     padding: 6,
-    aspectRatio: layout.isDesktop ? 1.18 : layout.isCompact ? 0.92 : 1.05,
+    height: getMetricCardHeight(layout),
   },
   activityShortcut: {
     marginTop: 8,

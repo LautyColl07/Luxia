@@ -11,16 +11,24 @@ import { onIdTokenChanged, User } from "firebase/auth";
 
 import { auth } from "../config/firebase";
 import { resetRegisterSyncCache, syncRegisterOnce } from "../services/authClient";
-import { setAuthToken } from "../services/api";
+import { setAuthState, setAuthToken } from "../services/api";
+
+export type AuthStatus =
+  | "initializing"
+  | "authenticated"
+  | "unauthenticated"
+  | "temporarilyOffline";
 
 type AuthContextValue = {
   currentUser: User | null;
   isAuthReady: boolean;
+  authStatus: AuthStatus;
 };
 
 const AuthContext = createContext<AuthContextValue>({
   currentUser: null,
   isAuthReady: false,
+  authStatus: "initializing",
 });
 
 type AuthProviderProps = {
@@ -42,18 +50,24 @@ const isSameFirebaseUser = (first: User | null, second: User | null) => {
 export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [currentUser, setCurrentUser] = useState<User | null>(auth?.currentUser ?? null);
   const [isAuthReady, setIsAuthReady] = useState(!auth);
+  const [authStatus, setAuthStatus] = useState<AuthStatus>(
+    auth ? "initializing" : "unauthenticated"
+  );
   const syncedLoginUidRef = useRef<string | null>(null);
   const registerSyncPromiseRef = useRef<Promise<unknown> | null>(null);
 
   useEffect(() => {
     if (!auth) {
       setAuthToken(null);
+      setAuthState("unauthenticated");
       setCurrentUser(null);
+      setAuthStatus("unauthenticated");
       setIsAuthReady(true);
       return undefined;
     }
 
     let isMounted = true;
+    const syncAbortController = new AbortController();
 
     const unsubscribe = onIdTokenChanged(auth, async (nextUser) => {
       if (!isMounted) {
@@ -65,7 +79,9 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         registerSyncPromiseRef.current = null;
         resetRegisterSyncCache();
         setAuthToken(null);
+        setAuthState("unauthenticated");
         setCurrentUser((previous) => (previous ? null : previous));
+        setAuthStatus("unauthenticated");
         setIsAuthReady((previous) => (previous ? previous : true));
         return;
       }
@@ -78,44 +94,59 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         }
 
         setAuthToken(token);
+        setAuthState("authenticated");
         setCurrentUser((previous) =>
           isSameFirebaseUser(previous, nextUser) ? previous : nextUser
         );
+        setAuthStatus("authenticated");
+        setIsAuthReady((previous) => (previous ? previous : true));
 
         if (syncedLoginUidRef.current !== nextUser.uid) {
           syncedLoginUidRef.current = nextUser.uid;
-          registerSyncPromiseRef.current = syncRegisterOnce(nextUser).catch((error) => {
-            console.error("[AuthContext] Error sincronizando /auth/register:", error);
-          });
+          const syncPromise = syncRegisterOnce(nextUser, syncAbortController.signal);
+          registerSyncPromiseRef.current = syncPromise;
+
+          void syncPromise
+            .catch(() => {
+              if (!syncAbortController.signal.aborted) {
+                syncedLoginUidRef.current = null;
+              }
+
+              if (__DEV__ && isMounted) {
+                console.warn("[AuthContext] Sincronizacion de registro pendiente.");
+              }
+            })
+            .finally(() => {
+              if (registerSyncPromiseRef.current === syncPromise) {
+                registerSyncPromiseRef.current = null;
+              }
+            });
         }
-
-        await registerSyncPromiseRef.current;
-
-        if (!isMounted || syncedLoginUidRef.current !== nextUser.uid) {
-          return;
-        }
-
-        registerSyncPromiseRef.current = null;
-        setIsAuthReady((previous) => (previous ? previous : true));
       } catch (error) {
-        console.error("[AuthContext] Error obteniendo token Firebase:", error);
         setAuthToken(null);
+        setAuthState("temporarilyOffline");
         setCurrentUser((previous) =>
           isSameFirebaseUser(previous, nextUser) ? previous : nextUser
         );
+        setAuthStatus("temporarilyOffline");
         setIsAuthReady((previous) => (previous ? previous : true));
+
+        if (__DEV__) {
+          console.warn("[AuthContext] Firebase esta temporalmente sin token disponible.");
+        }
       }
     });
 
     return () => {
       isMounted = false;
+      syncAbortController.abort();
       unsubscribe();
     };
   }, []);
 
   const value = useMemo(
-    () => ({ currentUser, isAuthReady }),
-    [currentUser, isAuthReady]
+    () => ({ currentUser, isAuthReady, authStatus }),
+    [authStatus, currentUser, isAuthReady]
   );
 
   return (

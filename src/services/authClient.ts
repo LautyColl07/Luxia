@@ -6,7 +6,7 @@ import {
   updateProfile,
   User,
 } from "firebase/auth";
-import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
+import { doc, getDoc, getDocFromCache, serverTimestamp, setDoc } from "firebase/firestore";
 
 import { API_BASE_URL } from "../config/api";
 import { auth, db, isFirebaseConfigured, missingFirebaseKeys } from "../config/firebase";
@@ -110,9 +110,31 @@ const mapFirebaseAuthError = (code: string) => {
   }
 };
 
-const delay = (ms: number) =>
-  new Promise((resolve) => {
-    setTimeout(resolve, ms);
+const PROFILE_LOAD_MAX_ATTEMPTS = 2;
+
+const createAbortError = () => {
+  const error = new Error("Operation aborted");
+  error.name = "AbortError";
+  return error;
+};
+
+const delay = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(createAbortError());
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timeoutId);
+      reject(createAbortError());
+    };
+
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
 
 const cleanString = (value: unknown) =>
@@ -126,32 +148,65 @@ const splitDisplayName = (displayName: string) => {
   return { firstName, lastName };
 };
 
-async function getStoredUserProfile(uid: string): Promise<StoredUserProfile> {
+const isFirestoreOfflineError = (error: unknown) => {
+  const firebaseError = error as Partial<FirebaseError> | undefined;
+  const code = String(firebaseError?.code || "").toLowerCase();
+  const message = String(firebaseError?.message || "").toLowerCase();
+
+  return (
+    code.includes("unavailable") ||
+    code.includes("offline") ||
+    code.includes("network") ||
+    message.includes("offline") ||
+    message.includes("network") ||
+    message.includes("unavailable")
+  );
+};
+
+async function getStoredUserProfile(
+  uid: string,
+  signal?: AbortSignal
+): Promise<StoredUserProfile> {
   if (!db) {
     return {};
   }
 
-  for (let attempt = 0; attempt < 5; attempt += 1) {
+  for (let attempt = 0; attempt < PROFILE_LOAD_MAX_ATTEMPTS; attempt += 1) {
+    if (signal?.aborted) {
+      throw createAbortError();
+    }
+
     try {
       const snapshot = await getDoc(doc(db, "users", uid));
 
       if (snapshot.exists()) {
         return snapshot.data() as StoredUserProfile;
       }
-    } catch (e) {
-      console.warn("Failed to get stored user profile, retrying...", e);
+    } catch (error) {
       try {
-        const { getDocFromCache } = await import("firebase/firestore");
         const cachedSnapshot = await getDocFromCache(doc(db, "users", uid));
         if (cachedSnapshot.exists()) {
           return cachedSnapshot.data() as StoredUserProfile;
         }
-      } catch (cacheError) {
-        // Cache read also failed
+      } catch {
+        // No local profile is available.
+      }
+
+      if (isFirestoreOfflineError(error)) {
+        if (__DEV__) {
+          console.warn("[authClient] Perfil de Firestore no disponible; se usara el perfil de Auth.");
+        }
+        return {};
+      }
+
+      if (__DEV__ && attempt === 0) {
+        console.warn("[authClient] No se pudo leer el perfil almacenado; se reintentara una vez.");
       }
     }
 
-    await delay(250);
+    if (attempt < PROFILE_LOAD_MAX_ATTEMPTS - 1) {
+      await delay(250 * (attempt + 1), signal);
+    }
   }
 
   return {};
@@ -194,7 +249,7 @@ export function resetRegisterSyncCache(uid?: string) {
   registerSyncCompleted.clear();
 }
 
-export async function syncRegisterOnce(user: User) {
+export async function syncRegisterOnce(user: User, signal?: AbortSignal) {
   if (registerSyncCompleted.has(user.uid)) {
     return null;
   }
@@ -206,15 +261,22 @@ export async function syncRegisterOnce(user: User) {
   }
 
   const syncPromise = (async () => {
-    const [token, storedProfile] = await Promise.all([
-      user.getIdToken(),
-      getStoredUserProfile(user.uid),
-    ]);
+    const token = await user.getIdToken();
+
+    if (!token) {
+      throw new Error("No Firebase token available");
+    }
+
+    const storedProfile = await getStoredUserProfile(user.uid, signal);
+
+    if (signal?.aborted) {
+      throw createAbortError();
+    }
 
     setAuthToken(token);
     const payload = buildBackendRegisterPayload(user, storedProfile);
 
-    await syncRegister(payload, token);
+    await syncRegister(payload);
     registerSyncCompleted.add(user.uid);
     return payload;
   })().finally(() => {

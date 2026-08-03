@@ -2,6 +2,7 @@ const express = require('express');
 
 const { getFirestore } = require('../lib/firebaseAdmin');
 const prisma = require('../lib/prisma');
+const { authRateLimit } = require('../lib/rateLimit');
 const { requireFirebaseAuth } = require('../middleware/firebaseAuth');
 
 const router = express.Router();
@@ -175,7 +176,7 @@ async function findEmailByUsername(db, normalizedUsername) {
   return sanitizeEmail(matchedDoc.data()?.email);
 }
 
-router.post('/register', requireFirebaseAuth, async (req, res) => {
+router.post('/register', requireFirebaseAuth, authRateLimit, async (req, res) => {
   const identity = validateAuthenticatedIdentity(req.authUser);
 
   if (identity.error) {
@@ -232,7 +233,7 @@ router.post('/register', requireFirebaseAuth, async (req, res) => {
       return sendAuthError(res, 409, 'El perfil local entra en conflicto con un usuario existente.');
     }
 
-    console.error('[AUTH] Error registrando perfil local:', error);
+    console.error('[AUTH] No se pudo registrar el perfil local.');
     return sendAuthError(res, 500, 'No se pudo guardar el perfil local.');
   }
 });
@@ -262,7 +263,7 @@ router.get('/me', requireFirebaseAuth, async (req, res) => {
 
     return res.json(toSafeUser(user));
   } catch (error) {
-    console.error('[AUTH] Error consultando perfil local:', error);
+    console.error('[AUTH] No se pudo consultar el perfil local.');
     return sendAuthError(res, 500, 'No se pudo consultar el perfil local.');
   }
 });
@@ -304,7 +305,7 @@ router.post('/resolve-login', async (req, res) => {
       email,
     });
   } catch (error) {
-    console.error('[LOGIN] Error resolviendo usuario:', error?.message || error);
+    console.error('[LOGIN] No se pudo resolver el usuario.');
     return getSafeResolveFailure(res, 500);
   }
 });

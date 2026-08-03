@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import ActivityCard from '../components/ActivityCard';
@@ -8,6 +8,7 @@ import ActivityFilterChips from '../components/ActivityFilterChips';
 import EmptyActivityState from '../components/EmptyActivityState';
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
+import { useAuth } from '../context/AuthContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { getActivityHistory } from '../services/activityService';
 import { useResponsiveLayout } from '../theme/layout';
@@ -91,15 +92,42 @@ function groupActivitiesByDate(items) {
 export default function ActivityHistoryScreen({ navigation }) {
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
+  const { authStatus, currentUser, isAuthReady } = useAuth();
   const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
   const [activities, setActivities] = useState([]);
   const [selectedFilter, setSelectedFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const activeLoadRef = useRef(null);
+  const loadSequenceRef = useRef(0);
+  const isFocusedRef = useRef(false);
 
   const loadActivity = useCallback(async (isRefresh = false) => {
-    try {
+    if (!isAuthReady || authStatus === 'initializing') {
+      return;
+    }
+
+    if (!currentUser || authStatus === 'unauthenticated') {
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+
+    if (authStatus !== 'authenticated') {
+      setLoading(false);
+      setRefreshing(false);
+      setError('No pudimos cargar el historial. Revisá tu conexión e intentá nuevamente.');
+      return;
+    }
+
+    if (activeLoadRef.current) {
+      return activeLoadRef.current;
+    }
+
+    const loadId = loadSequenceRef.current + 1;
+    loadSequenceRef.current = loadId;
+    const loadPromise = (async () => {
       if (isRefresh) {
         setRefreshing(true);
       } else {
@@ -108,24 +136,53 @@ export default function ActivityHistoryScreen({ navigation }) {
 
       setError('');
       const items = await getActivityHistory();
+
+      if (!isFocusedRef.current || loadSequenceRef.current !== loadId) {
+        return;
+      }
+
       setActivities(Array.isArray(items) ? items : []);
+    })();
+
+    activeLoadRef.current = loadPromise;
+
+    try {
+      await loadPromise;
     } catch (loadError) {
-      console.error('[ActivityHistoryScreen] Error cargando actividad:', loadError);
-      setError(
-        loadError instanceof Error
-          ? loadError.message
-          : 'No pudimos cargar el historial de actividad.'
-      );
+      if (isFocusedRef.current && loadSequenceRef.current === loadId) {
+        if (__DEV__) {
+          console.warn('[ActivityHistoryScreen] No se pudo actualizar el historial.');
+        }
+        setError(
+          loadError && (loadError.status === 401 || loadError.status === 403)
+            ? 'Tu sesión expiró. Iniciá sesión nuevamente.'
+            : 'No pudimos cargar el historial. Revisá tu conexión e intentá nuevamente.'
+        );
+      }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (activeLoadRef.current === loadPromise) {
+        activeLoadRef.current = null;
+      }
+
+      if (isFocusedRef.current && loadSequenceRef.current === loadId) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  }, []);
+  }, [authStatus, currentUser?.uid, isAuthReady]);
 
   useFocusEffect(
     useCallback(() => {
+      if (!isAuthReady || authStatus === 'initializing') {
+        return undefined;
+      }
+
+      isFocusedRef.current = true;
       void loadActivity();
-    }, [loadActivity])
+      return () => {
+        isFocusedRef.current = false;
+      };
+    }, [authStatus, isAuthReady, loadActivity])
   );
 
   const filteredActivities = useMemo(() => {
@@ -167,7 +224,7 @@ export default function ActivityHistoryScreen({ navigation }) {
       <ErrorState
         title="No pudimos cargar la actividad"
         message={error}
-        onRetry={loadActivity}
+        onRetry={() => void loadActivity()}
       />
     );
   }
@@ -239,6 +296,14 @@ export default function ActivityHistoryScreen({ navigation }) {
         <View style={styles.inlineAlert}>
           <MaterialCommunityIcons color={colors.danger} name="alert-outline" size={18} />
           <Text style={styles.inlineAlertText}>{error}</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Reintentar carga del historial"
+            onPress={() => void loadActivity(true)}
+            style={styles.inlineRetryButton}
+          >
+            <Text style={styles.inlineRetryText}>Reintentar</Text>
+          </Pressable>
         </View>
       ) : null}
     </ScrollView>
@@ -368,5 +433,15 @@ const createStyles = (colors, layout) => StyleSheet.create({
     color: colors.warning,
     fontSize: 13,
     flex: 1,
+  },
+  inlineRetryButton: {
+    minHeight: 36,
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
+  inlineRetryText: {
+    color: colors.warning,
+    fontSize: 13,
+    fontWeight: '800',
   },
 });

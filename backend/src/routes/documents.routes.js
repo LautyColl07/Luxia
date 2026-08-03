@@ -5,16 +5,24 @@ const path = require('path');
 const multer = require('multer');
 
 const prisma = require('../lib/prisma');
+const { documentsRateLimit } = require('../lib/rateLimit');
+const { validateDocumentFile } = require('../lib/fileValidation');
 const { requireFirebaseAuth } = require('../middleware/firebaseAuth');
 const { logActivity } = require('../utils/activityLogger');
 
 const router = express.Router();
 const upload = multer({
   limits: {
+    fieldNameSize: 100,
+    fieldSize: 16 * 1024,
     fileSize: Number(process.env.DOCUMENT_MAX_BYTES || 50 * 1024 * 1024),
+    files: 1,
+    fields: 8,
+    parts: 10,
   },
   storage: multer.memoryStorage(),
 });
+const MAX_DOCUMENT_TYPE_LENGTH = 120;
 const STORAGE_ROOT =
   process.env.LUXIA_STORAGE_ROOT ||
   (process.platform === 'win32' ? path.resolve(process.cwd(), 'storage') : '/opt/luxia/storage');
@@ -40,8 +48,13 @@ function slugify(value, fallback = 'documento') {
 function ensureInsideStorage(targetPath) {
   const resolvedRoot = path.resolve(STORAGE_ROOT);
   const resolvedTarget = path.resolve(targetPath);
+  const relativePath = path.relative(resolvedRoot, resolvedTarget);
 
-  if (!resolvedTarget.startsWith(resolvedRoot)) {
+  if (
+    relativePath === '..' ||
+    relativePath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativePath)
+  ) {
     throw new Error('Ruta de storage invalida.');
   }
 
@@ -77,6 +90,9 @@ async function getOwnedHearing(hearingId, userId) {
     where: {
       id: String(hearingId),
       userId,
+      case: {
+        userId,
+      },
     },
   });
 }
@@ -88,7 +104,9 @@ async function saveUploadedDocument({ baseName, file, hearingId, userId }) {
     throw error;
   }
 
-  const extension = path.extname(file.originalname || '') || '.bin';
+  const validatedFile = validateDocumentFile(file);
+
+  const extension = validatedFile.extension;
   const safeBaseName = slugify(baseName || path.basename(file.originalname || 'documento', extension), 'documento');
   const finalFileName = `${safeBaseName}_${Date.now()}${extension}`;
   const targetDir = getDocumentDir(userId, hearingId);
@@ -99,6 +117,7 @@ async function saveUploadedDocument({ baseName, file, hearingId, userId }) {
 
   return {
     fileName: finalFileName,
+    mimeType: validatedFile.mimeType,
     path: targetPath,
   };
 }
@@ -127,6 +146,7 @@ function normalizeFileResponse(file) {
 }
 
 router.use(requireFirebaseAuth);
+router.use(documentsRateLimit);
 
 router.post('/', upload.single('file'), async (req, res) => {
   try {
@@ -137,6 +157,12 @@ router.post('/', upload.single('file'), async (req, res) => {
     if (!hearingId) {
       return res.status(400).json({
         error: 'La audiencia es obligatoria para subir un documento.',
+      });
+    }
+
+    if (documentType.length > MAX_DOCUMENT_TYPE_LENGTH) {
+      return res.status(400).json({
+        error: 'El tipo de documento supera la longitud permitida.',
       });
     }
 
@@ -163,7 +189,7 @@ router.post('/', upload.single('file'), async (req, res) => {
         documentType,
         fileName: savedFile.fileName,
         hearingId: hearing.id,
-        mimeType: req.file?.mimetype || 'application/octet-stream',
+        mimeType: savedFile.mimeType,
         path: savedFile.path,
         userId: req.authUser.id,
       },
@@ -191,9 +217,14 @@ router.post('/', upload.single('file'), async (req, res) => {
 
     return res.status(201).json(normalizeFileResponse(created));
   } catch (error) {
-    console.error('[DOCUMENTS] Error subiendo documento:', error);
-    return res.status(error?.status || 500).json({
-      error: error?.message || 'No se pudo subir el documento.',
+    const status = Number.isInteger(error?.status) && error.status >= 400 && error.status < 500
+      ? error.status
+      : 500;
+    if (status >= 500) {
+      console.error('[DOCUMENTS] No se pudo subir el documento.');
+    }
+    return res.status(status).json({
+      error: status < 500 ? error.message : 'No se pudo subir el documento.',
     });
   }
 });
@@ -219,7 +250,7 @@ router.get('/', async (req, res) => {
 
     return res.json(files.map((file) => normalizeFileResponse(file)));
   } catch (error) {
-    console.error('[DOCUMENTS] Error listando documentos:', error);
+    console.error('[DOCUMENTS] No se pudieron listar los documentos.');
     return res.status(500).json({
       error: 'No se pudieron cargar los documentos.',
     });
@@ -244,11 +275,24 @@ router.get('/:id/download', async (req, res) => {
     await fs.promises.access(file.path, fs.constants.R_OK);
     return res.download(file.path, path.basename(file.fileName || file.path));
   } catch (error) {
-    console.error('[DOCUMENTS] Error descargando documento:', error);
+    console.error('[DOCUMENTS] No se pudo descargar el documento.');
     return res.status(500).json({
       error: 'No se pudo descargar el documento.',
     });
   }
+});
+
+router.use((error, _req, res, next) => {
+  if (error instanceof multer.MulterError) {
+    const status = error.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+    return res.status(status).json({ error: 'El archivo no cumple los limites permitidos.' });
+  }
+
+  if (error) {
+    return res.status(500).json({ error: 'No se pudo procesar el archivo.' });
+  }
+
+  return next();
 });
 
 module.exports = router;

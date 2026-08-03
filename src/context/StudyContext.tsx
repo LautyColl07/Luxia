@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -37,6 +38,7 @@ type StudyContextValue = {
   activeLegalStudy: LegalStudyOption | null;
   isHydrated: boolean;
   isLoadingStudies: boolean;
+  studiesError: string | null;
   legalStudies: LegalStudyOption[];
   refreshLegalStudies: () => Promise<void>;
   selectPersonalContext: () => void;
@@ -55,6 +57,7 @@ const StudyContext = createContext<StudyContextValue>({
   activeLegalStudy: null,
   isHydrated: false,
   isLoadingStudies: false,
+  studiesError: null,
   legalStudies: [],
   refreshLegalStudies: async () => undefined,
   selectPersonalContext: () => undefined,
@@ -90,12 +93,22 @@ function normalizeStoredContext(value: unknown): StudyContextSelection {
 }
 
 export function StudyContextProvider({ children }: StudyContextProviderProps) {
-  const { currentUser, isAuthReady } = useAuth();
+  const { authStatus, currentUser, isAuthReady } = useAuth();
   const [activeContext, setActiveContext] =
     useState<StudyContextSelection>(PERSONAL_CONTEXT);
   const [legalStudies, setLegalStudies] = useState<LegalStudyOption[]>([]);
   const [isHydrated, setIsHydrated] = useState(false);
   const [isLoadingStudies, setIsLoadingStudies] = useState(false);
+  const [studiesError, setStudiesError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+  const legalStudiesRequestRef = useRef<Promise<void> | null>(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -108,8 +121,10 @@ export function StudyContextProvider({ children }: StudyContextProviderProps) {
 
         setActiveContext(normalizeStoredContext(JSON.parse(rawValue)));
       })
-      .catch((error) => {
-        console.error("[StudyContext] Error restaurando contexto:", error);
+      .catch(() => {
+        if (__DEV__) {
+          console.warn("[StudyContext] No se pudo restaurar el contexto guardado.");
+        }
       })
       .finally(() => {
         if (mounted) {
@@ -123,55 +138,101 @@ export function StudyContextProvider({ children }: StudyContextProviderProps) {
   }, []);
 
   const persistContext = useCallback((nextContext: StudyContextSelection) => {
-    void AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(nextContext)).catch((error) => {
-      console.error("[StudyContext] Error persistiendo contexto:", error);
+    void AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(nextContext)).catch(() => {
+      if (__DEV__) {
+        console.warn("[StudyContext] No se pudo guardar el contexto seleccionado.");
+      }
     });
   }, []);
 
   const refreshLegalStudies = useCallback(async () => {
-    if (!isAuthReady || !currentUser) {
+    if (!isAuthReady || authStatus === "initializing") {
+      return;
+    }
+
+    if (!currentUser || authStatus === "unauthenticated") {
       setLegalStudies([]);
       setActiveContext(PERSONAL_CONTEXT);
+      setStudiesError(null);
       persistContext(PERSONAL_CONTEXT);
       return;
     }
 
-    try {
-      setIsLoadingStudies(true);
-      const studies = await getMyLegalStudies();
-      setLegalStudies(studies);
-
-      setActiveContext((current) => {
-        if (current.type !== "study") {
-          return current;
-        }
-
-        const stillAvailable = studies.find(
-          (study) => String(study.id) === String(current.legalStudyId)
-        );
-
-        if (!stillAvailable) {
-          persistContext(PERSONAL_CONTEXT);
-          return PERSONAL_CONTEXT;
-        }
-
-        const nextContext: StudyContextSelection = {
-          type: "study",
-          legalStudyId: String(stillAvailable.id),
-          name: stillAvailable.name,
-        };
-        persistContext(nextContext);
-        return nextContext;
-      });
-    } catch (error) {
-      console.error("[StudyContext] Error cargando estudios juridicos:", error);
-      setLegalStudies([]);
-      setActiveContext(PERSONAL_CONTEXT);
-      persistContext(PERSONAL_CONTEXT);
-    } finally {
+    if (authStatus !== "authenticated") {
       setIsLoadingStudies(false);
+      setStudiesError("No pudimos conectarnos. Revisá tu conexión e intentá nuevamente.");
+      return;
     }
-  }, [currentUser, isAuthReady, persistContext]);
+
+    if (legalStudiesRequestRef.current) {
+      return legalStudiesRequestRef.current;
+    }
+
+    const requestPromise = (async () => {
+      try {
+        setIsLoadingStudies(true);
+        setStudiesError(null);
+        const studies = await getMyLegalStudies();
+
+        if (!mountedRef.current) {
+          return;
+        }
+
+        setLegalStudies(studies);
+
+        setActiveContext((current) => {
+          if (current.type !== "study") {
+            return current;
+          }
+
+          const stillAvailable = studies.find(
+            (study) => String(study.id) === String(current.legalStudyId)
+          );
+
+          if (!stillAvailable) {
+            persistContext(PERSONAL_CONTEXT);
+            return PERSONAL_CONTEXT;
+          }
+
+          const nextContext: StudyContextSelection = {
+            type: "study",
+            legalStudyId: String(stillAvailable.id),
+            name: stillAvailable.name,
+          };
+          persistContext(nextContext);
+          return nextContext;
+        });
+      } catch (error) {
+        if (!mountedRef.current) {
+          return;
+        }
+
+        if (__DEV__) {
+          console.warn("[StudyContext] No se pudieron actualizar los estudios.");
+        }
+        setStudiesError(
+          error && typeof error === "object" && "status" in error &&
+            ((error as { status?: number }).status === 401 ||
+              (error as { status?: number }).status === 403)
+            ? "Tu sesión expiró. Iniciá sesión nuevamente."
+            : "No pudimos conectarnos. Revisá tu conexión e intentá nuevamente."
+        );
+      } finally {
+        if (mountedRef.current) {
+          setIsLoadingStudies(false);
+        }
+      }
+    })();
+
+    legalStudiesRequestRef.current = requestPromise;
+    try {
+      await requestPromise;
+    } finally {
+      if (legalStudiesRequestRef.current === requestPromise) {
+        legalStudiesRequestRef.current = null;
+      }
+    }
+  }, [authStatus, currentUser, isAuthReady, persistContext]);
 
   useEffect(() => {
     if (!isHydrated) {
@@ -224,6 +285,7 @@ export function StudyContextProvider({ children }: StudyContextProviderProps) {
       activeLegalStudy,
       isHydrated,
       isLoadingStudies,
+      studiesError,
       legalStudies,
       refreshLegalStudies,
       selectPersonalContext,
@@ -235,6 +297,7 @@ export function StudyContextProvider({ children }: StudyContextProviderProps) {
       activeLegalStudy,
       isHydrated,
       isLoadingStudies,
+      studiesError,
       legalStudies,
       refreshLegalStudies,
       selectPersonalContext,

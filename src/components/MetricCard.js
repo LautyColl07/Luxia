@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useAppTheme } from '../context/ThemeContext';
+import { CARD_LAYOUT } from '../theme/layout';
 
 export default function MetricCard({ label, value, icon, accentColor, onPress }) {
   const { colors } = useAppTheme();
@@ -25,7 +26,15 @@ export default function MetricCard({ label, value, icon, accentColor, onPress })
         <MaterialCommunityIcons color={accentColor} name={icon} size={22} />
       </View>
       <Text style={styles.value}>{new Intl.NumberFormat('es-AR').format(normalizedValue)}</Text>
-      <Text style={styles.label}>{label}</Text>
+      <Text
+        adjustsFontSizeToFit
+        ellipsizeMode="tail"
+        minimumFontScale={0.75}
+        numberOfLines={1}
+        style={styles.label}
+      >
+        {label}
+      </Text>
     </Pressable>
   );
 }
@@ -35,8 +44,8 @@ const createStyles = (colors) => StyleSheet.create({
     flex: 1,
     height: '100%',
     backgroundColor: colors.card,
-    borderRadius: 24,
-    padding: 18,
+    borderRadius: CARD_LAYOUT.borderRadius,
+    padding: CARD_LAYOUT.padding,
     justifyContent: 'space-between',
     shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 10 },
@@ -58,9 +67,9 @@ const createStyles = (colors) => StyleSheet.create({
     borderColor: colors.focusRing,
   },
   iconWrapper: {
-    width: 44,
-    height: 44,
-    borderRadius: 16,
+    width: CARD_LAYOUT.iconSize,
+    height: CARD_LAYOUT.iconSize,
+    borderRadius: CARD_LAYOUT.iconRadius,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -71,8 +80,9 @@ const createStyles = (colors) => StyleSheet.create({
   },
   label: {
     color: colors.textSecondary,
-    fontSize: 14,
-    lineHeight: 20,
-    minHeight: 40,
+    fontSize: 13,
+    lineHeight: 18,
+    height: 18,
+    includeFontPadding: false,
   },
 });

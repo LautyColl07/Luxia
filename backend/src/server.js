@@ -3,10 +3,8 @@ const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../.env'), quiet: true });
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env'), override: false, quiet: true });
 
-const helmet = require('helmet');
-
 const app = require('./app');
-const { authRateLimit, luxRateLimit } = require('./lib/rateLimit');
+const { apiRateLimit, authRateLimit } = require('./lib/rateLimit');
 const activityRoutes = require('./routes/activity.routes');
 const authRoutes = require('./routes/auth.routes');
 const casesRoutes = require('./routes/cases.routes');
@@ -26,10 +24,13 @@ if (!serverIpMatch) {
 
 const PUBLIC_BACKEND_URL = `http://${serverIpMatch[1]}:${PORT}`;
 
-app.use(helmet());
+app.use('/api/v1', (_req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
+app.use('/api/v1', apiRateLimit);
 app.use('/api/v1/auth/resolve-login', authRateLimit);
 app.use('/api/v1/auth/register', authRateLimit);
-app.use('/api/v1/lux/chat', luxRateLimit);
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/activity', activityRoutes);
@@ -40,6 +41,29 @@ app.use('/api/v1/audiencias', hearingTranscriptionRoutes);
 app.use('/api/v1/cases', casesRoutes);
 app.use('/api/v1/causas', casesRoutes);
 
+app.use((_req, res) => {
+  res.status(404).json({ error: 'Ruta no encontrada.' });
+});
+
+app.use((error, _req, res, _next) => {
+  const status = error?.type === 'entity.parse.failed'
+    ? 400
+    : error?.type === 'entity.too.large'
+      ? 413
+      : 500;
+  const message = status === 400
+    ? 'El cuerpo de la solicitud no es valido.'
+    : status === 413
+      ? 'El cuerpo de la solicitud supera el limite permitido.'
+    : 'No se pudo procesar la solicitud.';
+
+  if (status >= 500) {
+    console.error('[SERVER] Error no controlado al procesar una solicitud.');
+  }
+
+  res.status(status).json({ error: message });
+});
+
 app.listen(PORT, () => {
-  console.log(`Luxia backend escuchando en ${PUBLIC_BACKEND_URL}`);
+  console.log('Luxia backend iniciado.');
 });
