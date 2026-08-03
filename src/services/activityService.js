@@ -2,6 +2,8 @@ import { request } from './api';
 
 const ACTIVITY_ENDPOINT = '/activity';
 const ACTIVITY_TYPES = new Set(['case', 'hearing', 'task', 'document', 'lux', 'transcript']);
+const ACTIVITY_PAGE_LIMIT = 100;
+const MAX_ACTIVITY_PAGES = 10000;
 
 function normalizeDateValue(value) {
   if (!value) {
@@ -47,13 +49,54 @@ export function normalizeActivityResponse(items = []) {
     });
 }
 
-async function getActivityHistoryFromApi() {
-  const payload = await request(ACTIVITY_ENDPOINT);
-  const items = Array.isArray(payload)
-    ? payload
-    : payload?.data ?? payload?.activities ?? payload?.items;
+function parsePositiveInteger(value, fallback) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
 
-  return normalizeActivityResponse(Array.isArray(items) ? items : []);
+export function normalizeActivityPage(payload, requestedPage = 1) {
+  if (Array.isArray(payload)) {
+    return {
+      items: payload,
+      page: requestedPage,
+      totalPages: 1,
+    };
+  }
+
+  const items = payload?.items ?? payload?.data ?? payload?.activities;
+  if (!Array.isArray(items)) {
+    throw new Error('El historial recibido no tiene un formato valido.');
+  }
+
+  const page = parsePositiveInteger(payload?.page, requestedPage);
+  const totalPages = parsePositiveInteger(payload?.totalPages, 1);
+
+  return { items, page, totalPages };
+}
+
+async function getActivityHistoryFromApi() {
+  const allItems = [];
+  const seenIds = new Set();
+  let requestedPage = 1;
+  let totalPages = 1;
+
+  do {
+    const payload = await request(`${ACTIVITY_ENDPOINT}?page=${requestedPage}&limit=${ACTIVITY_PAGE_LIMIT}`);
+    const result = normalizeActivityPage(payload, requestedPage);
+
+    result.items.forEach((item, index) => {
+      const normalized = normalizeActivityItem(item, allItems.length + index);
+      if (!seenIds.has(normalized.id)) {
+        seenIds.add(normalized.id);
+        allItems.push(normalized);
+      }
+    });
+
+    totalPages = Math.min(result.totalPages, MAX_ACTIVITY_PAGES);
+    requestedPage += 1;
+  } while (requestedPage <= totalPages);
+
+  return normalizeActivityResponse(allItems);
 }
 
 export async function getActivityHistory() {

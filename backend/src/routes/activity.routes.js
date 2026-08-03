@@ -49,32 +49,51 @@ function parsePositiveInteger(value, fallback, maximum, field) {
   return parsed;
 }
 
+async function getActivityPage({ prismaClient = prisma, userId, query = {} }) {
+  const requestedType = normalizeOptionalString(query?.type);
+  if (requestedType && !ACTIVITY_TYPES.has(requestedType)) {
+    const error = new Error('type no es valido.');
+    error.status = 400;
+    throw error;
+  }
+
+  const page = parsePositiveInteger(query?.page, 1, MAX_PAGE, 'page');
+  const limit = parsePositiveInteger(query?.limit, 50, MAX_LIMIT, 'limit');
+  const where = {
+    userId,
+    ...(requestedType ? { type: requestedType } : {}),
+  };
+  const [data, total] = await Promise.all([
+    prismaClient.activityLog.findMany({
+      orderBy: { createdAt: 'desc' },
+      where,
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+    prismaClient.activityLog.count({ where }),
+  ]);
+
+  return {
+    items: data.map((item) => normalizeActivity(item)),
+    total,
+    page,
+    limit,
+    totalPages: Math.max(1, Math.ceil(total / limit)),
+  };
+}
+
 router.use(requireFirebaseAuth);
 router.use(activityRateLimit);
 
 router.get('/', async (req, res) => {
   try {
-    const requestedType = normalizeOptionalString(req.query?.type);
-    if (requestedType && !ACTIVITY_TYPES.has(requestedType)) {
-      return res.status(400).json({ success: false, error: 'type no es valido.' });
-    }
-    const page = parsePositiveInteger(req.query?.page, 1, MAX_PAGE, 'page');
-    const limit = parsePositiveInteger(req.query?.limit, 50, MAX_LIMIT, 'limit');
-    const data = await prisma.activityLog.findMany({
-      orderBy: {
-        createdAt: 'desc',
-      },
-      where: {
-        userId: req.authUser.id,
-        ...(requestedType ? { type: requestedType } : {}),
-      },
-      skip: (page - 1) * limit,
-      take: limit,
-    });
+    const result = await getActivityPage({ userId: req.authUser.id, query: req.query });
 
     return res.json({
       success: true,
-      data: data.map((item) => normalizeActivity(item)),
+      // data se conserva durante la transicion para los clientes anteriores.
+      data: result.items,
+      ...result,
     });
   } catch (error) {
     if (error?.status === 400) {
@@ -89,3 +108,7 @@ router.get('/', async (req, res) => {
 });
 
 module.exports = router;
+module.exports.__testables = {
+  getActivityPage,
+  parsePositiveInteger,
+};

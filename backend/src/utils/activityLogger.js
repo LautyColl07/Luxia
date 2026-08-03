@@ -21,6 +21,7 @@ async function logActivity({
   relatedEntityType,
   relatedEntityId,
   relatedEntityName,
+  required = false,
 } = {}) {
   const normalizedUserId = normalizeOptionalString(userId);
   const normalizedType = normalizeOptionalString(type);
@@ -28,6 +29,11 @@ async function logActivity({
   const normalizedDescription = normalizeOptionalString(description);
 
   if (!normalizedUserId || !normalizedType || !normalizedTitle || !normalizedDescription) {
+    if (required) {
+      const error = new Error('No se pudo registrar la actividad.');
+      error.status = 500;
+      throw error;
+    }
     return null;
   }
 
@@ -60,6 +66,11 @@ async function logActivity({
     });
   } catch (error) {
     console.error('[ACTIVITY_LOGGER] No se pudo registrar actividad.');
+    if (required) {
+      const persistenceError = new Error('No se pudo registrar la actividad.');
+      persistenceError.status = 500;
+      throw persistenceError;
+    }
     return null;
   }
 }

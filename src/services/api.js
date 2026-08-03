@@ -72,7 +72,7 @@ function toArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
-function normalizePaginatedResponse(response, normalizer) {
+export function normalizePaginatedResponse(response, normalizer) {
   const source = response && typeof response === 'object' ? response : {};
   const rawItems = Array.isArray(response)
     ? response
@@ -1886,6 +1886,9 @@ export async function sendLuxMessage(message, context = {}) {
         context: {
           screen: 'dashboard',
           ...context,
+          // El contexto activo se toma del estado local confiable de la app;
+          // el backend vuelve a validar toda referencia antes de persistirla.
+          ...getActiveWorkContextQuery(),
         },
       },
     });

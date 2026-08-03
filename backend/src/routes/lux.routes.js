@@ -4,6 +4,8 @@ const path = require('path');
 
 const { requireFirebaseAuth } = require('../middleware/firebaseAuth');
 const { luxRateLimit } = require('../lib/rateLimit');
+const prisma = require('../lib/prisma');
+const { assertActiveStudyMember } = require('../lib/studyScope');
 const { sendMessageToLux } = require('../services/luxAi.service');
 const { logActivity } = require('../utils/activityLogger');
 
@@ -13,6 +15,7 @@ const LEGAL_FALLBACK_REPLY = 'No tengo información suficiente en la base legal 
 const MAX_LEGAL_ARTICLES = 3;
 const MAX_CONTEXT_LENGTH = 12000;
 const MAX_MESSAGE_LENGTH = 8000;
+const MAX_REFERENCE_ID_LENGTH = 191;
 const STOP_WORDS = new Set([
   'sobre',
   'para',
@@ -293,22 +296,129 @@ function validateChatBody(body) {
   return { context, message };
 }
 
-async function logLuxActivity(authUser) {
-  return logActivity({
+function createHttpError(message, status) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+function normalizeReferenceId(value, field) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+
+  if (typeof value !== 'string') {
+    throw createHttpError(`${field} no es valido.`, 400);
+  }
+
+  const normalized = value.trim();
+  if (
+    !normalized ||
+    normalized.length > MAX_REFERENCE_ID_LENGTH ||
+    /[\u0000-\u001f\u007f]/.test(normalized)
+  ) {
+    throw createHttpError(`${field} no es valido.`, 400);
+  }
+
+  return normalized;
+}
+
+function getLuxScope(context = {}) {
+  const requestedScope = context.scope === undefined || context.scope === null ? 'personal' : context.scope;
+  if (typeof requestedScope !== 'string') {
+    throw createHttpError('scope no es valido.', 400);
+  }
+
+  const scope = requestedScope.trim().toLowerCase();
+  if (scope !== 'personal' && scope !== 'study') {
+    throw createHttpError('scope no es valido.', 400);
+  }
+
+  return {
+    scope,
+    legalStudyId: normalizeReferenceId(context.legalStudyId, 'legalStudyId'),
+  };
+}
+
+function getAiContext(context = {}) {
+  const { caseId, legalStudyId, scope, ...safeContext } = context;
+  return safeContext;
+}
+
+async function resolveLuxActivityReference({ prismaClient = prisma, authUser, context = {} }) {
+  const { scope, legalStudyId } = getLuxScope(context);
+  let authorizedStudyId = null;
+
+  if (scope === 'study') {
+    authorizedStudyId = await assertActiveStudyMember(prismaClient, authUser.id, legalStudyId);
+  }
+
+  const caseId = normalizeReferenceId(context.caseId, 'caseId');
+  if (caseId) {
+    const legalCase = await prismaClient.legalCase.findFirst({
+      where:
+        scope === 'study'
+          ? { id: caseId, legalStudyId: authorizedStudyId }
+          : {
+              id: caseId,
+              OR: [
+                { createdById: authUser.id },
+                { ownerUserId: authUser.id },
+                { userId: authUser.id },
+              ],
+            },
+      select: { id: true, title: true },
+    });
+
+    if (!legalCase) {
+      throw createHttpError('La causa asociada no esta disponible.', 404);
+    }
+
+    return {
+      relatedEntityType: 'case',
+      relatedEntityId: legalCase.id,
+      relatedEntityName: legalCase.title,
+    };
+  }
+
+  if (authorizedStudyId) {
+    return {
+      relatedEntityType: 'legal_study',
+      relatedEntityId: authorizedStudyId,
+      relatedEntityName: 'Estudio juridico',
+    };
+  }
+
+  return { relatedEntityType: 'lux' };
+}
+
+async function logLuxActivity(authUser, reference, activityLogger = logActivity) {
+  const activity = await activityLogger({
     userId: authUser.id,
     userEmail: authUser.email,
     userName: authUser.name,
     type: 'lux',
     title: 'Consulta realizada a LUX',
     description: 'Se realizo una consulta a LUX.',
-    relatedEntityType: 'lux',
+    relatedEntityType: reference?.relatedEntityType || 'lux',
+    relatedEntityId: reference?.relatedEntityId,
+    relatedEntityName: reference?.relatedEntityName,
+    // Una respuesta exitosa de LUX no se confirma si no se persistio su actividad.
+    required: true,
   });
+
+  if (!activity) {
+    throw createHttpError('No se pudo registrar la actividad.', 500);
+  }
+
+  return activity;
 }
 
 router.use(requireFirebaseAuth);
 router.use(luxRateLimit);
 
-router.post('/chat', async (req, res) => {
+function createChatHandler({ prismaClient = prisma, aiService = sendMessageToLux, activityLogger = logActivity } = {}) {
+  return async (req, res) => {
   const validation = validateChatBody(req.body);
 
   if (validation.error) {
@@ -324,11 +434,13 @@ router.post('/chat', async (req, res) => {
 
   try {
     const authUser = req.authUser;
+    const activityReference = await resolveLuxActivityReference({ prismaClient, authUser, context });
+    const aiContext = getAiContext(context);
     const relatedArticles = findRelatedPenalArticles(message);
 
     if (relatedArticles.length) {
-      const reply = await sendMessageToLux(buildLegalPrompt(message, relatedArticles), {
-        ...context,
+      const reply = await aiService(buildLegalPrompt(message, relatedArticles), {
+        ...aiContext,
         legalSource: 'codigo_penal',
         relatedArticles: relatedArticles.map((article) => ({
           number: article.number,
@@ -336,7 +448,7 @@ router.post('/chat', async (req, res) => {
         })),
       });
 
-      await logLuxActivity(authUser);
+      await logLuxActivity(authUser, activityReference, activityLogger);
 
       return res.json({
         success: true,
@@ -345,7 +457,7 @@ router.post('/chat', async (req, res) => {
     }
 
     if (isPenalQuestion(message)) {
-      await logLuxActivity(authUser);
+      await logLuxActivity(authUser, activityReference, activityLogger);
 
       return res.json({
         success: true,
@@ -353,20 +465,39 @@ router.post('/chat', async (req, res) => {
       });
     }
 
-    const reply = await sendMessageToLux(message, context);
+    const reply = await aiService(message, aiContext);
 
-    await logLuxActivity(authUser);
+    await logLuxActivity(authUser, activityReference, activityLogger);
 
     return res.json({
       success: true,
       reply,
     });
   } catch (error) {
+    if (error?.status === 400 || error?.status === 403 || error?.status === 404) {
+      return res.status(error.status).json({
+        success: false,
+        error: error.message,
+      });
+    }
+
     return res.status(500).json({
       success: false,
       error: 'No pude conectarme con LUX en este momento.',
     });
   }
-});
+  };
+}
+
+router.post('/chat', createChatHandler());
 
 module.exports = router;
+module.exports.__testables = {
+  getLuxScope,
+  getAiContext,
+  createChatHandler,
+  logLuxActivity,
+  normalizeReferenceId,
+  resolveLuxActivityReference,
+  validateChatBody,
+};
