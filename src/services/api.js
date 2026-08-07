@@ -34,6 +34,7 @@ const PROTECTED_ENDPOINT_PREFIXES = [
   '/tasks',
   '/legal-studies',
   '/lux/chat',
+  '/lux/legal/query',
   '/transcriptions',
   '/transcripts',
 ];
@@ -783,6 +784,23 @@ export async function request(endpoint, options = {}) {
     } catch {
       data = rawText;
     }
+  }
+
+  if (typeof __DEV__ !== 'undefined' && __DEV__ && path === '/lux/legal/query') {
+    const responseKeys = data && typeof data === 'object' ? Object.keys(data) : [];
+    const nestedKeys = data?.data && typeof data.data === 'object' ? Object.keys(data.data) : [];
+    console.info('[LUX legal telemetry]', {
+      endpoint: '/api/v1/lux/legal/query',
+      pathname: path,
+      status: response.status,
+      bodyKeys: Object.keys(fetchOptions.body || {}),
+      hasConversationId: Boolean(fetchOptions.body?.conversationId),
+      responseKeys,
+      nestedKeys,
+    });
+    console.log('[LUX ENDPOINT]', '/api/v1/lux/legal/query');
+    console.log('[LUX BODY KEYS]', Object.keys(fetchOptions.body || {}).join(','));
+    console.log('[LUX STATUS]', response.status);
   }
 
   if (!response.ok) {
@@ -1912,6 +1930,30 @@ export async function sendLuxMessage(message, context = {}) {
       error,
     };
   }
+}
+
+export async function sendGeneralLuxMessage(message, context = {}) {
+  return sendLuxMessage(message, context);
+}
+
+export async function queryLegalAssistant({ question, conversationId, signal } = {}) {
+  const normalizedQuestion = safeString(question, '').trim();
+  if (!normalizedQuestion) throw new Error('Escribe una consulta jurídica.');
+
+  return request('/lux/legal/query', {
+    method: 'POST',
+    signal,
+    timeout: LUX_REQUEST_TIMEOUT_MS,
+    timeoutMessage: 'La consulta jurídica tardó demasiado en responder.',
+    body: {
+      question: normalizedQuestion,
+      ...(safeOptionalString(conversationId) ? { conversationId: safeOptionalString(conversationId) } : {}),
+    },
+  });
+}
+
+export async function sendLegalLuxQuery({ question, conversationId, signal } = {}) {
+  return queryLegalAssistant({ question, conversationId, signal });
 }
 
 export async function getDashboardBootstrap(options = {}) {

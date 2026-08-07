@@ -14,6 +14,7 @@ const luxRoutes = require('./routes/lux.routes');
 const transcriptionRoutes = require('./routes/transcription.routes');
 
 const PORT = Number(process.env.PORT || 3000);
+const HOST = process.env.HOST || '0.0.0.0';
 const apiConfigPath = path.resolve(__dirname, '../../src/config/api.js');
 const apiConfigSource = fs.readFileSync(apiConfigPath, 'utf8');
 const serverIpMatch = apiConfigSource.match(/export\s+const\s+SERVER_IP\s*=\s*['"]([^'"]+)['"]/);
@@ -64,6 +65,6 @@ app.use((error, _req, res, _next) => {
   res.status(status).json({ error: message });
 });
 
-app.listen(PORT, () => {
-  console.log('Luxia backend iniciado.');
+app.listen(PORT, HOST, () => {
+  console.log(`Luxia backend iniciado en http://${serverIpMatch[1]}:${PORT}.`);
 });

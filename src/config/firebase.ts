@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Platform } from "react-native";
 import { FirebaseOptions, getApp, getApps, initializeApp } from "firebase/app";
 // TypeScript resolves Firebase's generic declaration, while Metro resolves the React Native entrypoint.
 // @ts-expect-error getReactNativePersistence is declared only in Firebase Auth's React Native condition.
@@ -55,6 +56,12 @@ const isAuthAlreadyInitializedError = (error: unknown) =>
 const initializePersistentAuth = () => {
   if (!app) {
     return null;
+  }
+
+  // Firebase's React Native persistence adapter is not supported by the web
+  // build. On web, getAuth selects the browser persistence implementation.
+  if (Platform.OS === "web") {
+    return getAuth(app);
   }
 
   try {

@@ -31,3 +31,8 @@ export function sendLuxMessage(
   message: string,
   context?: Record<string, unknown>
 ): Promise<{ success: boolean; reply: string; raw?: unknown; error?: unknown }>;
+export function queryLegalAssistant(options: {
+  question: string;
+  conversationId?: string | null;
+  signal?: AbortSignal;
+}): Promise<unknown>;
