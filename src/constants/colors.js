@@ -30,6 +30,13 @@ export const lightColors = {
   weekdayText: '#7584A0',
   inputBackground: '#FFFFFF',
   shadow: 'rgba(15, 47, 86, 0.12)',
+  sidebarBackground: '#0B2545',
+  sidebarBorder: '#17375B',
+  sidebarMark: '#17375B',
+  sidebarActive: '#17375B',
+  sidebarHover: '#123155',
+  sidebarText: '#F8FBFF',
+  sidebarTextMuted: '#9BAEC5',
   white: '#FFFFFF',
 };
 
@@ -65,6 +72,13 @@ export const darkColors = {
   weekdayText: '#90A1B7',
   inputBackground: '#16263A',
   shadow: 'rgba(0, 0, 0, 0.35)',
+  sidebarBackground: '#071523',
+  sidebarBorder: '#162B41',
+  sidebarMark: '#162B41',
+  sidebarActive: '#132B45',
+  sidebarHover: '#10263C',
+  sidebarText: '#F4F7FB',
+  sidebarTextMuted: '#8FA3BB',
   white: '#FFFFFF',
 };
 

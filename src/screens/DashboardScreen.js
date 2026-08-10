@@ -20,14 +20,14 @@ import { getDashboardBootstrap } from '../services/api';
 import { getMetricCardHeight, useResponsiveLayout } from '../theme/layout';
 
 export default function DashboardScreen({ navigation }) {
-  const { colors } = useAppTheme();
+  const { colors, isDark } = useAppTheme();
   const insets = useSafeAreaInsets();
   const layout = useResponsiveLayout();
   const { authStatus, currentUser, isAuthReady } = useAuth();
   const { activeContextKey } = useStudyContext();
   const styles = useMemo(
-    () => createStyles(colors, layout, insets.top),
-    [colors, insets.top, layout]
+    () => createStyles(colors, layout, insets.top, isDark),
+    [colors, insets.top, isDark, layout]
   );
   const [dashboard, setDashboard] = useState(null);
   const [notificationCount, setNotificationCount] = useState(0);
@@ -274,7 +274,11 @@ export default function DashboardScreen({ navigation }) {
             <View style={styles.heroActions}>
 
               <Pressable onPress={handleNotificationsPress} style={styles.notificationButton}>
-                <MaterialCommunityIcons color={colors.textOnPrimary} name="bell-outline" size={24} />
+                <MaterialCommunityIcons
+                  color={isDark || !layout.isWebDesktop ? colors.textOnPrimary : colors.primary}
+                  name="bell-outline"
+                  size={24}
+                />
                 {notificationCount > 0 ? (
                   <View style={styles.notificationBadge}>
                     <Text style={styles.notificationBadgeText}>{notificationCount}</Text>
@@ -381,7 +385,7 @@ export default function DashboardScreen({ navigation }) {
   );
 }
 
-const createStyles = (colors, layout, topInset) => StyleSheet.create({
+const createStyles = (colors, layout, topInset, isDark) => StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: colors.background,
@@ -397,20 +401,28 @@ const createStyles = (colors, layout, topInset) => StyleSheet.create({
     paddingBottom: 34,
   },
   hero: {
-    backgroundColor: colors.primaryDeep,
+    backgroundColor: layout.isWebDesktop && !isDark ? colors.cardElevated : colors.primaryDeep,
     borderBottomLeftRadius: 34,
     borderBottomRightRadius: 34,
     paddingTop: Math.max(topInset + 20, layout.topSpacing),
     paddingHorizontal: layout.gutter,
     paddingBottom: 28,
     overflow: 'hidden',
+    ...(layout.isWebDesktop ? {
+      marginHorizontal: layout.gutter,
+      marginTop: 12,
+      borderRadius: 20,
+      paddingTop: 28,
+      paddingHorizontal: 28,
+      paddingBottom: 26,
+    } : {}),
   },
   heroShapeLarge: {
     position: 'absolute',
     width: 220,
     height: 220,
     borderRadius: 110,
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: isDark || !layout.isWebDesktop ? 'rgba(255,255,255,0.05)' : 'rgba(18,58,103,0.05)',
     top: -40,
     right: -70,
   },
@@ -419,7 +431,7 @@ const createStyles = (colors, layout, topInset) => StyleSheet.create({
     width: 120,
     height: 120,
     borderRadius: 60,
-    backgroundColor: 'rgba(255,255,255,0.07)',
+    backgroundColor: isDark || !layout.isWebDesktop ? 'rgba(255,255,255,0.07)' : 'rgba(18,58,103,0.07)',
     bottom: -20,
     left: -30,
   },
@@ -430,7 +442,7 @@ const createStyles = (colors, layout, topInset) => StyleSheet.create({
     gap: 12,
   },
   brand: {
-    color: colors.textOnPrimary,
+    color: isDark || !layout.isWebDesktop ? colors.textOnPrimary : colors.text,
     fontSize: 28,
     fontWeight: '800',
     letterSpacing: 1.6,
@@ -439,7 +451,7 @@ const createStyles = (colors, layout, topInset) => StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: isDark || !layout.isWebDesktop ? 'rgba(255,255,255,0.12)' : colors.accentSoft,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -467,13 +479,13 @@ const createStyles = (colors, layout, topInset) => StyleSheet.create({
     fontWeight: '700',
   },
   greeting: {
-    color: colors.textOnPrimary,
+    color: isDark || !layout.isWebDesktop ? colors.textOnPrimary : colors.text,
     fontSize: 30,
     fontWeight: '700',
     marginTop: 28,
   },
   subtitle: {
-    color: 'rgba(255,255,255,0.78)',
+    color: isDark || !layout.isWebDesktop ? 'rgba(255,255,255,0.78)' : colors.textSecondary,
     fontSize: 15,
     lineHeight: 22,
     marginTop: 8,

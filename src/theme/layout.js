@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useWindowDimensions } from 'react-native';
+import { Platform, useWindowDimensions } from 'react-native';
 
 export const SPACING = {
   xs: 4,
@@ -35,10 +35,10 @@ export function getMetricCardHeight(layout) {
 }
 
 export const CONTROL_HEIGHT = 48;
-export const CONTENT_MAX_WIDTH = 1120;
-export const READING_MAX_WIDTH = 920;
-export const FORM_MAX_WIDTH = 720;
-export const COPY_MAX_WIDTH = 680;
+export const CONTENT_MAX_WIDTH = 1440;
+export const READING_MAX_WIDTH = 1280;
+export const FORM_MAX_WIDTH = 860;
+export const COPY_MAX_WIDTH = 720;
 
 export function useResponsiveLayout() {
   const { height, width } = useWindowDimensions();
@@ -48,6 +48,7 @@ export function useResponsiveLayout() {
     const isPhone = width < 600;
     const isTablet = width >= 600 && width < 1024;
     const isDesktop = width >= 1024;
+    const isWebDesktop = Platform.OS === 'web' && width >= 768;
 
     return {
       height,
@@ -56,6 +57,7 @@ export function useResponsiveLayout() {
       isPhone,
       isTablet,
       isDesktop,
+      isWebDesktop,
       gutter: isCompact ? 14 : isPhone ? 18 : 24,
       contentMaxWidth: CONTENT_MAX_WIDTH,
       readingMaxWidth: READING_MAX_WIDTH,

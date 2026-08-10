@@ -26,6 +26,7 @@ const Stack = createNativeStackNavigator();
 function DashboardTabs() {
   const { colors } = useAppTheme();
   const insets = useSafeAreaInsets();
+  const layout = useResponsiveLayout();
   const icons = useMemo(
     () => ({
       Inicio: 'view-dashboard-outline',
@@ -46,7 +47,7 @@ function DashboardTabs() {
         tabBarInactiveTintColor: colors.textMuted,
         tabBarActiveBackgroundColor: colors.accentSoft,
         tabBarHideOnKeyboard: true,
-        tabBarStyle: {
+        tabBarStyle: layout.isWebDesktop ? { display: 'none' } : {
           height: 64 + insets.bottom,
           paddingBottom: Math.max(insets.bottom, 8),
           paddingTop: 8,

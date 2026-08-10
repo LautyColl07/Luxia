@@ -1,0 +1,24 @@
+export const SPACING: Record<string, number>;
+export const RADII: Record<string, number>;
+export const CARD_LAYOUT: Record<string, number>;
+export const CONTROL_HEIGHT: number;
+export const CONTENT_MAX_WIDTH: number;
+export const READING_MAX_WIDTH: number;
+export const FORM_MAX_WIDTH: number;
+export const COPY_MAX_WIDTH: number;
+export function getMetricCardHeight(layout: { isDesktop: boolean }): number;
+export function useResponsiveLayout(): {
+  height: number;
+  width: number;
+  isCompact: boolean;
+  isPhone: boolean;
+  isTablet: boolean;
+  isDesktop: boolean;
+  isWebDesktop: boolean;
+  gutter: number;
+  contentMaxWidth: number;
+  readingMaxWidth: number;
+  formMaxWidth: number;
+  copyMaxWidth: number;
+  topSpacing: number;
+};

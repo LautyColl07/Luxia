@@ -30,6 +30,13 @@ export type AppColors = {
   weekdayText: string;
   inputBackground: string;
   shadow: string;
+  sidebarBackground: string;
+  sidebarBorder: string;
+  sidebarMark: string;
+  sidebarActive: string;
+  sidebarHover: string;
+  sidebarText: string;
+  sidebarTextMuted: string;
   white: string;
 };
 
