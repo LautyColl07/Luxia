@@ -13,10 +13,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Mail, ArrowLeft } from "lucide-react-native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { FirebaseError } from "firebase/app";
-import { sendPasswordResetEmail } from "firebase/auth";
 
-import { auth } from "../config/firebase";
+import { authClient } from "../services/authClient";
 import { CARD_SHADOW, COLORS, TYPOGRAPHY } from "../theme/luxiaTheme";
 import { RootStackParamList } from "../types/navigation";
 
@@ -30,9 +28,6 @@ const ForgotPasswordScreen = ({ navigation }: ForgotPasswordScreenProps) => {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const safeSuccessMessage =
-    "Si el correo existe, te enviamos instrucciones para recuperar tu contraseña.";
-
   const handleSubmit = async () => {
     const trimmedEmail = email.trim();
 
@@ -53,22 +48,14 @@ const ForgotPasswordScreen = ({ navigation }: ForgotPasswordScreenProps) => {
       setError("");
       setMessage("");
 
-      if (!auth) {
-        throw new Error("Firebase Auth no esta configurado");
-      }
-
-      await sendPasswordResetEmail(auth, trimmedEmail);
-      setMessage(safeSuccessMessage);
-    } catch (error) {
-      if (
-        error instanceof FirebaseError &&
-        error.code === "auth/operation-not-allowed"
-      ) {
-        console.warn("[FORGOT_PASSWORD] La recuperacion no esta disponible.");
-      }
-
-      setMessage(safeSuccessMessage);
-      setError("");
+      const result = await authClient.resetPassword(trimmedEmail);
+      setMessage(result.message);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "No pudimos enviar el email de restablecimiento. Intenta nuevamente."
+      );
     } finally {
       setIsSubmitting(false);
     }

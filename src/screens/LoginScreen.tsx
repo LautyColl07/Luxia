@@ -89,7 +89,7 @@ export default function LoginScreen({ navigation }: any) {
 
             <View style={styles.form}>
               <View style={styles.inputGroup}>
-                <Text style={styles.label}>Correo electronico o usuario</Text>
+                <Text style={styles.label}>Correo electronico</Text>
 
                 <View
                   style={[
@@ -102,7 +102,7 @@ export default function LoginScreen({ navigation }: any) {
                   <TextInput
                     value={identifier}
                     onChangeText={setIdentifier}
-                    placeholder="tu.email@estudio.com o tu usuario"
+                    placeholder="tu.email@estudio.com"
                     placeholderTextColor="#5B6776"
                     autoCapitalize="none"
                     autoCorrect={false}

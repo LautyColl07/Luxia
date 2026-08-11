@@ -29,7 +29,7 @@ export default function DocumentsScreen({ navigation }) {
   const { colors } = useAppTheme();
   const insets = useSafeAreaInsets();
   const layout = useResponsiveLayout();
-  const { activeContextKey } = useStudyContext();
+  const { activeContext, activeContextKey } = useStudyContext();
   const styles = useMemo(
     () => createStyles(colors, layout, insets.top),
     [colors, insets.top, layout]
@@ -104,11 +104,18 @@ export default function DocumentsScreen({ navigation }) {
         return null;
       }
 
+      if (activeContext?.type === 'study' && activeContext.legalStudyId) {
+        fileUrl.searchParams.set('scope', 'study');
+        fileUrl.searchParams.set('legalStudyId', String(activeContext.legalStudyId));
+      } else {
+        fileUrl.searchParams.set('scope', 'personal');
+      }
+
       return fileUrl.toString();
     } catch {
       return null;
     }
-  }, []);
+  }, [activeContext]);
 
   const openDocument = useCallback(
     async (document) => {

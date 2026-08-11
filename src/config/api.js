@@ -1,5 +1,10 @@
+const publicUrls = {
+  EXPO_PUBLIC_API_URL: process.env.EXPO_PUBLIC_API_URL,
+  EXPO_PUBLIC_AI_URL: process.env.EXPO_PUBLIC_AI_URL,
+};
+
 function getRequiredHttpsUrl(environmentKey) {
-  const value = String(process.env[environmentKey] || "").trim().replace(/\/+$/, "");
+  const value = String(publicUrls[environmentKey] || "").trim().replace(/\/+$/, "");
 
   if (!value) {
     throw new Error(`${environmentKey} es obligatoria y debe usar HTTPS.`);

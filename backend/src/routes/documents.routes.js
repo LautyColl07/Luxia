@@ -8,6 +8,7 @@ const { documentsRateLimit } = require('../lib/rateLimit');
 const { validateDocumentFile } = require('../lib/fileValidation');
 const { STORAGE_ROOT, createUpload, ensureInsideStorage, removeTemporaryUpload } = require('../lib/upload');
 const { requireFirebaseAuth } = require('../middleware/firebaseAuth');
+const { getCaseScopeWhere, handleScopeError } = require('../lib/studyScope');
 const { logActivity } = require('../utils/activityLogger');
 
 const router = express.Router();
@@ -64,19 +65,23 @@ async function upsertUser(user) {
   });
 }
 
-async function getOwnedHearing(hearingId, userId) {
+async function getScopedHearing(hearingId, req) {
+  const caseScopeWhere = await getCaseScopeWhere(prisma, req);
   return prisma.hearing.findFirst({
     include: {
       case: true,
     },
     where: {
       id: String(hearingId),
-      userId,
       case: {
-        userId,
+        ...caseScopeWhere,
       },
     },
   });
+}
+
+function buildScopedFileWhere(caseScopeWhere) {
+  return { case: caseScopeWhere };
 }
 
 async function saveUploadedDocument({ baseName, file, hearingId, userId }) {
@@ -177,7 +182,7 @@ router.post('/', upload.single('file'), async (req, res) => {
 
     await upsertUser(req.authUser);
 
-    const hearing = await getOwnedHearing(hearingId, req.authUser.id);
+    const hearing = await getScopedHearing(hearingId, req);
 
     if (!hearing) {
       return res.status(404).json({
@@ -247,6 +252,7 @@ router.get('/', async (req, res) => {
   try {
     const page = parsePositiveInteger(req.query?.page, 1, MAX_PAGE, 'page');
     const limit = parsePositiveInteger(req.query?.limit, 50, MAX_LIMIT, 'limit');
+    const caseScopeWhere = await getCaseScopeWhere(prisma, req);
     const files = await prisma.file.findMany({
       include: {
         case: true,
@@ -259,15 +265,14 @@ router.get('/', async (req, res) => {
       orderBy: {
         createdAt: 'desc',
       },
-      where: {
-        userId: req.authUser.id,
-      },
+      where: buildScopedFileWhere(caseScopeWhere),
       skip: (page - 1) * limit,
       take: limit,
     });
 
     return res.json(files.map((file) => normalizeFileResponse(file)));
   } catch (error) {
+    if (handleScopeError(res, error)) return undefined;
     if (error?.status === 400) {
       return res.status(400).json({ error: error.message });
     }
@@ -281,10 +286,11 @@ router.get('/', async (req, res) => {
 router.get('/:id/download', async (req, res) => {
   try {
     const documentId = validateDocumentId(req.params.id);
+    const caseScopeWhere = await getCaseScopeWhere(prisma, req);
     const file = await prisma.file.findFirst({
       where: {
         id: documentId,
-        userId: req.authUser.id,
+        ...buildScopedFileWhere(caseScopeWhere),
       },
     });
 
@@ -298,6 +304,7 @@ router.get('/:id/download', async (req, res) => {
     await fs.promises.access(downloadPath, fs.constants.R_OK);
     return res.download(downloadPath, path.basename(file.fileName || downloadPath));
   } catch (error) {
+    if (handleScopeError(res, error)) return undefined;
     if (error?.status === 400) {
       return res.status(400).json({ error: error.message });
     }
@@ -323,3 +330,6 @@ router.use((error, req, res, next) => {
 });
 
 module.exports = router;
+module.exports.__testables = {
+  buildScopedFileWhere,
+};

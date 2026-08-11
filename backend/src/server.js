@@ -1,4 +1,3 @@
-const fs = require('fs');
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../.env'), quiet: true });
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env'), override: false, quiet: true });
@@ -10,6 +9,7 @@ const authRoutes = require('./routes/auth.routes');
 const casesRoutes = require('./routes/cases.routes');
 const documentRoutes = require('./routes/documents.routes');
 const hearingTranscriptionRoutes = require('./routes/hearingTranscription.routes');
+const legalStudyRoutes = require('./routes/legalStudies.routes');
 const luxRoutes = require('./routes/lux.routes');
 const transcriptionRoutes = require('./routes/transcription.routes');
 
@@ -21,10 +21,10 @@ app.use('/api/v1', (_req, res, next) => {
   next();
 });
 app.use('/api/v1', apiRateLimit);
-app.use('/api/v1/auth/resolve-login', authRateLimit);
 app.use('/api/v1/auth/register', authRateLimit);
 
 app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/legal-studies', legalStudyRoutes);
 app.use('/api/v1/activity', activityRoutes);
 app.use('/api/v1/lux', luxRoutes);
 app.use('/api/v1/transcriptions', transcriptionRoutes);

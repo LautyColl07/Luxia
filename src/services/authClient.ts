@@ -8,7 +8,6 @@ import {
 } from "firebase/auth";
 import { doc, getDoc, getDocFromCache, serverTimestamp, setDoc } from "firebase/firestore";
 
-import { API_BASE_URL } from "../config/api";
 import { auth, db, isFirebaseConfigured, missingFirebaseKeys } from "../config/firebase";
 import { setAuthToken, syncRegister } from "./api";
 import {
@@ -63,33 +62,6 @@ const registerSyncCompleted = new Set<string>();
 
 const getFirebaseSetupMessage = () =>
   `El cliente de Firebase no esta configurado. Completa EXPO_PUBLIC_FIREBASE_* en tu .env. Faltan: ${missingFirebaseKeys.join(", ")}.`;
-
-const resolveEmailForLogin = async (identifier: string) => {
-  try {
-    const response = await fetch(`${API_BASE_URL}/auth/resolve-login`, {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ identifier }),
-    });
-
-    const payload = await response.json().catch(() => null);
-
-    if (!response.ok || !payload?.success || typeof payload?.email !== "string") {
-      throw new Error(GENERIC_LOGIN_ERROR_MESSAGE);
-    }
-
-    return payload.email;
-  } catch (error) {
-    if (error instanceof Error && error.message === GENERIC_LOGIN_ERROR_MESSAGE) {
-      throw error;
-    }
-
-    throw new Error("No pudimos iniciar sesion. Intenta nuevamente.");
-  }
-};
 
 const mapFirebaseAuthError = (code: string) => {
   switch (code) {
@@ -298,10 +270,10 @@ export const authClient = {
     }
 
     try {
-      const normalizedIdentifier = normalizeLoginIdentifier(payload.identifier);
-      const emailForLogin = normalizedIdentifier.includes("@")
-        ? normalizedIdentifier
-        : await resolveEmailForLogin(normalizedIdentifier);
+      const emailForLogin = normalizeLoginIdentifier(payload.identifier);
+      if (!emailForLogin.includes("@")) {
+        throw new Error("Ingresa el correo electronico con el que registraste tu cuenta.");
+      }
 
       const credential = await signInWithEmailAndPassword(
         auth,
