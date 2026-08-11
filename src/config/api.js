@@ -1,14 +1,26 @@
-export const SERVER_IP = "172.16.4.48";
-export const API_PORT = "3000";
-export const AI_PORT = "5000";
+function getRequiredHttpsUrl(environmentKey) {
+  const value = String(process.env[environmentKey] || "").trim().replace(/\/+$/, "");
 
-const DEFAULT_API_URL = `http://${SERVER_IP}:${API_PORT}`;
-const DEFAULT_AI_URL = `http://${SERVER_IP}:${AI_PORT}`;
+  if (!value) {
+    throw new Error(`${environmentKey} es obligatoria y debe usar HTTPS.`);
+  }
 
-export const API_ROOT_URL = DEFAULT_API_URL;
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(value);
+  } catch {
+    throw new Error(`${environmentKey} no contiene una URL valida.`);
+  }
 
+  if (parsedUrl.protocol !== "https:") {
+    throw new Error(`${environmentKey} debe usar HTTPS para proteger los datos juridicos.`);
+  }
+
+  return value;
+}
+
+// Las URLs se inyectan al compilar. No se incluyen IPs ni endpoints HTTP en la app.
+export const API_ROOT_URL = getRequiredHttpsUrl("EXPO_PUBLIC_API_URL");
 export const API_BASE_URL = `${API_ROOT_URL}/api/v1`;
-
-export const AI_BASE_URL = DEFAULT_AI_URL;
-
+export const AI_BASE_URL = getRequiredHttpsUrl("EXPO_PUBLIC_AI_URL");
 export const SOCKET_URL = API_ROOT_URL;

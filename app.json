@@ -13,12 +13,7 @@
       "backgroundColor": "#F5F6F8"
     },
     "ios": {
-      "supportsTablet": true,
-      "infoPlist": {
-        "NSAppTransportSecurity": {
-          "NSAllowsArbitraryLoads": true
-        }
-      }
+      "supportsTablet": true
     },
     "android": {
       "adaptiveIcon": {

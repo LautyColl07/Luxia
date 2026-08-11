@@ -15,15 +15,6 @@ const transcriptionRoutes = require('./routes/transcription.routes');
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
-const apiConfigPath = path.resolve(__dirname, '../../src/config/api.js');
-const apiConfigSource = fs.readFileSync(apiConfigPath, 'utf8');
-const serverIpMatch = apiConfigSource.match(/export\s+const\s+SERVER_IP\s*=\s*['"]([^'"]+)['"]/);
-
-if (!serverIpMatch) {
-  throw new Error('No se encontro SERVER_IP en src/config/api.js');
-}
-
-const PUBLIC_BACKEND_URL = `http://${serverIpMatch[1]}:${PORT}`;
 
 app.use('/api/v1', (_req, res, next) => {
   res.set('Cache-Control', 'no-store');
@@ -66,5 +57,5 @@ app.use((error, _req, res, _next) => {
 });
 
 app.listen(PORT, HOST, () => {
-  console.log(`Luxia backend iniciado en http://${serverIpMatch[1]}:${PORT}.`);
+  console.log(`Luxia backend iniciado en ${HOST}:${PORT}.`);
 });
