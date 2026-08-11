@@ -1,6 +1,5 @@
 const publicUrls = {
   EXPO_PUBLIC_API_URL: process.env.EXPO_PUBLIC_API_URL,
-  EXPO_PUBLIC_AI_URL: process.env.EXPO_PUBLIC_AI_URL,
 };
 
 function getRequiredHttpsUrl(environmentKey) {
@@ -32,5 +31,6 @@ function getRequiredHttpsUrl(environmentKey) {
 // Las URLs se inyectan al compilar. No se incluyen IPs ni endpoints HTTP en la app.
 export const API_ROOT_URL = getRequiredHttpsUrl("EXPO_PUBLIC_API_URL");
 export const API_BASE_URL = `${API_ROOT_URL}/api/v1`;
-export const AI_BASE_URL = getRequiredHttpsUrl("EXPO_PUBLIC_AI_URL");
+// La app no contacta servicios de IA directamente: todo pasa por la API autenticada.
+export const AI_BASE_URL = "";
 export const SOCKET_URL = API_ROOT_URL;
