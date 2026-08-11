@@ -18,6 +18,11 @@ function getRequiredHttpsUrl(environmentKey) {
   }
 
   if (parsedUrl.protocol !== "https:") {
+    if (typeof __DEV__ !== "undefined" && __DEV__ && parsedUrl.protocol === "http:") {
+      console.warn(`${environmentKey} usa HTTP solo para desarrollo. Configura HTTPS antes de generar una compilacion.`);
+      return value;
+    }
+
     throw new Error(`${environmentKey} debe usar HTTPS para proteger los datos juridicos.`);
   }
 
