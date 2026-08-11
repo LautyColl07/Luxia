@@ -401,6 +401,10 @@ const createStyles = (colors, bottomInset) => StyleSheet.create({
   overlay: {
     flex: 1,
     justifyContent: 'flex-end',
+    ...(Platform.OS === 'web' ? {
+      justifyContent: 'center',
+      paddingHorizontal: 24,
+    } : {}),
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
@@ -424,6 +428,13 @@ const createStyles = (colors, bottomInset) => StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 24,
     elevation: 20,
+    ...(Platform.OS === 'web' ? {
+      width: '100%',
+      maxWidth: 960,
+      maxHeight: '90%',
+      borderRadius: 24,
+      paddingHorizontal: 24,
+    } : {}),
   },
   handle: {
     width: 44,
@@ -432,6 +443,7 @@ const createStyles = (colors, bottomInset) => StyleSheet.create({
     backgroundColor: colors.border,
     alignSelf: 'center',
     marginBottom: 14,
+    ...(Platform.OS === 'web' ? { display: 'none' } : {}),
   },
   header: {
     flexDirection: 'row',

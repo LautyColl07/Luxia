@@ -3,11 +3,12 @@ import { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useAppTheme } from '../context/ThemeContext';
-import { CARD_LAYOUT } from '../theme/layout';
+import { CARD_LAYOUT, useResponsiveLayout } from '../theme/layout';
 
 export default function MetricCard({ label, value, icon, accentColor, onPress }) {
   const { colors } = useAppTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const layout = useResponsiveLayout();
+  const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
   const normalizedValue = Number.isFinite(Number(value)) ? Number(value) : 0;
 
   return (
@@ -39,17 +40,17 @@ export default function MetricCard({ label, value, icon, accentColor, onPress })
   );
 }
 
-const createStyles = (colors) => StyleSheet.create({
+const createStyles = (colors, layout) => StyleSheet.create({
   card: {
     flex: 1,
     height: '100%',
     backgroundColor: colors.card,
-    borderRadius: CARD_LAYOUT.borderRadius,
-    padding: CARD_LAYOUT.padding,
+    borderRadius: layout.isWebDesktop ? 16 : CARD_LAYOUT.borderRadius,
+    padding: layout.isWebDesktop ? 16 : CARD_LAYOUT.padding,
     justifyContent: 'space-between',
     shadowColor: colors.shadow,
     shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.18,
+    shadowOpacity: layout.isWebDesktop ? 0.08 : 0.18,
     shadowRadius: 18,
     elevation: 4,
     borderWidth: 1,
