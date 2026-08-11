@@ -1,4 +1,4 @@
-import { request } from './api';
+import { request, USE_MOCKS } from './api';
 
 const ACTIVITY_ENDPOINT = '/activity';
 const ACTIVITY_TYPES = new Set(['case', 'hearing', 'task', 'document', 'lux', 'transcript']);
@@ -100,6 +100,30 @@ async function getActivityHistoryFromApi() {
 }
 
 export async function getActivityHistory() {
+  if (USE_MOCKS) {
+    const now = new Date().toISOString();
+    return normalizeActivityResponse([
+      {
+        id: 'demo-activity-case',
+        type: 'case',
+        title: 'Causa actualizada',
+        description: 'Martina actualizo la estrategia y documentacion de la causa.',
+        createdAt: now,
+        relatedEntityName: 'Gonzalez c/ Lopez',
+        relatedEntityId: '101',
+      },
+      {
+        id: 'demo-activity-hearing',
+        type: 'hearing',
+        title: 'Audiencia programada',
+        description: 'Se confirmo una nueva audiencia para esta semana.',
+        createdAt: new Date(Date.now() - 86400000).toISOString(),
+        relatedEntityName: 'Conciliacion con aseguradora',
+        relatedEntityId: '202',
+      },
+    ]);
+  }
+
   return getActivityHistoryFromApi();
 }
 

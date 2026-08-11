@@ -5,7 +5,9 @@ import mockData from '../data/mockData';
 import { normalizeStatusLabel } from '../utils/status';
 import { getUserDisplayName, getUserEmail, getUserRole } from '../utils/userDisplay';
 
-export const USE_MOCKS = false;
+// Modo de demostracion: toda la informacion vive en memoria y nunca se
+// intenta contactar al backend.
+export const USE_MOCKS = !Array.isArray(mockData);
 
 const DASHBOARD_RESUMEN_ENDPOINT = '/dashboard/resumen';
 
@@ -716,6 +718,13 @@ async function getRequestAuthHeaders(path, customHeaders = {}, forceRefresh = fa
 }
 
 export async function request(endpoint, options = {}) {
+  if (USE_MOCKS) {
+    throw createRequestError(
+      `La llamada a ${endpoint} no esta disponible en el modo de demostracion.`,
+      503
+    );
+  }
+
   if (!API_BASE_URL) {
     throw new Error('Configura API_BASE_URL en src/config/api.js para usar la API real.');
   }
