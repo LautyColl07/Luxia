@@ -7,6 +7,7 @@ const { apiRateLimit, authRateLimit } = require('./lib/rateLimit');
 const activityRoutes = require('./routes/activity.routes');
 const authRoutes = require('./routes/auth.routes');
 const casesRoutes = require('./routes/cases.routes');
+const dashboardRoutes = require('./routes/dashboard.routes');
 const documentRoutes = require('./routes/documents.routes');
 const hearingTranscriptionRoutes = require('./routes/hearingTranscription.routes');
 const legalStudyRoutes = require('./routes/legalStudies.routes');
@@ -24,6 +25,7 @@ app.use('/api/v1', apiRateLimit);
 app.use('/api/v1/auth/register', authRateLimit);
 
 app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/dashboard', dashboardRoutes);
 app.use('/api/v1/legal-studies', legalStudyRoutes);
 app.use('/api/v1/activity', activityRoutes);
 app.use('/api/v1/lux', luxRoutes);
