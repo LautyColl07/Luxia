@@ -95,6 +95,20 @@ export default function MoreScreen({ navigation }) {
     }));
   }, [notifications]);
 
+  const logout = useCallback(async () => {
+    try {
+      await signOut(auth);
+    } catch (logoutError) {
+      console.error('[MoreScreen] No se pudo cerrar la sesion.');
+      Alert.alert(
+        'No pudimos cerrar la sesion',
+        logoutError instanceof Error
+          ? logoutError.message
+          : 'Intenta nuevamente en unos instantes.'
+      );
+    }
+  }, []);
+
   const handleLogout = useCallback(() => {
     if (!auth) {
       Alert.alert(
@@ -104,27 +118,30 @@ export default function MoreScreen({ navigation }) {
       return;
     }
 
+    // React Native Web no ejecuta de forma consistente los callbacks de
+    // Alert.alert. Usamos la confirmacion del navegador para que el cierre
+    // continue despues de que el usuario confirme.
+    if (Platform.OS === 'web') {
+      const confirmed = globalThis.confirm(
+        'Vas a salir de tu cuenta actual. Quieres continuar?'
+      );
+
+      if (confirmed) {
+        void logout();
+      }
+
+      return;
+    }
+
     Alert.alert('Cerrar sesion', 'Vas a salir de tu cuenta actual. Quieres continuar?', [
       { style: 'cancel', text: 'Cancelar' },
       {
         style: 'destructive',
         text: 'Cerrar sesion',
-        onPress: async () => {
-          try {
-            await signOut(auth);
-          } catch (logoutError) {
-            console.error('[MoreScreen] No se pudo cerrar la sesion.');
-            Alert.alert(
-              'No pudimos cerrar la sesion',
-              logoutError instanceof Error
-                ? logoutError.message
-                : 'Intenta nuevamente en unos instantes.'
-            );
-          }
-        },
+        onPress: () => void logout(),
       },
     ]);
-  }, []);
+  }, [logout]);
 
   const handlePasswordReset = useCallback(async () => {
     const email = displayProfile.email?.trim();
