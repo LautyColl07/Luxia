@@ -8,6 +8,7 @@ const { documentsRateLimit } = require('../lib/rateLimit');
 const { validateDocumentFile } = require('../lib/fileValidation');
 const { STORAGE_ROOT, createUpload, ensureInsideStorage, removeTemporaryUpload } = require('../lib/upload');
 const { requireFirebaseAuth } = require('../middleware/firebaseAuth');
+const { getCaseScopeWhere } = require('../lib/studyScope');
 const { logActivity } = require('../utils/activityLogger');
 
 const router = express.Router();
@@ -64,17 +65,16 @@ async function upsertUser(user) {
   });
 }
 
-async function getOwnedHearing(hearingId, userId) {
-  return prisma.hearing.findFirst({
+async function getAuthorizedHearing(hearingId, req, prismaClient = prisma) {
+  const caseScopeWhere = await getCaseScopeWhere(prismaClient, req);
+
+  return prismaClient.hearing.findFirst({
     include: {
       case: true,
     },
     where: {
       id: String(hearingId),
-      userId,
-      case: {
-        userId,
-      },
+      case: caseScopeWhere,
     },
   });
 }
@@ -158,32 +158,44 @@ router.use(documentsRateLimit);
 
 router.post('/', upload.single('file'), async (req, res) => {
   let savedFile = null;
+  let databaseRecordCreated = false;
   try {
     const hearingId = normalizeOptionalString(req.body?.hearingId || req.body?.audienciaId);
+    const caseId = normalizeOptionalString(req.body?.caseId || req.body?.causaId);
     const documentType = normalizeOptionalString(req.body?.documentType || req.body?.tipo) || 'Documento';
     const baseName = normalizeOptionalString(req.body?.baseName || req.body?.nombreBase);
 
     if (!hearingId) {
+      await removeTemporaryUpload(req.file);
       return res.status(400).json({
         error: 'La audiencia es obligatoria para subir un documento.',
       });
     }
 
     if (documentType.length > MAX_DOCUMENT_TYPE_LENGTH) {
+      await removeTemporaryUpload(req.file);
       return res.status(400).json({
         error: 'El tipo de documento supera la longitud permitida.',
       });
     }
 
-    await upsertUser(req.authUser);
-
-    const hearing = await getOwnedHearing(hearingId, req.authUser.id);
+    const hearing = await getAuthorizedHearing(hearingId, req);
 
     if (!hearing) {
+      await removeTemporaryUpload(req.file);
       return res.status(404).json({
         error: 'No encontramos la audiencia seleccionada.',
       });
     }
+
+    if (caseId && caseId !== hearing.caseId) {
+      await removeTemporaryUpload(req.file);
+      return res.status(400).json({
+        error: 'La audiencia seleccionada no pertenece al caso indicado.',
+      });
+    }
+
+    await upsertUser(req.authUser);
 
     savedFile = await saveUploadedDocument({
       baseName,
@@ -211,24 +223,32 @@ router.post('/', upload.single('file'), async (req, res) => {
         },
       },
     });
+    databaseRecordCreated = true;
 
-    await logActivity({
-      userId: req.authUser.id,
-      userEmail: req.authUser.email,
-      userName: req.authUser.name,
-      type: 'document',
-      title: 'Documento subido',
-      description: `Se subio el documento ${created.fileName}.`,
-      relatedEntityType: 'document',
-      relatedEntityId: created.id,
-      relatedEntityName: created.fileName,
-    });
+    try {
+      await logActivity({
+        userId: req.authUser.id,
+        userEmail: req.authUser.email,
+        userName: req.authUser.name,
+        type: 'document',
+        title: 'Documento subido',
+        description: `Se subio el documento ${created.fileName}.`,
+        relatedEntityType: 'document',
+        relatedEntityId: created.id,
+        relatedEntityName: created.fileName,
+      });
+    } catch (activityError) {
+      console.warn('[DOCUMENTS] El documento se guardo, pero no se pudo registrar la actividad.', {
+        status: activityError?.status || 0,
+        name: activityError?.name || 'Error',
+      });
+    }
 
     return res.status(201).json(normalizeFileResponse(created));
   } catch (error) {
-    if (savedFile?.path) {
+    if (!databaseRecordCreated && savedFile?.path) {
       await fsp.unlink(savedFile.path).catch(() => null);
-    } else {
+    } else if (!databaseRecordCreated) {
       await removeTemporaryUpload(req.file);
     }
     const status = Number.isInteger(error?.status) && error.status >= 400 && error.status < 500
@@ -311,15 +331,30 @@ router.get('/:id/download', async (req, res) => {
 router.use((error, req, res, next) => {
   if (error?.name === 'MulterError') {
     void removeTemporaryUpload(req.file);
-    const status = error.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
-    return res.status(status).json({ error: 'El archivo no cumple los limites permitidos.' });
+    if (error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ error: 'El archivo supera el limite de 50 MB permitido.' });
+    }
+
+    if (error.code === 'LIMIT_UNEXPECTED_FILE') {
+      return res.status(400).json({ error: 'El campo del archivo debe llamarse file.' });
+    }
+
+    return res.status(400).json({ error: 'No pudimos leer el archivo enviado.' });
   }
 
   if (error) {
-    return res.status(500).json({ error: 'No se pudo procesar el archivo.' });
+    const status = Number.isInteger(error?.status) && error.status >= 400 && error.status < 500
+      ? error.status
+      : 500;
+    return res.status(status).json({
+      error: status < 500 ? error.message : 'No se pudo procesar el archivo.',
+    });
   }
 
   return next();
 });
 
 module.exports = router;
+module.exports.__testables = {
+  getAuthorizedHearing,
+};

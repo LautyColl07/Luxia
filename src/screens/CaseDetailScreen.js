@@ -103,7 +103,7 @@ export default function CaseDetailScreen({ navigation, route }) {
         </Pressable>
       </View>
 
-      <Section styles={styles} title="Audiencias">
+      <Section colors={colors} styles={styles} title="Audiencias">
         {hearings.length ? (
           hearings.map((hearing) => (
             <View key={hearing?.id} style={styles.sectionCard}>
@@ -137,7 +137,13 @@ export default function CaseDetailScreen({ navigation, route }) {
         )}
       </Section>
 
-      <Section styles={styles} title="Documentos">
+      <Section
+        actionLabel="Subir documento"
+        colors={colors}
+        onAction={() => navigation.navigate('UploadDocument', { caseId: caseDetail?.id })}
+        styles={styles}
+        title="Documentos"
+      >
         {documents.length ? (
           documents.map((document) => (
             <View key={document?.id} style={styles.sectionCard}>
@@ -153,13 +159,13 @@ export default function CaseDetailScreen({ navigation, route }) {
             actionLabel="Subir documento"
             icon="file-document-outline"
             message="Todavia no se cargaron documentos para esta causa."
-            onAction={() => navigation.navigate('UploadDocument')}
+            onAction={() => navigation.navigate('UploadDocument', { caseId: caseDetail?.id })}
             title="Sin documentos registrados"
           />
         )}
       </Section>
 
-      <Section styles={styles} title="Tareas">
+      <Section colors={colors} styles={styles} title="Tareas">
         {tasks.length ? (
           tasks.map((task) => (
             <View key={task?.id} style={styles.taskRow}>
@@ -198,10 +204,18 @@ export default function CaseDetailScreen({ navigation, route }) {
   );
 }
 
-function Section({ children, styles, title }) {
+function Section({ actionLabel, children, colors, onAction, styles, title }) {
   return (
     <View style={styles.section}>
-      <Text style={styles.sectionTitle}>{title}</Text>
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>{title}</Text>
+        {actionLabel && onAction ? (
+          <Pressable onPress={onAction} style={styles.sectionAction}>
+            <MaterialCommunityIcons color={colors.primary} name="plus" size={16} />
+            <Text style={styles.sectionActionText}>{actionLabel}</Text>
+          </Pressable>
+        ) : null}
+      </View>
       <View style={styles.sectionContent}>{children}</View>
     </View>
   );
@@ -283,9 +297,29 @@ const createStyles = (colors, layout) => StyleSheet.create({
   section: {
     gap: 12,
   },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
   sectionTitle: {
     color: colors.text,
     fontSize: 18,
+    fontWeight: '700',
+  },
+  sectionAction: {
+    minHeight: 36,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    backgroundColor: colors.accentSoft,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  sectionActionText: {
+    color: colors.primary,
+    fontSize: 12,
     fontWeight: '700',
   },
   sectionContent: {

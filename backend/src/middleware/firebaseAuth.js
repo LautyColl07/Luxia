@@ -21,6 +21,11 @@ async function getAuthenticatedUserFromRequest(req) {
   const token = bearerMatch?.[1]?.trim() || '';
 
   if (!token) {
+    console.warn('[AUTH] Token Firebase ausente.', {
+      method: req.method,
+      path: req.originalUrl,
+      hasAuthorizationHeader: Boolean(header),
+    });
     return null;
   }
 
@@ -51,7 +56,13 @@ function requireFirebaseAuth(req, res, next) {
       return next();
     })
     .catch((error) => {
-      console.warn('[AUTH] Token Firebase rechazado.', error?.code || 'unknown');
+      console.warn('[AUTH] Token Firebase rechazado.', {
+        method: req.method,
+        path: req.originalUrl,
+        code: error?.code || 'unknown',
+        name: error?.name || 'Error',
+        message: error?.message || 'Token invalido.',
+      });
       return res.status(401).json({
         error: 'Token Firebase ausente o invalido.',
       });

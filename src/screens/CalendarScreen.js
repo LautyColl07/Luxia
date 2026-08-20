@@ -15,6 +15,7 @@ import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
 import StudyContextSelector from '../components/StudyContextSelector';
+import { useAuth } from '../context/AuthContext';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { getAllCases, getCaseById, getHearings } from '../services/api';
@@ -44,6 +45,7 @@ const CATEGORY_OPTIONS = [
 
 export default function CalendarScreen({ navigation }) {
   const { colors } = useAppTheme();
+  const { authStatus, currentUser, isAuthReady } = useAuth();
   const { activeContextKey } = useStudyContext();
   const insets = useSafeAreaInsets();
   const layout = useResponsiveLayout();
@@ -68,6 +70,10 @@ export default function CalendarScreen({ navigation }) {
   const [error, setError] = useState('');
 
   const loadCalendar = useCallback(async () => {
+    if (!isAuthReady || authStatus !== 'authenticated' || !currentUser) {
+      return;
+    }
+
     try {
       setLoading(true);
       setError('');
@@ -99,12 +105,17 @@ export default function CalendarScreen({ navigation }) {
     } finally {
       setLoading(false);
     }
-  }, [activeContextKey]);
+  }, [activeContextKey, authStatus, currentUser, isAuthReady]);
 
   useFocusEffect(
     useCallback(() => {
+      if (!isAuthReady || authStatus !== 'authenticated' || !currentUser) {
+        return undefined;
+      }
+
       void loadCalendar();
-    }, [loadCalendar])
+      return undefined;
+    }, [authStatus, currentUser, isAuthReady, loadCalendar])
   );
 
   const allEvents = useMemo(() => buildCalendarEvents(calendarData), [calendarData]);

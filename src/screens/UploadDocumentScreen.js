@@ -1,29 +1,43 @@
 import * as DocumentPicker from 'expo-document-picker';
-import { useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
-import { getHearings, uploadDocument } from '../services/api';
+import { getCaseById, getHearings, uploadDocument } from '../services/api';
 import { useResponsiveLayout } from '../theme/layout';
 import { formatDateTime } from '../utils/date';
-import { showSuccessAndGoBack } from '../utils/formFeedback';
 
 const DOCUMENT_TYPES = ['Demanda', 'Escrito', 'Prueba', 'Anexo'];
 
-export default function UploadDocumentScreen({ navigation }) {
+const DOCUMENT_PICKER_TYPES = [
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'image/jpeg',
+  'image/png',
+];
+
+export default function UploadDocumentScreen({ navigation, route }) {
   const { colors } = useAppTheme();
   const { activeContextKey } = useStudyContext();
   const layout = useResponsiveLayout();
   const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
+  const caseId = route?.params?.caseId ? String(route.params.caseId) : '';
   const [hearings, setHearings] = useState([]);
+  const [caseDetail, setCaseDetail] = useState(null);
   const [loadingHearings, setLoadingHearings] = useState(true);
   const [hearingsError, setHearingsError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [selectedAsset, setSelectedAsset] = useState(null);
+  const [completed, setCompleted] = useState(false);
+  const [feedback, setFeedback] = useState(null);
+  const submittingRef = useRef(false);
+  const allowLeaveRef = useRef(false);
+  const abortControllerRef = useRef(null);
   const [form, setForm] = useState({
     hearingId: '',
     documentType: 'Escrito',
@@ -31,17 +45,55 @@ export default function UploadDocumentScreen({ navigation }) {
 
   useEffect(() => {
     void loadHearings();
-  }, [activeContextKey]);
+  }, [activeContextKey, caseId]);
+
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', (event) => {
+      if (!submittingRef.current || allowLeaveRef.current) {
+        return;
+      }
+
+      event.preventDefault();
+      Alert.alert(
+        'Carga en curso',
+        'El documento todavía se está subiendo. ¿Querés cancelar y volver?',
+        [
+          { text: 'Seguir subiendo', style: 'cancel' },
+          {
+            text: 'Cancelar y volver',
+            style: 'destructive',
+            onPress: () => {
+              allowLeaveRef.current = true;
+              abortControllerRef.current?.abort();
+              setFeedback({ tone: 'info', message: 'Carga cancelada' });
+              Alert.alert('Carga cancelada', 'No se elimino ningun documento.', [
+                { text: 'Volver', onPress: () => navigation.dispatch(event.data.action) },
+              ]);
+            },
+          },
+        ]
+      );
+    });
+
+    return unsubscribe;
+  }, [navigation]);
 
   async function loadHearings() {
     try {
       setLoadingHearings(true);
       setHearingsError('');
-      const items = await getHearings();
-      setHearings(Array.isArray(items) ? items : []);
+      if (caseId) {
+        const currentCase = await getCaseById(caseId);
+        setCaseDetail(currentCase);
+        setHearings(Array.isArray(currentCase?.hearings) ? currentCase.hearings : []);
+      } else {
+        const items = await getHearings();
+        setHearings(Array.isArray(items) ? items : []);
+      }
     } catch (error) {
       console.error('[UploadDocumentScreen] No se pudieron cargar las audiencias.');
       setHearings([]);
+      setCaseDetail(null);
       setHearingsError(
         error instanceof Error ? error.message : 'No pudimos cargar las audiencias disponibles.'
       );
@@ -62,15 +114,11 @@ export default function UploadDocumentScreen({ navigation }) {
       const result = await DocumentPicker.getDocumentAsync({
         copyToCacheDirectory: true,
         multiple: false,
-        type: [
-          'application/pdf',
-          'image/*',
-          'application/msword',
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        ],
+        type: DOCUMENT_PICKER_TYPES,
       });
 
       if (result.canceled) {
+        setFeedback({ tone: 'info', message: 'Carga cancelada' });
         return;
       }
 
@@ -82,14 +130,22 @@ export default function UploadDocumentScreen({ navigation }) {
       }
 
       setSelectedAsset(asset);
-      Alert.alert('Archivo seleccionado', `${asset.name || 'Documento'} quedo listo para subirse.`);
+      setCompleted(false);
+      setFeedback({
+        tone: 'info',
+        message: `Archivo seleccionado: ${asset.name || 'Documento'}`,
+      });
     } catch (error) {
       console.error('[UploadDocumentScreen] No se pudo seleccionar el archivo.');
-      Alert.alert('No se pudo seleccionar el archivo', 'Intenta nuevamente.');
+      setFeedback({ tone: 'error', message: 'No se pudo seleccionar el archivo. Intenta nuevamente.' });
     }
   };
 
   const handleUpload = async () => {
+    if (submittingRef.current) {
+      return;
+    }
+
     if (!form.hearingId || !selectedAsset?.uri) {
       Alert.alert(
         'Informacion incompleta',
@@ -99,27 +155,61 @@ export default function UploadDocumentScreen({ navigation }) {
     }
 
     try {
+      submittingRef.current = true;
       setSubmitting(true);
+      setCompleted(false);
+      setFeedback({ tone: 'info', message: 'Carga iniciada' });
+      abortControllerRef.current = new AbortController();
       await uploadDocument({
+        caseId: caseId || selectedHearing?.caseId,
         hearingId: form.hearingId,
         documentType: form.documentType,
         asset: selectedAsset,
+        signal: abortControllerRef.current.signal,
       });
 
-      showSuccessAndGoBack(
-        navigation,
-        'Documento cargado',
-        'El documento se vinculo correctamente con la audiencia.'
-      );
+      setCompleted(true);
+      setFeedback({ tone: 'success', message: 'Documento agregado al caso correctamente' });
     } catch (error) {
+      if (error?.status === 499) {
+        return;
+      }
+
       console.error('[UploadDocumentScreen] No se pudo subir el documento.');
-      Alert.alert(
-        'No se pudo subir el documento.',
-        error instanceof Error ? error.message : 'No se pudo subir el documento.'
-      );
+      setCompleted(false);
+      setFeedback({
+        tone: 'error',
+        message: `No se pudo agregar el documento. ${error instanceof Error ? error.message : 'Intenta nuevamente.'}`,
+      });
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
+      abortControllerRef.current = null;
     }
+  };
+
+  const returnToCase = () => {
+    const targetCaseId = caseId || selectedHearing?.caseId;
+    const state = navigation.getState?.();
+    const previousRoute = state?.routes?.[Math.max(0, (state?.index || 0) - 1)];
+    const previousCaseId = previousRoute?.params?.caseId;
+
+    if (targetCaseId && previousRoute?.name === 'CaseDetail' && String(previousCaseId) === String(targetCaseId)) {
+      navigation.goBack();
+      return;
+    }
+
+    if (targetCaseId) {
+      navigation.replace('CaseDetail', { caseId: targetCaseId });
+      return;
+    }
+
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+
+    navigation.replace('MainTabs');
   };
 
   if (loadingHearings && !hearings.length) {
@@ -147,7 +237,7 @@ export default function UploadDocumentScreen({ navigation }) {
         actionLabel="Registrar audiencia"
         icon="calendar-blank-outline"
         message="Todavia no hay audiencias disponibles para vincular documentos."
-        onAction={() => navigation.navigate('NewHearing')}
+        onAction={() => navigation.navigate('NewHearing', caseId ? { caseId } : undefined)}
         title="Sin audiencias registradas"
       />
     );
@@ -157,8 +247,21 @@ export default function UploadDocumentScreen({ navigation }) {
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} style={styles.screen}>
       <Text style={styles.title}>Subir documento</Text>
       <Text style={styles.subtitle}>
-        Registra un documento y vinculalo con la audiencia correspondiente.
+        {caseDetail?.title
+          ? `Agrega un documento a ${caseDetail.title} y vinculalo con una audiencia.`
+          : 'Registra un documento y vinculalo con la audiencia correspondiente.'}
       </Text>
+
+      {feedback ? (
+        <View style={[styles.feedback, styles[`feedback${feedback.tone}`] || styles.feedbackinfo]}>
+          <Text style={styles.feedbackText}>{feedback.message}</Text>
+          {feedback.tone === 'error' ? (
+            <Pressable disabled={submitting} onPress={handleUpload} style={styles.retryButton}>
+              <Text style={styles.retryButtonText}>Reintentar</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
 
       <Field label="Audiencia vinculada" styles={styles}>
         <View style={styles.selectorList}>
@@ -198,7 +301,11 @@ export default function UploadDocumentScreen({ navigation }) {
         </View>
       </Field>
 
-      <Pressable onPress={handleSelectFile} style={styles.secondaryButton}>
+      <Pressable
+        disabled={submitting}
+        onPress={handleSelectFile}
+        style={[styles.secondaryButton, submitting && styles.buttonDisabled]}
+      >
         <Text style={styles.secondaryButtonText}>
           {selectedAsset?.name ? 'Cambiar archivo' : 'Seleccionar archivo'}
         </Text>
@@ -223,10 +330,17 @@ export default function UploadDocumentScreen({ navigation }) {
         onPress={handleUpload}
         style={[styles.submitButton, submitting && styles.submitButtonDisabled]}
       >
+        {submitting ? <ActivityIndicator color={colors.textOnPrimary} size="small" /> : null}
         <Text style={styles.submitButtonText}>
-          {submitting ? 'Subiendo...' : 'Guardar documento'}
+          {submitting ? 'Subiendo documento…' : 'Guardar documento'}
         </Text>
       </Pressable>
+
+      {completed ? (
+        <Pressable onPress={returnToCase} style={styles.returnButton}>
+          <Text style={styles.returnButtonText}>Volver al caso</Text>
+        </Pressable>
+      ) : null}
     </ScrollView>
   );
 }
@@ -340,6 +454,43 @@ const createStyles = (colors, layout) => StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
   },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+  feedback: {
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  feedbackinfo: {
+    backgroundColor: colors.accentSoft,
+  },
+  feedbacksuccess: {
+    backgroundColor: colors.successSoft,
+  },
+  feedbackerror: {
+    backgroundColor: colors.dangerSoft,
+  },
+  feedbackText: {
+    color: colors.text,
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  retryButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 10,
+    backgroundColor: colors.card,
+  },
+  retryButtonText: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
   summaryCard: {
     backgroundColor: colors.card,
     borderRadius: 22,
@@ -369,12 +520,29 @@ const createStyles = (colors, layout) => StyleSheet.create({
     borderRadius: 16,
     paddingVertical: 14,
     alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
   },
   submitButtonDisabled: {
     opacity: 0.7,
   },
   submitButtonText: {
     color: colors.textOnPrimary,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  returnButton: {
+    backgroundColor: colors.card,
+    minHeight: 52,
+    borderRadius: 16,
+    paddingVertical: 14,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.primary,
+  },
+  returnButtonText: {
+    color: colors.primary,
     fontSize: 15,
     fontWeight: '700',
   },

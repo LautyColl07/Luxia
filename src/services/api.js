@@ -600,6 +600,19 @@ function createRequestError(message, status = 0, data = null) {
   return error;
 }
 
+function logApiDiagnostic(level, label, details) {
+  if (typeof __DEV__ !== 'undefined' && __DEV__ && typeof console?.[level] === 'function') {
+    console[level](label, details);
+  }
+}
+
+function getAuthDiagnostic(token) {
+  return {
+    hasToken: Boolean(token),
+    tokenLength: typeof token === 'string' ? token.length : 0,
+  };
+}
+
 function isTransientConnectionError(error) {
   const code = String(error?.code || '').toLowerCase();
   const message = String(error?.message || '').toLowerCase();
@@ -621,7 +634,19 @@ function getErrorMessage(status, data) {
   }
 
   if (status === 403) {
-    return 'No tenes permisos para realizar esta operacion.';
+    return data?.error || 'No tenes permisos para realizar esta operacion.';
+  }
+
+  if (status === 404) {
+    return data?.error || 'No encontramos el recurso solicitado.';
+  }
+
+  if (status === 413) {
+    return 'El archivo supera el limite de 50 MB permitido.';
+  }
+
+  if (status === 415) {
+    return data?.error || 'El formato del archivo no esta permitido. Usa PDF, DOC, DOCX, JPG o PNG.';
   }
 
   if (status === 0 || status >= 500) {
@@ -732,6 +757,7 @@ export async function request(endpoint, options = {}) {
   const requestHeaders = isProtectedEndpoint(path)
     ? omitAuthorizationHeader(fetchOptions.headers)
     : fetchOptions.headers;
+  const method = String(fetchOptions.method || 'GET').toUpperCase();
   const hasJsonBody =
     fetchOptions.body !== undefined &&
     fetchOptions.body !== null &&
@@ -739,8 +765,15 @@ export async function request(endpoint, options = {}) {
     typeof fetchOptions.body !== 'string';
   const body = hasJsonBody ? JSON.stringify(fetchOptions.body) : fetchOptions.body;
   const makeRequest = async (authHeaders) => {
+    logApiDiagnostic('info', '[API request]', {
+      url,
+      method,
+      endpoint: path,
+      ...getAuthDiagnostic(authHeaders?.Authorization),
+    });
+
     try {
-      return await runWithTimeout(
+      const response = await runWithTimeout(
         fetch(url, {
           ...fetchOptions,
           body,
@@ -756,12 +789,45 @@ export async function request(endpoint, options = {}) {
         requestTimeoutMs,
         requestTimeoutMessage
       );
+
+      logApiDiagnostic('info', '[API response]', {
+        url,
+        method,
+        status: response.status,
+        ok: response.ok,
+      });
+      return response;
     } catch (error) {
+      if (error?.name === 'AbortError') {
+        throw createRequestError('La solicitud fue cancelada.', 499, error);
+      }
+
+      logApiDiagnostic('error', '[API network/timeout error]', {
+        url,
+        method,
+        name: error?.name || 'Error',
+        message: error?.message || String(error),
+        ...getAuthDiagnostic(authHeaders?.Authorization),
+      });
       throw createRequestError(CONNECTION_ERROR_MESSAGE, 0, error);
     }
   };
 
-  let authInfo = await getRequestAuthHeaders(path, requestHeaders);
+  let authInfo;
+  try {
+    authInfo = await getRequestAuthHeaders(path, requestHeaders);
+  } catch (error) {
+    logApiDiagnostic('error', '[API auth error]', {
+      url,
+      method,
+      status: error?.status || 0,
+      name: error?.name || 'Error',
+      message: error?.message || String(error),
+      currentUser: Boolean(auth?.currentUser),
+      ...getAuthDiagnostic(authToken),
+    });
+    throw error;
+  }
   let response = await makeRequest(authInfo.headers);
   let retriedWithFreshToken = false;
 
@@ -804,6 +870,15 @@ export async function request(endpoint, options = {}) {
   }
 
   if (!response.ok) {
+    logApiDiagnostic('error', '[API HTTP error]', {
+      url,
+      method,
+      status: response.status,
+      body: typeof data === 'string' ? data.slice(0, 500) : data,
+      currentUser: Boolean(auth?.currentUser),
+      ...getAuthDiagnostic(authInfo.token),
+    });
+
     if (response.status === 401 && retriedWithFreshToken && authInfo.usesFirebaseToken) {
       setAuthToken(null);
       void signOut(auth).catch(() => undefined);
@@ -1085,8 +1160,8 @@ export async function getCases(context = null, params = {}) {
   const queryStr = `?${queryParams.toString()}`;
 
   const response = await requestWithFallback(
-    `/cases${queryStr}`,
-    `/causas${queryStr}`
+    `/causas${queryStr}`,
+    `/cases${queryStr}`
   );
 
   const page = normalizePaginatedResponse(response, normalizeCase);
@@ -1113,7 +1188,7 @@ export async function getCaseById(id) {
     return simulateDelay(getCaseDetailMock(id));
   }
 
-  const data = await requestWithFallback(withWorkScope(`/cases/${id}`), withWorkScope(`/causas/${id}`));
+  const data = await requestWithFallback(withWorkScope(`/causas/${id}`), withWorkScope(`/cases/${id}`));
   const normalizedCase = normalizeCase(data);
   const hasHearings = Array.isArray(data?.hearings) || Array.isArray(data?.audiencias);
   const hasDocuments =
@@ -1189,7 +1264,7 @@ export async function createCase(data) {
     return simulateDelay(newCase);
   }
 
-  const endpoint = withWorkScope('/cases');
+  const endpoint = withWorkScope('/causas');
   const requestedStudyId = safeOptionalString(data.legalStudyId);
   const caseData = {
     ...normalizeCasePayload(data),
@@ -1202,7 +1277,7 @@ export async function createCase(data) {
         ? { legalStudyId: activeWorkContext.legalStudyId }
         : {}),
   };
-  const response = await requestWithFallback(endpoint, withWorkScope('/causas'), { method: 'POST', body: caseData });
+  const response = await requestWithFallback(endpoint, withWorkScope('/cases'), { method: 'POST', body: caseData });
   return normalizeCase({
     ...response,
     title: response?.title ?? response?.titulo ?? response?.caratula ?? caseData.caratula,
@@ -1235,8 +1310,8 @@ export async function updateCase(id, data) {
 
   const payload = normalizeCasePayload(data);
   const response = await requestWithFallback(
-    withWorkScope(`/cases/${id}`),
     withWorkScope(`/causas/${id}`),
+    withWorkScope(`/cases/${id}`),
     { method: 'PUT', body: payload }
   );
   return normalizeCase({
@@ -1383,6 +1458,52 @@ function normalizeDocumentPayload(data = {}) {
   };
 }
 
+function isBlobLike(value) {
+  return Boolean(
+    value &&
+      typeof value === 'object' &&
+      typeof value.arrayBuffer === 'function' &&
+      typeof value.type === 'string'
+  );
+}
+
+function isBrowserRuntime() {
+  return typeof window !== 'undefined' && typeof window.document !== 'undefined';
+}
+
+async function appendFormDataFile(formData, fieldName, file = {}) {
+  const name = file.name || `documento-${Date.now()}`;
+  const type = file.type || 'application/octet-stream';
+
+  if (isBlobLike(file.file)) {
+    formData.append(fieldName, file.file, name);
+    return;
+  }
+
+  if (isBrowserRuntime()) {
+    let response;
+    try {
+      response = await fetch(file.uri);
+    } catch (error) {
+      throw createRequestError('No pudimos leer el archivo seleccionado.', 400, error);
+    }
+
+    if (!response.ok) {
+      throw createRequestError('No pudimos leer el archivo seleccionado.', response.status);
+    }
+
+    const blob = await response.blob();
+    formData.append(fieldName, blob, name);
+    return;
+  }
+
+  formData.append(fieldName, {
+    uri: file.uri,
+    name,
+    type,
+  });
+}
+
 export async function uploadDocument(data) {
   if (USE_MOCKS) {
     const nextId = Math.max(0, ...mockStore.documents.map((item) => item.id)) + 1;
@@ -1409,6 +1530,7 @@ export async function uploadDocument(data) {
 
   const asset = data?.asset || null;
   const hearingId = safeString(data?.hearingId ?? data?.audienciaId, '').trim();
+  const caseId = safeString(data?.caseId ?? data?.causaId, '').trim();
   const documentType = safeString(data?.documentType ?? data?.tipo, '').trim();
   const baseName = safeString(data?.baseName ?? data?.nombreBase, '').trim();
 
@@ -1418,24 +1540,32 @@ export async function uploadDocument(data) {
 
   const formData = new FormData();
   formData.append('hearingId', String(hearingId));
+  if (caseId) {
+    formData.append('caseId', caseId);
+  }
   if (documentType) {
     formData.append('documentType', documentType);
   }
   if (baseName) {
     formData.append('baseName', baseName);
   }
-  formData.append('file', {
-    uri: asset.uri,
+  await appendFormDataFile(formData, 'file', {
+    file: asset.file,
     name: asset.name || `documento-${Date.now()}.pdf`,
-    type: asset.mimeType || 'application/octet-stream',
+    type: asset.mimeType || asset.type || 'application/octet-stream',
+    uri: asset.uri,
   });
   const uploadEndpoint = withWorkScope('/documentos');
   if (activeWorkContext?.type === 'study' && activeWorkContext?.legalStudyId) {
     formData.append('legalStudyId', String(activeWorkContext.legalStudyId));
   }
-  const payload = await request(uploadEndpoint, { method: 'POST', body: formData });
-
-  await getDocuments().catch(() => []);
+  const payload = await request(uploadEndpoint, {
+    method: 'POST',
+    timeout: 180000,
+    timeoutMessage: 'La subida del documento tardo demasiado.',
+    body: formData,
+    signal: data?.signal,
+  });
 
   if (!payload) {
     return null;
@@ -1456,10 +1586,10 @@ export async function uploadPdfDocumentFromHearing({ fileUri, hearingId, fileNam
 
   const formData = new FormData();
 
-  formData.append('file', {
-    uri: fileUri,
+  await appendFormDataFile(formData, 'file', {
+    name: fileName || `documento-${Date.now()}.pdf`,
     type: 'application/pdf',
-    name: fileName,
+    uri: fileUri,
   });
 
   formData.append('hearingId', String(hearingId));

@@ -8,6 +8,7 @@ import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
 import StatusBadge from '../components/StatusBadge';
+import { useAuth } from '../context/AuthContext';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { getCases } from '../services/api';
@@ -27,6 +28,7 @@ export default function CasesScreen({ navigation }) {
   const { colors } = useAppTheme();
   const insets = useSafeAreaInsets();
   const layout = useResponsiveLayout();
+  const { authStatus, currentUser, isAuthReady } = useAuth();
   const { activeContext, activeContextKey, legalStudies, activeLegalStudy, selectPersonalContext, selectStudyContext } = useStudyContext();
   const styles = useMemo(
     () => createStyles(colors, layout, insets.top),
@@ -83,6 +85,10 @@ export default function CasesScreen({ navigation }) {
   }, [segmentAnim, activeLegalStudy, legalStudies, selectStudyContext, selectPersonalContext]);
 
   const loadCases = useCallback(async (isRefresh = false, fetchPage = 1, currentFilters = filters) => {
+    if (!isAuthReady || authStatus !== 'authenticated' || !currentUser) {
+      return;
+    }
+
     try {
       if (isRefresh) {
         setRefreshing(true);
@@ -113,7 +119,15 @@ export default function CasesScreen({ navigation }) {
       setTotalPages(response.totalPages || 1);
       
     } catch (loadError) {
-      console.error('[CasesScreen] No se pudieron cargar las causas.');
+      console.error('[CasesScreen] No se pudieron cargar las causas.', {
+        name: loadError?.name || 'Error',
+        message: loadError?.message || String(loadError),
+        status: loadError?.status || 0,
+        response: loadError?.data || loadError?.response || null,
+        authStatus,
+        isAuthReady,
+        hasCurrentUser: Boolean(currentUser),
+      });
       if (fetchPage === 1) {
         setError(
           loadError instanceof Error
@@ -126,12 +140,17 @@ export default function CasesScreen({ navigation }) {
       setRefreshing(false);
       setFetchingMore(false);
     }
-  }, [activeContextKey, context]);
+  }, [activeContextKey, authStatus, context, currentUser, isAuthReady]);
 
   useFocusEffect(
     useCallback(() => {
+      if (!isAuthReady || authStatus !== 'authenticated' || !currentUser) {
+        return undefined;
+      }
+
       void loadCases(false, 1, filters);
-    }, [loadCases, filters])
+      return undefined;
+    }, [authStatus, currentUser, filters, isAuthReady, loadCases])
   );
 
   const handleApplyFilters = () => {

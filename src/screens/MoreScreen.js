@@ -24,7 +24,7 @@ const APPEARANCE_OPTIONS = [
 ];
 
 export default function MoreScreen({ navigation }) {
-  const { currentUser } = useAuth();
+  const { authStatus, currentUser, isAuthReady } = useAuth();
   const { legalStudies, refreshLegalStudies } = useStudyContext();
   const { colors, isDark, resolvedTheme, setThemePreference, themePreference } = useAppTheme();
   const insets = useSafeAreaInsets();
@@ -50,6 +50,10 @@ export default function MoreScreen({ navigation }) {
   const [savingStudy, setSavingStudy] = useState(false);
 
   const loadProfile = useCallback(async () => {
+    if (!isAuthReady || authStatus !== 'authenticated' || !currentUser) {
+      return;
+    }
+
     try {
       setLoading(true);
       setError('');
@@ -66,12 +70,17 @@ export default function MoreScreen({ navigation }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [authStatus, currentUser, isAuthReady]);
 
   useFocusEffect(
     useCallback(() => {
+      if (!isAuthReady || authStatus !== 'authenticated' || !currentUser) {
+        return undefined;
+      }
+
       void loadProfile();
-    }, [loadProfile])
+      return undefined;
+    }, [authStatus, currentUser, isAuthReady, loadProfile])
   );
 
   const displayProfile = useMemo(

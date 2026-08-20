@@ -2,7 +2,7 @@ const axios = require('axios');
 const FormData = require('form-data');
 const fs = require('fs');
 
-const DEFAULT_AI_BASE_URL = 'http://25.1.22.89:5000';
+const DEFAULT_AI_BASE_URL = 'http://172.16.1.50:5000';
 
 const AI_BASE_URL =
   process.env.TRANSCRIPTION_SERVICE_URL ||
