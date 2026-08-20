@@ -19,6 +19,7 @@ import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
 import StudyContextSelector from '../components/StudyContextSelector';
 import { API_ROOT_URL } from '../config/api';
+import { useAuth } from '../context/AuthContext';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { getCurrentIdToken, getDocuments } from '../services/api';
@@ -27,6 +28,7 @@ import { formatDate } from '../utils/date';
 
 export default function DocumentsScreen({ navigation }) {
   const { colors } = useAppTheme();
+  const { authStatus, currentUser, isAuthReady } = useAuth();
   const insets = useSafeAreaInsets();
   const layout = useResponsiveLayout();
   const { activeContext, activeContextKey } = useStudyContext();
@@ -45,6 +47,10 @@ export default function DocumentsScreen({ navigation }) {
   const [searchText, setSearchText] = useState('');
 
   const loadDocuments = useCallback(async () => {
+    if (!isAuthReady || authStatus !== 'authenticated' || !currentUser) {
+      return;
+    }
+
     try {
       setLoading(true);
       setError('');
@@ -60,12 +66,17 @@ export default function DocumentsScreen({ navigation }) {
     } finally {
       setLoading(false);
     }
-  }, [activeContextKey]);
+  }, [activeContextKey, authStatus, currentUser, isAuthReady]);
 
   useFocusEffect(
     useCallback(() => {
+      if (!isAuthReady || authStatus !== 'authenticated' || !currentUser) {
+        return undefined;
+      }
+
       void loadDocuments();
-    }, [loadDocuments])
+      return undefined;
+    }, [authStatus, currentUser, isAuthReady, loadDocuments])
   );
 
   const filteredDocuments = useMemo(() => {

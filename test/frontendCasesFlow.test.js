@@ -129,3 +129,19 @@ test('los componentes usan el resultado exitoso, conservan estados de error y re
   assert.match(caseSource, /selectPersonalContext\(\)/);
   assert.match(calendarSource, /getAllCases\(\)/);
 });
+
+test('la carga de documentos conserva el caso y contempla native, web y reintento', () => {
+  const caseSource = fs.readFileSync(path.join(root, 'src/screens/CaseDetailScreen.js'), 'utf8');
+  const uploadSource = fs.readFileSync(path.join(root, 'src/screens/UploadDocumentScreen.js'), 'utf8');
+  const apiSource = fs.readFileSync(path.join(root, 'src/services/api.js'), 'utf8');
+
+  assert.match(caseSource, /navigate\('UploadDocument', \{ caseId: caseDetail\?\.id \}\)/);
+  assert.match(uploadSource, /getCaseById\(caseId\)/);
+  assert.match(uploadSource, /Subiendo documento…/);
+  assert.match(uploadSource, /Documento agregado al caso correctamente/);
+  assert.match(uploadSource, /Reintentar/);
+  assert.match(uploadSource, /beforeRemove/);
+  assert.match(apiSource, /appendFormDataFile/);
+  assert.match(apiSource, /caseId\)/);
+  assert.match(apiSource, /timeout: 180000/);
+});

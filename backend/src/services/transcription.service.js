@@ -2,31 +2,13 @@ const axios = require('axios');
 const FormData = require('form-data');
 const fs = require('fs');
 
-function getTranscriptionServiceUrl() {
-  const value = String(
-    process.env.TRANSCRIPTION_SERVICE_URL ||
-    process.env.AI_BASE_URL ||
-    process.env.WHISPER_URL ||
-    ''
-  ).trim().replace(/\/+$/, '');
+const DEFAULT_AI_BASE_URL = 'http://172.16.1.50:5000';
 
-  if (!value) {
-    throw new Error('TRANSCRIPTION_SERVICE_URL debe configurarse con una URL HTTPS.');
-  }
-
-  let parsedUrl;
-  try {
-    parsedUrl = new URL(value);
-  } catch {
-    throw new Error('TRANSCRIPTION_SERVICE_URL no contiene una URL valida.');
-  }
-
-  if (parsedUrl.protocol !== 'https:') {
-    throw new Error('TRANSCRIPTION_SERVICE_URL debe usar HTTPS para proteger el audio.');
-  }
-
-  return value;
-}
+const AI_BASE_URL =
+  process.env.TRANSCRIPTION_SERVICE_URL ||
+  process.env.AI_BASE_URL ||
+  process.env.WHISPER_URL ||
+  DEFAULT_AI_BASE_URL;
 
 function getTranscriptFromPayload(payload) {
   if (!payload || typeof payload !== 'object') {
@@ -60,7 +42,7 @@ async function transcribeAudioChunk(file) {
 
   console.log('[TRANSCRIPTION] sending chunk to AI service');
 
-  const response = await axios.post(`${getTranscriptionServiceUrl()}/api/transcribir`, formData, {
+  const response = await axios.post(`${AI_BASE_URL}/api/transcribir`, formData, {
     headers: formData.getHeaders(),
     maxBodyLength: Number(process.env.TRANSCRIPTION_CHUNK_MAX_BYTES || 50 * 1024 * 1024),
     maxContentLength: 1024 * 1024,

@@ -195,12 +195,29 @@ router.get('/me', requireFirebaseAuth, async (req, res) => {
     });
 
     if (!user) {
+      console.warn('[AUTH] Perfil local no registrado.', {
+        method: req.method,
+        path: req.originalUrl,
+        uid: identity.id,
+      });
       return sendAuthError(res, 404, 'El perfil local todavia no existe.');
     }
 
+    console.info('[AUTH] Perfil local consultado.', {
+      method: req.method,
+      path: req.originalUrl,
+      uid: identity.id,
+    });
     return res.json(toSafeUser(user));
   } catch (error) {
-    console.error('[AUTH] No se pudo consultar el perfil local.');
+    console.error('[AUTH] Error de base de datos al consultar el perfil local.', {
+      method: req.method,
+      path: req.originalUrl,
+      uid: identity.id,
+      name: error?.name || 'Error',
+      message: error?.message || 'Error desconocido.',
+      code: error?.code || 'unknown',
+    });
     return sendAuthError(res, 500, 'No se pudo consultar el perfil local.');
   }
 });
