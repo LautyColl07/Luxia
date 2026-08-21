@@ -1,0 +1,90 @@
+name: Build Luxia V1.0 DNDA APK
+
+on:
+  push:
+    branches:
+      - dnda/luxia-v1.0
+    paths-ignore:
+      - LUXIA_V1.0_DNDA/APLICACION_COMPILADA/**
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      EXPO_PUBLIC_LUXIA_SERVER_IP: ${{ vars.LUXIA_SERVER_IP || '172.16.4.48' }}
+      EXPO_PUBLIC_LUXIA_API_PROTOCOL: ${{ vars.LUXIA_API_PROTOCOL || 'http' }}
+      EXPO_PUBLIC_LUXIA_API_PORT: ${{ vars.LUXIA_API_PORT || '3000' }}
+      EXPO_PUBLIC_LUXIA_AI_PORT: ${{ vars.LUXIA_AI_PORT || '5000' }}
+
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: dnda/luxia-v1.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install application dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Create temporary Android signing key
+        run: |
+          keytool -genkeypair -v \
+            -keystore android/app/debug.keystore \
+            -storepass android \
+            -alias androiddebugkey \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Luxia DNDA Temporary,O=Luxia,C=AR"
+
+      - name: Build release APK
+        run: |
+          chmod +x android/gradlew
+          ./android/gradlew -p android assembleRelease --no-daemon
+
+      - name: Remove temporary signing key
+        if: always()
+        run: rm -f android/app/debug.keystore
+
+      - name: Store APK and checksum
+        run: |
+          mkdir -p LUXIA_V1.0_DNDA/APLICACION_COMPILADA
+          cp android/app/build/outputs/apk/release/app-release.apk \
+            LUXIA_V1.0_DNDA/APLICACION_COMPILADA/Luxia-v1.0.0-android.apk
+          cd LUXIA_V1.0_DNDA/APLICACION_COMPILADA
+          sha256sum Luxia-v1.0.0-android.apk > SHA256SUMS.txt
+          printf 'Servidor: %s://%s:%s\nServicio IA: %s://%s:%s\n' \
+            "$EXPO_PUBLIC_LUXIA_API_PROTOCOL" \
+            "$EXPO_PUBLIC_LUXIA_SERVER_IP" \
+            "$EXPO_PUBLIC_LUXIA_API_PORT" \
+            "$EXPO_PUBLIC_LUXIA_API_PROTOCOL" \
+            "$EXPO_PUBLIC_LUXIA_SERVER_IP" \
+            "$EXPO_PUBLIC_LUXIA_AI_PORT" > BUILD_INFO.txt
+
+      - name: Commit compiled application
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- \
+            LUXIA_V1.0_DNDA/APLICACION_COMPILADA/Luxia-v1.0.0-android.apk \
+            LUXIA_V1.0_DNDA/APLICACION_COMPILADA/SHA256SUMS.txt \
+            LUXIA_V1.0_DNDA/APLICACION_COMPILADA/BUILD_INFO.txt
+          git commit -m "build(dnda): add Luxia v1.0.0 Android APK"
+          git push origin HEAD:dnda/luxia-v1.0
