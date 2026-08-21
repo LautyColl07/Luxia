@@ -21,7 +21,14 @@ Se completo el campo inverso `User.activityLogs` requerido por Prisma. El backen
 
 ## Conectividad de los servicios operativos
 
-El 2026-08-21 no respondieron desde la red de validacion ni el host publico historico `186.139.84.209` ni el host privado escolar `172.16.4.48` en los puertos 3000 y 5000. Por ese motivo no se declara superada una prueba integral de autenticacion, datos, asistente y transcripcion. Para cerrar esa prueba debe proporcionarse o reactivarse el endpoint vigente y compilar el APK con ese host.
+El 2026-08-21 se comprobo conectividad mediante Hamachi con `25.1.22.89`:
+
+- backend en el puerto 3000: accesible;
+- preflight de autenticacion: HTTP 204;
+- rutas protegidas de actividad, causas, documentos y audiencias: HTTP 401 con mensaje de token no enviado, respuesta esperada sin credenciales;
+- servicio de transcripcion en el puerto 5000: accesible y declara metodos `OPTIONS, POST` para `/api/transcribir`.
+
+Estas pruebas no modificaron datos ni requirieron incluir credenciales. Para una prueba funcional con usuario, el dispositivo Android debe pertenecer a la red Hamachi y utilizar una cuenta valida provista por el operador.
 
 ## Seguridad del arbol preparado
 

@@ -32,7 +32,7 @@ La configuracion publica de cliente de Firebase permanece en el codigo y en el A
 
 ## Alcance funcional del APK
 
-El APK conserva el comportamiento de la version identificada. Para utilizar todas las funciones requiere conectividad con Firebase y con los servicios externos descritos en la documentacion tecnica. El host puede fijarse durante la compilacion mediante `EXPO_PUBLIC_LUXIA_SERVER_IP` y el protocolo mediante `EXPO_PUBLIC_LUXIA_API_PROTOCOL`, sin incorporar credenciales. Si no se definen, se utiliza la direccion privada de la red escolar.
+El APK conserva el comportamiento de la version identificada. Para utilizar todas las funciones requiere conectividad con Firebase y con los servicios externos descritos en la documentacion tecnica. El host puede fijarse durante la compilacion mediante `EXPO_PUBLIC_LUXIA_SERVER_IP` y el protocolo mediante `EXPO_PUBLIC_LUXIA_API_PROTOCOL`, sin incorporar credenciales. Esta entrega utiliza `25.1.22.89` y requiere que el dispositivo pertenezca a la red Hamachi correspondiente.
 
 El APK de esta carpeta se firma durante la compilacion con una clave temporal de desarrollo, eliminada inmediatamente despues. Sirve como copia ejecutable de identificacion y prueba; no reemplaza una version firmada para distribucion en Google Play.
 

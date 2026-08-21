@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      EXPO_PUBLIC_LUXIA_SERVER_IP: ${{ vars.LUXIA_SERVER_IP || '172.16.4.48' }}
+      EXPO_PUBLIC_LUXIA_SERVER_IP: ${{ vars.LUXIA_SERVER_IP || '25.1.22.89' }}
       EXPO_PUBLIC_LUXIA_API_PROTOCOL: ${{ vars.LUXIA_API_PROTOCOL || 'http' }}
       EXPO_PUBLIC_LUXIA_API_PORT: ${{ vars.LUXIA_API_PORT || '3000' }}
       EXPO_PUBLIC_LUXIA_AI_PORT: ${{ vars.LUXIA_AI_PORT || '5000' }}

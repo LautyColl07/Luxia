@@ -29,7 +29,7 @@ npm run android
 
 ## Generar el APK
 
-La aplicacion usa por defecto el servidor de la red de la escuela (`172.16.4.48`) y protocolo HTTP. Para compilar contra otro despliegue, definir variables publicas de compilacion (no son secretos):
+La aplicacion usa por defecto el servidor Hamachi (`25.1.22.89`) y protocolo HTTP. El dispositivo debe estar conectado a la misma red Hamachi. Para compilar contra otro despliegue, definir variables publicas de compilacion (no son secretos):
 
 ```bash
 EXPO_PUBLIC_LUXIA_SERVER_IP=servidor.example.org

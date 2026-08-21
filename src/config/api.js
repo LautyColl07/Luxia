@@ -1,5 +1,5 @@
 // El host y protocolo pueden fijarse al compilar sin incluir secretos.
-export const SERVER_IP = process.env.EXPO_PUBLIC_LUXIA_SERVER_IP || "172.16.4.48";
+export const SERVER_IP = process.env.EXPO_PUBLIC_LUXIA_SERVER_IP || "25.1.22.89";
 export const API_PROTOCOL = process.env.EXPO_PUBLIC_LUXIA_API_PROTOCOL || "http";
 export const API_PORT = process.env.EXPO_PUBLIC_LUXIA_API_PORT || "3000";
 export const AI_PORT = process.env.EXPO_PUBLIC_LUXIA_AI_PORT || "5000";
