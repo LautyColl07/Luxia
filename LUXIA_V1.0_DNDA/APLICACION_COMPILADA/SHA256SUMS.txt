@@ -1,1 +1,1 @@
-e9d258ff15497f7684a7a4791bc973f89dbdac0544ab86b2a60d963ea3d09ebc  Luxia-v1.0.0-android.apk
+a9fd0933372ce864f27b758e3de1ccd985708b4e9b8a8f97b61bac5d1716121a  Luxia-v1.0.0-android.apk
