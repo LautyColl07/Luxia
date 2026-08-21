@@ -1,0 +1,2 @@
+Servidor: http://172.16.4.48:3000
+Servicio IA: http://172.16.4.48:5000
