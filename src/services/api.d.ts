@@ -36,3 +36,28 @@ export function queryLegalAssistant(options: {
   conversationId?: string | null;
   signal?: AbortSignal;
 }): Promise<unknown>;
+export function sendGeneralLuxMessage(
+  message: string,
+  context?: Record<string, unknown>
+): Promise<{ success: boolean; reply: string; raw?: unknown; error?: unknown }>;
+export function normalizeLuxConversation(value?: unknown): {
+  id: string;
+  title: string;
+  updatedAt: string;
+  createdAt: string;
+  archived: boolean;
+  pendingSync?: boolean;
+  selectedCaseId?: string | null;
+  selectedCaseName?: string | null;
+  messages: Array<{ id: string; role: "user" | "assistant"; text: string; createdAt: string }>;
+};
+export function getLuxConversations(options?: Record<string, unknown>): Promise<unknown[]>;
+export function createLuxConversation(payload?: Record<string, unknown>): Promise<unknown>;
+export function getLuxConversation(conversationId: string): Promise<unknown>;
+export function updateLuxConversation(conversationId: string, payload?: Record<string, unknown>): Promise<unknown>;
+export function deleteLuxConversation(conversationId: string): Promise<unknown>;
+export function searchLuxConversations(query: string, options?: Record<string, unknown>): Promise<unknown[]>;
+export function getLuxMemory(options?: Record<string, unknown>): Promise<unknown[]>;
+export function createLuxMemory(text: string): Promise<unknown>;
+export function updateLuxMemory(memoryId: string, payload?: Record<string, unknown>): Promise<unknown>;
+export function deleteLuxMemory(memoryId: string): Promise<unknown>;

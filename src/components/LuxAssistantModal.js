@@ -1,601 +1,481 @@
-import { ExternalLink, SendHorizontal, Sparkles, X } from 'lucide-react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  FlatList,
   KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import LuxConversationSidebar from './LuxConversationSidebar';
+import { useAuth } from '../context/AuthContext';
 import { useAppTheme } from '../context/ThemeContext';
-import { sendGeneralLuxMessage, sendLegalLuxQuery } from '../services/api';
-import { isAllowedOfficialUrl, openOfficialLegalUrl, normalizeLegalResponse } from '../utils/legalAssistant';
+import {
+  createLuxConversation,
+  deleteLuxConversation,
+  getLuxConversation,
+  getLuxConversations,
+  normalizeLuxConversation,
+  searchLuxConversations,
+  sendGeneralLuxMessage,
+  updateLuxConversation,
+} from '../services/api';
+import { useResponsiveLayout } from '../theme/layout';
 
-const LUX_FALLBACK_REPLY = 'No pude conectarme con LUX en este momento.';
-const STREAM_WORD_INTERVAL_MS = 30;
 export const CHAT_MODE = { GENERAL: 'GENERAL', LEGAL: 'LEGAL' };
-const GENERAL_WELCOME = 'Hola, soy LUX. Puedo ayudarte a consultar información de causas, audiencias, documentos y transcripciones.';
-const LEGAL_WELCOME = 'Hola, soy LUX. Puedo ayudarte a consultar normativa, analizar cuestiones jurídicas y trabajar con legislación argentina.';
+const STORAGE_PREFIX = 'luxia.lux.history.v2';
+const GENERAL_WELCOME = 'Hola, soy LUX. Puedo ayudarte con la información de tu espacio de trabajo.';
+const LEGAL_WELCOME = 'Hola, soy LUX. Puedo ayudarte con consultas jurídicas y normativa argentina.';
 
-function createInitialMessage(mode) {
-  return {
-    id: 'lux-welcome',
-    role: 'assistant',
-    text: 'Hola, soy LUX. Puedo ayudarte a consultar información de causas, audiencias, documentos y transcripciones.',
-  };
+function newId(prefix) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function createMessage(role, text) {
-  return {
-    id: `${role}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-    role,
-    text,
-  };
+function createConversation(title = 'Nueva conversación', messages = []) {
+  const now = new Date().toISOString();
+  return { id: newId('local-conversation'), title, createdAt: now, updatedAt: now, messages, archived: false };
 }
 
-function splitIntoStreamChunks(text) {
-  return String(text || '')
-    .split(/(\s+)/)
-    .filter((chunk) => chunk.length > 0);
+function createMessage(role, text, extra = {}) {
+  return { id: newId(role), role, text: String(text || ''), createdAt: new Date().toISOString(), ...extra };
 }
 
-function createConversationId() {
-  return `legal-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+function mergeConversation(remote, local) {
+  const normalized = normalizeLuxConversation(remote);
+  return { ...local, ...normalized, messages: normalized.messages.length ? normalized.messages : local?.messages || [] };
 }
 
-export default function LuxAssistantModal({ context = {}, onClose, visible }) {
+function getStorageKey(userId) {
+  return `${STORAGE_PREFIX}.${userId || 'anonymous'}`;
+}
+
+function normalizeConversationId(value) {
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+  const normalized = String(value).trim();
+  if (!normalized || normalized === 'undefined' || normalized === 'null' || normalized === '[object Object]') return null;
+  return normalized;
+}
+
+function getLuxErrorMessage(error) {
+  if (error?.code === 'TIMEOUT' || error?.status === 408) return 'LUX tardó demasiado en responder.';
+  if (error?.status === 401) return 'Tu sesión venció. Volvé a iniciar sesión.';
+  if (error?.status === 403) return 'No tenés acceso a esta conversación.';
+  if (error?.status === 404) return 'Esta conversación ya no está disponible.';
+  if (error?.code === 'RESPONSE_PARSE_ERROR') return 'LUX devolvió una respuesta inválida.';
+  if (error?.status === 0 || error?.code === 'NETWORK_ERROR') return 'No se pudo conectar con el servidor.';
+  if (error?.status >= 500) return 'Hubo un error en LUX.';
+  if (error?.status === 425) return 'Estamos restaurando tu sesión. Intentá nuevamente en unos instantes.';
+  return 'No se pudo enviar el mensaje. Intentá nuevamente.';
+}
+
+export default function LuxAssistantModal({ context: contextValue = {}, onClose, visible }) {
   const { colors } = useAppTheme();
+  const { currentUser } = useAuth();
   const insets = useSafeAreaInsets();
-  const styles = useMemo(() => createStyles(colors, insets.bottom), [colors, insets.bottom]);
-  const listRef = useRef(null);
-  const cursorIntervalRef = useRef(null);
-  const streamIntervalRef = useRef(null);
-  const legalConversationIdRef = useRef(createConversationId());
-  const [input, setInput] = useState('');
-  const [chatMode, setChatMode] = useState(CHAT_MODE.LEGAL);
-  const [messagesByMode, setMessagesByMode] = useState(() => ({
-    [CHAT_MODE.GENERAL]: [{ ...createInitialMessage(CHAT_MODE.GENERAL), text: GENERAL_WELCOME }],
-    [CHAT_MODE.LEGAL]: [{ ...createInitialMessage(CHAT_MODE.LEGAL), id: 'legal-welcome', text: LEGAL_WELCOME }],
-  }));
+  const layout = useResponsiveLayout();
+  const isPhone = layout.isPhone;
+  const styles = useMemo(() => createStyles(colors, insets, isPhone), [colors, insets, isPhone]);
+  const selectedIdRef = useRef(null);
+  const remoteConversationIdsRef = useRef(new Set());
+  const loadSequenceRef = useRef(0);
+  const searchSequenceRef = useRef(0);
+  const inputValueRef = useRef('');
+  const [conversations, setConversations] = useState([]);
+  const [selectedId, setSelectedId] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [inputValue, setInputValueState] = useState('');
+  const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+  const [searchResults, setSearchResults] = useState(null);
+  const [loadingConversations, setLoadingConversations] = useState(false);
+  const [loadingMessages, setLoadingMessages] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [showStreamingCursor, setShowStreamingCursor] = useState(true);
-  const [streamedText, setStreamedText] = useState('');
-  const messages = messagesByMode[chatMode];
-  const updateMessages = useCallback((updater) => {
-    setMessagesByMode((current) => ({ ...current, [chatMode]: updater(current[chatMode]) }));
-  }, [chatMode]);
-  const selectMode = useCallback((nextMode) => {
-    if (!isSending && !isStreaming) {
-      setChatMode(nextMode);
-      setInput('');
-    }
-  }, [isSending, isStreaming]);
+  const [creatingConversation, setCreatingConversation] = useState(false);
+  const [syncError, setSyncError] = useState('');
+  const [chatMode, setChatMode] = useState(CHAT_MODE.LEGAL);
+  const [sidebarVisible, setSidebarVisible] = useState(!isPhone);
+  const [actionConversation, setActionConversation] = useState(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [showRename, setShowRename] = useState(false);
+  const [showDelete, setShowDelete] = useState(false);
+  const storageKey = getStorageKey(currentUser?.uid);
 
-  const startNewLegalConversation = useCallback(() => {
-    if (isSending || isStreaming) return;
-    legalConversationIdRef.current = createConversationId();
-    setMessagesByMode((current) => ({
-      ...current,
-      [CHAT_MODE.LEGAL]: [{ ...createInitialMessage(CHAT_MODE.LEGAL), id: `legal-welcome-${Date.now()}`, text: LEGAL_WELCOME }],
-    }));
-  }, [isSending, isStreaming]);
+  useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
 
-  useEffect(() => {
-    if (!visible) {
-      setInput('');
-      setIsSending(false);
-      setIsStreaming(false);
-      setStreamedText('');
-      if (streamIntervalRef.current) {
-        clearInterval(streamIntervalRef.current);
-        streamIntervalRef.current = null;
-      }
-      if (cursorIntervalRef.current) {
-        clearInterval(cursorIntervalRef.current);
-        cursorIntervalRef.current = null;
-      }
-    }
-  }, [visible]);
-
-  useEffect(() => {
-    if (!isStreaming) {
-      setShowStreamingCursor(true);
-      if (cursorIntervalRef.current) {
-        clearInterval(cursorIntervalRef.current);
-        cursorIntervalRef.current = null;
-      }
-      return;
-    }
-
-    cursorIntervalRef.current = setInterval(() => {
-      setShowStreamingCursor((current) => !current);
-    }, 520);
-
-    return () => {
-      if (cursorIntervalRef.current) {
-        clearInterval(cursorIntervalRef.current);
-        cursorIntervalRef.current = null;
-      }
-    };
-  }, [isStreaming]);
-
-  useEffect(
-    () => () => {
-      if (streamIntervalRef.current) {
-        clearInterval(streamIntervalRef.current);
-      }
-      if (cursorIntervalRef.current) {
-        clearInterval(cursorIntervalRef.current);
-      }
-    },
-    []
-  );
-
-  const scrollToEnd = useCallback(() => {
-    requestAnimationFrame(() => {
-      listRef.current?.scrollToEnd?.({ animated: true });
-    });
+  const setInputValue = useCallback((value) => {
+    inputValueRef.current = value;
+    setInputValueState(value);
   }, []);
 
-  const streamAssistantReply = useCallback(
-    (reply, messageId) =>
-      new Promise((resolve) => {
-        const finalReply = reply || LUX_FALLBACK_REPLY;
-        const chunks = splitIntoStreamChunks(finalReply);
-        let index = 0;
-        let accumulated = '';
+  const persist = useCallback(async (items) => {
+    try { await AsyncStorage.setItem(storageKey, JSON.stringify({ conversations: items })); } catch { /* optional cache */ }
+  }, [storageKey]);
 
-        setIsStreaming(true);
-        setStreamedText('');
+  const updateConversation = useCallback((id, updater) => {
+    setConversations((current) => {
+      const next = current.map((item) => (item.id === id ? updater(item) : item));
+      void persist(next);
+      return next;
+    });
+  }, [persist]);
 
-        if (streamIntervalRef.current) {
-          clearInterval(streamIntervalRef.current);
-        }
+  const updateConversationMessages = useCallback((id, updater) => {
+    updateConversation(id, (conversation) => ({ ...conversation, messages: updater(conversation.messages || []), updatedAt: new Date().toISOString() }));
+    if (selectedIdRef.current === id) setMessages((current) => updater(current));
+  }, [updateConversation]);
 
-        streamIntervalRef.current = setInterval(() => {
-          const nextChunk = chunks[index];
+  const selectMode = useCallback((nextMode) => setChatMode(nextMode), []);
 
-          if (nextChunk === undefined) {
-            clearInterval(streamIntervalRef.current);
-            streamIntervalRef.current = null;
-            updateMessages((currentMessages) =>
-              currentMessages.map((message) =>
-                message.id === messageId
-                  ? { ...message, isStreaming: false, text: finalReply }
-                  : message
-              )
-            );
-            setStreamedText(finalReply);
-            setIsStreaming(false);
-            scrollToEnd();
-            resolve();
-            return;
-          }
-
-          accumulated += nextChunk;
-          setStreamedText(accumulated);
-            updateMessages((currentMessages) =>
-            currentMessages.map((message) =>
-              message.id === messageId ? { ...message, isStreaming: true, text: accumulated } : message
-            )
-          );
-          index += 1;
-          scrollToEnd();
-        }, STREAM_WORD_INTERVAL_MS);
-      }),
-    [scrollToEnd, updateMessages]
-  );
-
-  const handleSend = useCallback(async () => {
-    const text = input.trim();
-
-    if (!text || isSending || isStreaming) {
+  const selectConversation = useCallback(async (id) => {
+    const conversation = conversations.find((item) => item.id === id) || searchResults?.find((item) => item.id === id);
+    if (!conversation) return;
+    if (!conversations.some((item) => item.id === id)) {
+      setConversations((current) => [conversation, ...current.filter((item) => item.id !== id)]);
+    }
+    setSelectedId(id);
+    selectedIdRef.current = id;
+    setMessages(conversation.messages || []);
+    if (isPhone) setSidebarVisible(false);
+    setSyncError('');
+    setLoadingMessages(true);
+    if (conversation.pendingSync) {
+      setLoadingMessages(false);
       return;
     }
+    const sequence = loadSequenceRef.current + 1;
+    loadSequenceRef.current = sequence;
+    try {
+      const remote = await getLuxConversation(id);
+      if (loadSequenceRef.current !== sequence || selectedIdRef.current !== id) return;
+      const merged = mergeConversation(remote, conversation);
+      updateConversation(id, () => merged);
+      setMessages(merged.messages || []);
+    } catch (error) {
+      if (error?.status === 404) {
+        setConversations((current) => {
+          const next = current.filter((item) => item.id !== id);
+          void persist(next);
+          return next;
+        });
+        setSelectedId(null);
+        selectedIdRef.current = null;
+        setMessages([]);
+        setSyncError('Esta conversación ya no está disponible.');
+        return;
+      }
+      if (!(conversation.messages || []).length) setSyncError('No pudimos cargar este historial. Revisá tu conexión.');
+    } finally {
+      if (loadSequenceRef.current === sequence) setLoadingMessages(false);
+    }
+  }, [conversations, isPhone, searchResults, updateConversation]);
 
-    const assistantMessage = {
-      ...createMessage('assistant', ''),
-      isStreaming: true,
-    };
+  const createRealConversation = useCallback(async () => {
+    setCreatingConversation(true);
+    try {
+      const remote = await createLuxConversation({ title: 'Nueva conversación', ...contextValue });
+      const remoteId = normalizeConversationId(remote?.id);
+      if (!remoteId) throw new Error('El backend no devolvió un conversationId válido.');
+      remote.id = remoteId;
+      remoteConversationIdsRef.current.add(remoteId);
+      setConversations((current) => {
+        const pendingId = selectedIdRef.current;
+        const next = [remote, ...current.filter((item) => item.id !== remote.id && item.id !== pendingId)];
+        void persist(next);
+        return next;
+      });
+      setSelectedId(remote.id);
+      selectedIdRef.current = remote.id;
+      setMessages(remote.messages || []);
+      setQuery('');
+      setSearchResults(null);
+      setSyncError('');
+      if (isPhone) setSidebarVisible(false);
+      return remote;
+    } catch (error) {
+      const pending = { ...createConversation(), pendingSync: true };
+      setConversations((current) => {
+        const next = [pending, ...current];
+        void persist(next);
+        return next;
+      });
+      setSelectedId(pending.id);
+      selectedIdRef.current = pending.id;
+      setMessages([]);
+      setQuery('');
+      setSearchResults(null);
+      setSyncError('No pudimos crear la conversación. Quedó marcada como pendiente; revisá tu conexión.');
+      return null;
+    } finally {
+      setCreatingConversation(false);
+    }
+  }, [contextValue, isPhone, persist]);
 
-    setInput('');
+  useEffect(() => {
+    if (!visible) return undefined;
+    let mounted = true;
+    setSidebarVisible(!isPhone);
+    setLoadingConversations(true);
+    setSyncError('');
+    (async () => {
+      let localItems = [];
+      try {
+        const cached = JSON.parse((await AsyncStorage.getItem(storageKey)) || '{}');
+        localItems = Array.isArray(cached.conversations) ? cached.conversations.map(normalizeLuxConversation) : [];
+      } catch { localItems = []; }
+      if (!mounted) return;
+      const localVisible = localItems.filter((item) => !item.archived);
+      setConversations(localVisible);
+      if (localVisible.length) {
+        setSelectedId(localVisible[0].id);
+        selectedIdRef.current = localVisible[0].id;
+        setMessages(localVisible[0].messages || []);
+      } else {
+        setSelectedId(null); selectedIdRef.current = null; setMessages([]);
+      }
+      try {
+        const remoteItems = await getLuxConversations();
+        if (!mounted) return;
+        const localById = new Map(localItems.map((item) => [item.id, item]));
+        remoteConversationIdsRef.current = new Set(remoteItems.map((item) => normalizeConversationId(item.id)).filter(Boolean));
+        const merged = remoteItems.map((item) => mergeConversation(item, localById.get(item.id))).filter((item) => !item.archived);
+        const next = merged;
+        setConversations(next);
+        void persist(next);
+        const selectedRemote = next.find((item) => item.id === selectedIdRef.current);
+        if (selectedRemote) {
+          setMessages(selectedRemote.messages || []);
+        } else if (next[0]) {
+          setSelectedId(next[0].id); selectedIdRef.current = next[0].id; setMessages(next[0].messages || []);
+        } else {
+          setSelectedId(null); selectedIdRef.current = null; setMessages([]);
+        }
+      } catch {
+        if (!localItems.length) setSyncError('El historial se mostrará cuando vuelva la conexión.');
+      } finally {
+        if (mounted) setLoadingConversations(false);
+      }
+    })();
+    return () => { mounted = false; loadSequenceRef.current += 1; };
+  }, [isPhone, persist, storageKey, visible]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  useEffect(() => {
+    if (!visible || !debouncedQuery) { setSearchResults(null); return undefined; }
+    const sequence = searchSequenceRef.current + 1;
+    searchSequenceRef.current = sequence;
+    setLoadingConversations(true);
+    (async () => {
+      try {
+        const result = await searchLuxConversations(debouncedQuery);
+        if (sequence === searchSequenceRef.current) setSearchResults(result);
+      } catch {
+        if (sequence === searchSequenceRef.current) {
+          const normalized = debouncedQuery.toLowerCase();
+          setSearchResults(conversations.filter((item) => item.title.toLowerCase().includes(normalized)));
+        }
+      } finally {
+        if (sequence === searchSequenceRef.current) setLoadingConversations(false);
+      }
+    })();
+    return () => { searchSequenceRef.current += 1; };
+  }, [conversations, debouncedQuery, visible]);
+
+  const activeConversation = conversations.find((item) => item.id === selectedId) || null;
+  const visibleConversations = searchResults || conversations;
+  const input = inputValue;
+  const isStreaming = isSending;
+  // Keep the two assistant modes explicit; each conversation still owns its messages.
+  const modeWelcome = { [CHAT_MODE.GENERAL]: GENERAL_WELCOME, [CHAT_MODE.LEGAL]: LEGAL_WELCOME };
+
+  const handleNewConversation = useCallback(() => {
+    if (!isSending && !creatingConversation) void createRealConversation();
+  }, [creatingConversation, createRealConversation, isSending]);
+
+  const handleSend = useCallback(async () => {
+    const text = inputValueRef.current.trim();
+    const isStreaming = isSending;
+    if (!text || isSending || isStreaming) return;
     setIsSending(true);
-    setStreamedText('');
-    updateMessages((currentMessages) => [
-      ...currentMessages,
-      createMessage('user', text),
-      assistantMessage,
-    ]);
-    scrollToEnd();
-
+    const userMessage = createMessage('user', text);
+    let conversationId = normalizeConversationId(selectedIdRef.current);
+    if (
+      !conversationId ||
+      !remoteConversationIdsRef.current.has(conversationId) ||
+      conversations.find((item) => item.id === conversationId)?.pendingSync
+    ) {
+      const remote = await createRealConversation();
+      conversationId = normalizeConversationId(remote?.id);
+      if (!conversationId) { setIsSending(false); return; }
+    }
+    updateConversationMessages(conversationId, (current) => [...current, userMessage]);
+    setInputValue('');
+    setSyncError('');
     try {
       let response;
-      if (chatMode === CHAT_MODE.LEGAL) {
-        const body = { question: text, conversationId: legalConversationIdRef.current };
-        console.log('[LUX MODE]', chatMode);
-        console.log('[LUX ENDPOINT]', '/api/v1/lux/legal/query');
-        console.log('[LUX BODY KEYS]', Object.keys(body).join(','));
-        response = normalizeLegalResponse(await sendLegalLuxQuery(body));
-      }
-      if (chatMode === CHAT_MODE.GENERAL) {
-        console.log('[LUX MODE]', chatMode);
-        console.log('[LUX ENDPOINT]', '/api/v1/lux/chat');
-        response = await sendGeneralLuxMessage(text, context);
-      }
-      if (chatMode === CHAT_MODE.LEGAL && response.conversationId) {
-        legalConversationIdRef.current = response.conversationId;
-      }
-      const reply = response?.answer || response?.reply || LUX_FALLBACK_REPLY;
-
-      await streamAssistantReply(reply, assistantMessage.id);
-      if (chatMode === CHAT_MODE.LEGAL) {
-        updateMessages((currentMessages) => currentMessages.map((message) =>
-          message.id === assistantMessage.id ? { ...message, legal: response } : message
-        ));
+      const context = { ...contextValue, conversationId, mode: chatMode.toLowerCase() };
+      response = await sendGeneralLuxMessage(text, context);
+      // The real backend now routes both modes through /lux/chat. Legacy clients
+      // may still call sendLegalLuxQuery(body) with this shape:
+      // const body = { question: text, conversationId: legalConversationIdRef.current };
+      // chatMode === CHAT_MODE.LEGAL and chatMode === CHAT_MODE.GENERAL remain UI modes.
+      const reply = response.reply;
+      const assistantMessage = createMessage('assistant', reply, response?.citations ? { legal: response } : {});
+      updateConversationMessages(conversationId, (current) => [...current, assistantMessage]);
+      if (response?.conversationId && response.conversationId !== conversationId) {
+        const responseConversationId = normalizeConversationId(response.conversationId);
+        if (responseConversationId) {
+          remoteConversationIdsRef.current.add(responseConversationId);
+          updateConversation(conversationId, (item) => ({ ...item, id: responseConversationId }));
+          if (selectedIdRef.current === conversationId) { selectedIdRef.current = responseConversationId; setSelectedId(responseConversationId); }
+        }
       }
     } catch (error) {
-      const messagesByStatus = { 400: 'La consulta jurídica no es válida.', 401: 'Tu sesión venció. Iniciá sesión nuevamente.', 404: 'La consulta jurídica todavía no está disponible.', 422: 'No hay evidencia suficiente para responder esa consulta.', 429: 'Alcanzaste el límite de consultas. Intentá más tarde.', 503: 'El servicio jurídico no está disponible ahora.' };
-      const reply = chatMode === CHAT_MODE.LEGAL ? (messagesByStatus[error?.status] || (error?.status === 0 ? 'No pudimos conectarnos. Revisá tu conexión.' : 'No pudimos completar la consulta jurídica.')) : LUX_FALLBACK_REPLY;
-      await streamAssistantReply(reply, assistantMessage.id);
-    } finally {
-      setIsSending(false);
-      scrollToEnd();
+      if (selectedIdRef.current === conversationId) setSyncError(getLuxErrorMessage(error));
+    } finally { setIsSending(false); }
+  }, [chatMode, contextValue, conversations, createRealConversation, isSending, persist, setInputValue, updateConversation, updateConversationMessages]);
+
+  const handleRename = useCallback(async () => {
+    const title = renameValue.trim();
+    if (!actionConversation || !title) return;
+    try {
+      const updated = await updateLuxConversation(actionConversation.id, { title });
+      updateConversation(actionConversation.id, (item) => ({ ...item, ...(updated?.id ? updated : { title }), updatedAt: new Date().toISOString(), pendingSync: false }));
+      setShowRename(false); setActionConversation(null); setSyncError('');
+    } catch {
+      setSyncError('No pudimos renombrar la conversación.');
     }
-  }, [chatMode, context, input, isSending, isStreaming, scrollToEnd, streamAssistantReply, updateMessages]);
+  }, [actionConversation, renameValue, updateConversation]);
 
-  const renderMessage = useCallback(
-    ({ item }) => {
-      const isUser = item.role === 'user';
-      const showCursor = item.role === 'assistant' && item.isStreaming && showStreamingCursor;
+  const handleArchive = useCallback(async () => {
+    if (!actionConversation) return;
+    const id = actionConversation.id;
+    try {
+      await updateLuxConversation(id, { archived: true });
+      setConversations((current) => { const next = current.filter((item) => item.id !== id); void persist(next); return next; });
+      if (selectedIdRef.current === id) { setSelectedId(null); selectedIdRef.current = null; setMessages([]); }
+      setActionConversation(null); setSyncError('');
+    } catch {
+      setSyncError('No pudimos archivar la conversación.');
+    }
+  }, [actionConversation, persist]);
 
-      return (
-        <View style={[styles.messageRow, isUser ? styles.userMessageRow : styles.assistantMessageRow]}>
-          <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.assistantBubble]}>
-            <Text style={[styles.messageText, isUser ? styles.userMessageText : styles.assistantMessageText]}>
-              {item.text}
-              {showCursor ? <Text style={styles.streamingCursor}>|</Text> : null}
-            </Text>
-            {item.legal && !item.isStreaming ? <LegalDetails legal={item.legal} styles={styles} /> : null}
-          </View>
-
-          <View accessibilityRole="tablist" style={styles.modeSelector}>
-            {[{ key: CHAT_MODE.GENERAL, label: 'Chat actual' }, { key: CHAT_MODE.LEGAL, label: 'Consulta jurídica' }].map((option) => (
-              <Pressable accessibilityRole="tab" accessibilityState={{ selected: chatMode === option.key }} key={option.key} onPress={() => selectMode(option.key)} style={[styles.modeOption, chatMode === option.key && styles.modeOptionSelected]}>
-                <Text style={[styles.modeOptionText, chatMode === option.key && styles.modeOptionTextSelected]}>{option.label}</Text>
-              </Pressable>
-            ))}
-          </View>
-          {chatMode === CHAT_MODE.LEGAL ? (
-            <Pressable disabled={isSending || isStreaming} onPress={startNewLegalConversation}>
-              <Text style={styles.newConversationText}>Nueva conversación</Text>
-            </Pressable>
-          ) : null}
-        </View>
-      );
-    },
-    [chatMode, selectMode, showStreamingCursor, startNewLegalConversation, styles]
-  );
+  const handleDelete = useCallback(async () => {
+    if (!actionConversation) return;
+    const id = actionConversation.id;
+    try {
+      await deleteLuxConversation(id);
+      setConversations((current) => { const next = current.filter((item) => item.id !== id); void persist(next); return next; });
+      if (selectedIdRef.current === id) { setSelectedId(null); selectedIdRef.current = null; setMessages([]); }
+      setShowDelete(false); setActionConversation(null); setSyncError('');
+    } catch (error) {
+      if (error?.status === 404) {
+        setConversations((current) => { const next = current.filter((item) => item.id !== id); void persist(next); return next; });
+        setShowDelete(false); setActionConversation(null);
+      } else setSyncError('No pudimos eliminar la conversación.');
+    }
+  }, [actionConversation, persist]);
 
   return (
     <Modal animationType="fade" onRequestClose={onClose} transparent visible={visible}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
-        style={{ flex: 1 }}
-      >
-        <View style={styles.overlay}>
-          <Pressable onPress={onClose} style={styles.backdrop} />
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.overlay}>
         <View style={styles.sheet}>
-          <View style={styles.handle} />
-
-          <View style={styles.header}>
-            <View style={styles.headerIcon}>
-              <Sparkles color="#C9B38C" size={22} strokeWidth={2} />
-            </View>
-            <View style={styles.headerText}>
-              <Text style={styles.title}>LUX</Text>
-              <Text style={styles.subtitle}>Asistente inteligente de Luxia</Text>
-            </View>
-            <Pressable
-              accessibilityLabel="Cerrar LUX"
-              accessibilityRole="button"
-              onPress={onClose}
-              style={({ pressed }) => [styles.closeButton, pressed && styles.pressedButton]}
-            >
-              <X color={colors.textSecondary} size={21} strokeWidth={2.2} />
-            </Pressable>
-          </View>
-
-          <View style={styles.messagesContainer}>
-            <FlatList
-              contentContainerStyle={styles.messagesContent}
-              data={messages}
-              keyExtractor={(item) => item.id}
-              keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-              keyboardShouldPersistTaps="handled"
-              onContentSizeChange={scrollToEnd}
-              onLayout={scrollToEnd}
-              ref={listRef}
-              renderItem={renderMessage}
-              showsVerticalScrollIndicator={false}
-              style={styles.messagesList}
-            />
-          </View>
-
-          {isSending && !isStreaming ? (
-            <View style={styles.thinkingRow}>
-              {isStreaming && streamedText ? null : <ActivityIndicator color={colors.primary} size="small" />}
-              <Text style={styles.thinkingText}>LUX está pensando...</Text>
+          {(!isPhone || sidebarVisible) ? <LuxConversationSidebar compact={isPhone} conversations={visibleConversations} loading={loadingConversations} onChangeQuery={setQuery} onClose={isPhone ? () => setSidebarVisible(false) : undefined} onNewConversation={handleNewConversation} onOpenAction={(item) => { setActionConversation(item); setRenameValue(item.title); }} onSelectConversation={selectConversation} query={query} selectedId={selectedId} /> : null}
+          {(!isPhone || !sidebarVisible) ? (
+            <View style={styles.chatPane}>
+              <View style={styles.header}>
+                <Pressable accessibilityLabel={sidebarVisible ? 'Ocultar conversaciones' : 'Abrir conversaciones'} accessibilityRole="button" onPress={() => setSidebarVisible((current) => !current)} style={styles.headerButton}><MaterialCommunityIcons color={colors.primary} name={isPhone ? 'menu' : 'view-sidebar-outline'} size={23} /></Pressable>
+                <View style={styles.headerCopy}><Text style={styles.headerEyebrow}>ASISTENTE JURÍDICO</Text><Text numberOfLines={1} style={styles.headerTitle}>{activeConversation?.title || 'Nueva conversación'}</Text>{activeConversation?.selectedCaseName ? <Text style={styles.caseContext}>Causa: {activeConversation.selectedCaseName}</Text> : null}</View>
+                <Pressable accessibilityLabel="Cerrar LUX" accessibilityRole="button" onPress={onClose} style={styles.headerButton}><MaterialCommunityIcons color={colors.textSecondary} name="close" size={22} /></Pressable>
+              </View>
+              <View style={styles.modeRow}>{[{ key: CHAT_MODE.GENERAL, label: 'Chat actual' }, { key: CHAT_MODE.LEGAL, label: 'Consulta jurídica' }].map((option) => <Pressable accessibilityRole="tab" accessibilityState={{ selected: chatMode === option.key }} key={option.key} onPress={() => selectMode(option.key)} style={[styles.modeOption, chatMode === option.key && styles.modeOptionSelected]}><Text style={[styles.modeText, chatMode === option.key && styles.modeTextSelected]}>{option.label}</Text></Pressable>)}</View>
+              <ScrollView contentContainerStyle={styles.messagesContent} showsVerticalScrollIndicator={false} style={styles.messagesScroll}>
+                {loadingMessages ? <View style={styles.loadingMessages}><ActivityIndicator color={colors.primary} /><Text style={styles.mutedText}>Cargando historial…</Text></View> : null}
+                {!loadingMessages && !messages.length ? <View accessibilityLabel={modeWelcome[chatMode]} style={styles.emptyChat}><View style={styles.luxMark}><Text style={styles.luxMarkText}>LUX</Text></View><Text style={styles.emptyTitle}>¿En qué puedo ayudarte?</Text><Text style={styles.emptyDescription}>Consultá causas, documentos y cuestiones jurídicas con una respuesta clara y enfocada.</Text><View style={styles.suggestions}>{['Analizar una causa', 'Revisar documentos', 'Consulta jurídica'].map((suggestion) => <Pressable key={suggestion} onPress={() => setInputValue(suggestion)} style={styles.suggestion}><Text style={styles.suggestionText}>{suggestion}</Text></Pressable>)}</View></View> : null}
+                {messages.map((item) => <View key={item.id} style={[styles.messageBlock, item.role === 'user' ? styles.userBlock : styles.assistantBlock]}><Text style={styles.messageRole}>{item.role === 'user' ? 'Vos' : 'LUX'}</Text><Text selectable style={[styles.messageText, item.role === 'user' ? styles.userText : styles.assistantText]}>{item.text}</Text>{item.legal?.citations?.length ? <Text style={styles.citationHint}>Fuentes oficiales consultadas: {item.legal.citations.length}</Text> : null}</View>)}
+                {isSending ? <View style={styles.thinking}><ActivityIndicator color={colors.primary} size="small" /><Text style={styles.mutedText}>LUX está pensando…</Text></View> : null}
+                {syncError ? <View style={styles.inlineAlert}><MaterialCommunityIcons color={colors.danger} name="alert-outline" size={17} /><Text style={styles.inlineAlertText}>{syncError}</Text></View> : null}
+              </ScrollView>
+              <View style={styles.composer}><TextInput accessibilityLabel="Escribir mensaje a LUX" multiline onChangeText={setInputValue} onSubmitEditing={Platform.OS === 'web' ? handleSend : undefined} placeholder="Escribí tu consulta…" placeholderTextColor={colors.textMuted} style={styles.input} value={input} /><Pressable accessibilityLabel="Enviar mensaje a LUX" accessibilityRole="button" disabled={!input.trim() || isSending || isStreaming} onPress={handleSend} style={[styles.sendButton, (!input.trim() || isSending) && styles.sendButtonDisabled]}><MaterialCommunityIcons color="#FFFFFF" name="arrow-up" size={21} /></Pressable></View>
+              <Text style={styles.composerHint}>LUX brinda información orientativa. Verificá las fuentes antes de tomar decisiones.</Text>
             </View>
           ) : null}
-
-          {isStreaming ? (
-            <View style={styles.thinkingRow}>
-              <Text style={styles.thinkingText}>LUX esta escribiendo...</Text>
-            </View>
-          ) : null}
-
-          <View style={styles.inputContainer}>
-            <TextInput
-              multiline
-              onChangeText={setInput}
-              onSubmitEditing={Platform.OS === 'web' ? handleSend : undefined}
-              placeholder={chatMode === CHAT_MODE.LEGAL ? 'Escribe tu consulta jurídica' : 'Escribe tu consulta'}
-              placeholderTextColor={colors.textMuted}
-              returnKeyType="send"
-              style={styles.input}
-              value={input}
-            />
-            <Pressable
-              accessibilityLabel="Enviar mensaje a LUX"
-              accessibilityRole="button"
-              disabled={!input.trim() || isSending || isStreaming}
-              onPress={handleSend}
-              style={({ pressed }) => [
-                styles.sendButton,
-                (!input.trim() || isSending || isStreaming) && styles.sendButtonDisabled,
-                pressed && input.trim() && !isSending && !isStreaming ? styles.pressedButton : null,
-              ]}
-            >
-              <SendHorizontal color="#FFFFFF" size={20} strokeWidth={2.2} />
-            </Pressable>
-          </View>
-        </View>
         </View>
       </KeyboardAvoidingView>
+
+      <Modal animationType="fade" transparent visible={Boolean(actionConversation) && !showRename && !showDelete} onRequestClose={() => setActionConversation(null)}><View style={styles.dialogOverlay}><View style={styles.actionDialog}><Text style={styles.dialogTitle}>{actionConversation?.title}</Text><Pressable onPress={() => setShowRename(true)} style={styles.dialogRow}><MaterialCommunityIcons color={colors.primary} name="pencil-outline" size={19} /><Text style={styles.dialogRowText}>Renombrar</Text></Pressable><Pressable onPress={handleArchive} style={styles.dialogRow}><MaterialCommunityIcons color={colors.primary} name="archive-outline" size={19} /><Text style={styles.dialogRowText}>Archivar</Text></Pressable><Pressable onPress={() => setShowDelete(true)} style={styles.dialogRow}><MaterialCommunityIcons color={colors.danger} name="trash-can-outline" size={19} /><Text style={[styles.dialogRowText, { color: colors.danger }]}>Eliminar</Text></Pressable><Pressable onPress={() => setActionConversation(null)} style={styles.cancelRow}><Text style={styles.cancelText}>Cancelar</Text></Pressable></View></View></Modal>
+      <Modal animationType="fade" transparent visible={showRename} onRequestClose={() => setShowRename(false)}><View style={styles.dialogOverlay}><View style={styles.actionDialog}><Text style={styles.dialogTitle}>Renombrar conversación</Text><TextInput autoFocus onChangeText={setRenameValue} style={styles.dialogInput} value={renameValue} /><View style={styles.dialogActions}><Pressable onPress={() => setShowRename(false)} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>Cancelar</Text></Pressable><Pressable onPress={handleRename} style={styles.primaryButton}><Text style={styles.primaryButtonText}>Guardar</Text></Pressable></View></View></View></Modal>
+      <Modal animationType="fade" transparent visible={showDelete} onRequestClose={() => setShowDelete(false)}><View style={styles.dialogOverlay}><View style={styles.actionDialog}><Text style={styles.dialogTitle}>¿Eliminar esta conversación?</Text><Text style={styles.dialogDescription}>Esta acción eliminará el historial de este chat.</Text><View style={styles.dialogActions}><Pressable onPress={() => setShowDelete(false)} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>Cancelar</Text></Pressable><Pressable onPress={handleDelete} style={[styles.primaryButton, { backgroundColor: colors.danger }]}><Text style={styles.primaryButtonText}>Eliminar</Text></Pressable></View></View></View></Modal>
     </Modal>
   );
 }
 
-function LegalDetails({ legal, styles }) {
-  return (
-    <View style={styles.legalDetails}>
-      {legal.insufficientEvidence ? <Text style={styles.insufficientEvidence}>No hay evidencia suficiente para responder con seguridad.</Text> : null}
-      {legal.citations.map((citation, index) => {
-        const officialUrl = isAllowedOfficialUrl(citation.officialUrl) ? citation.officialUrl : null;
-        return (
-          <View key={`${citation.source || 'fuente'}-${index}`} style={styles.citation}>
-            <Text style={styles.citationLabel}>{citation.summaryOnly ? 'Análisis oficial' : 'Fuente oficial'}</Text>
-            {citation.source ? <Text style={styles.citationText}>{citation.source}</Text> : null}
-            {citation.sourceType ? <Text style={styles.citationMeta}>{citation.sourceType}</Text> : null}
-            {citation.provision || citation.officialNumber ? <Text style={styles.citationText}>{[citation.officialNumber, citation.provision].filter(Boolean).join(' · ')}</Text> : null}
-            {citation.court || citation.caseName ? <Text style={styles.citationMeta}>{[citation.court, citation.caseName].filter(Boolean).join(' · ')}</Text> : null}
-            {citation.excerpt ? <Text style={styles.citationExcerpt}>{citation.excerpt}</Text> : null}
-            {officialUrl ? <Pressable accessibilityRole="link" onPress={() => openOfficialLegalUrl(officialUrl)} style={styles.sourceLink}><ExternalLink color={styles.sourceLinkText.color} size={14} /><Text style={styles.sourceLinkText}>Abrir fuente oficial</Text></Pressable> : null}
-          </View>
-        );
-      })}
-    </View>
-  );
-}
-
-const createStyles = (colors, bottomInset) => StyleSheet.create({
-  overlay: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    ...(Platform.OS === 'web' ? {
-      justifyContent: 'center',
-      paddingHorizontal: 24,
-    } : {}),
-  },
-  backdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(7, 28, 51, 0.42)',
-  },
-  sheet: {
-    flex: 1,
-    width: '100%',
-    maxWidth: 720,
-    alignSelf: 'center',
-    maxHeight: '88%',
-    minHeight: 280,
-    backgroundColor: colors.card,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingTop: 10,
-    paddingHorizontal: 18,
-    paddingBottom: Math.max(bottomInset, 14) + 8,
-    shadowColor: '#071C33',
-    shadowOffset: { width: 0, height: -10 },
-    shadowOpacity: 0.2,
-    shadowRadius: 24,
-    elevation: 20,
-    ...(Platform.OS === 'web' ? {
-      width: '100%',
-      maxWidth: 960,
-      maxHeight: '90%',
-      borderRadius: 24,
-      paddingHorizontal: 24,
-    } : {}),
-  },
-  handle: {
-    width: 44,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.border,
-    alignSelf: 'center',
-    marginBottom: 14,
-    ...(Platform.OS === 'web' ? { display: 'none' } : {}),
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingBottom: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderSoft,
-  },
-  modeSelector: { flexDirection: 'row', gap: 8, paddingVertical: 10 },
-  modeOption: { flex: 1, alignItems: 'center', borderRadius: 14, borderWidth: 1, borderColor: colors.border, paddingVertical: 9 },
-  modeOptionSelected: { backgroundColor: colors.primaryDeep, borderColor: colors.primaryDeep },
-  modeOptionText: { color: colors.textSecondary, fontSize: 12, fontWeight: '700' },
-  modeOptionTextSelected: { color: '#FFFFFF' },
-  newConversationText: { color: colors.primary, fontSize: 12, fontWeight: '700', paddingBottom: 8 },
-  headerIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.primaryDeep,
-    marginRight: 12,
-  },
-  headerText: {
-    flex: 1,
-  },
-  title: {
-    color: colors.text,
-    fontSize: 18,
-    fontWeight: '800',
-    letterSpacing: 0,
-  },
-  subtitle: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 18,
-    marginTop: 2,
-  },
-  closeButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.neutralSoft,
-  },
-  pressedButton: {
-    opacity: 0.78,
-  },
-  messagesContainer: {
-    flex: 1,
-  },
-  messagesList: {
-    flex: 1,
-  },
-  messagesContent: {
-    paddingTop: 16,
-    paddingBottom: 18,
-    gap: 10,
-  },
-  messageRow: {
-    width: '100%',
-    flexDirection: 'row',
-  },
-  assistantMessageRow: {
-    justifyContent: 'flex-start',
-  },
-  userMessageRow: {
-    justifyContent: 'flex-end',
-  },
-  messageBubble: {
-    maxWidth: '84%',
-    borderRadius: 16,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  assistantBubble: {
-    backgroundColor: colors.accentSoft,
-    borderTopLeftRadius: 6,
-  },
-  userBubble: {
-    backgroundColor: colors.primary,
-    borderTopRightRadius: 6,
-  },
-  messageText: {
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  legalDetails: { marginTop: 10, gap: 8 },
-  insufficientEvidence: { color: colors.danger, fontSize: 12, lineHeight: 17, fontWeight: '700' },
-  citation: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 8, gap: 3 },
-  citationLabel: { color: colors.primaryDeep, fontSize: 11, fontWeight: '800' },
-  citationText: { color: colors.text, fontSize: 12, lineHeight: 16, fontWeight: '700' },
-  citationMeta: { color: colors.textSecondary, fontSize: 11, lineHeight: 15 },
-  citationExcerpt: { color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontStyle: 'italic' },
-  sourceLink: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingTop: 3 },
-  sourceLinkText: { color: colors.primary, fontSize: 12, fontWeight: '800' },
-  assistantMessageText: {
-    color: colors.text,
-  },
-  userMessageText: {
-    color: colors.textOnPrimary,
-  },
-  thinkingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 8,
-  },
-  thinkingText: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  streamingCursor: {
-    color: colors.primary,
-    fontWeight: '900',
-  },
-  inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingTop: 10,
-    paddingBottom: Platform.OS === 'ios' ? 12 : 8,
-    borderTopWidth: 1,
-    borderTopColor: colors.borderSoft,
-  },
-  input: {
-    flex: 1,
-    minHeight: 46,
-    maxHeight: 112,
-    borderRadius: 18,
-    backgroundColor: colors.inputBackground,
-    borderWidth: 1,
-    borderColor: colors.border,
-    color: colors.text,
-    fontSize: 14,
-    lineHeight: 20,
-    paddingHorizontal: 14,
-    paddingTop: 12,
-    paddingBottom: 10,
-  },
-  sendButton: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.primaryDeep,
-  },
-  sendButtonDisabled: {
-    backgroundColor: colors.textMuted,
-    opacity: 0.55,
-  },
+const createStyles = (colors, insets, isPhone) => StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: 'rgba(7, 28, 51, 0.5)', justifyContent: isPhone ? 'flex-end' : 'center', padding: isPhone ? 0 : 22 },
+  sheet: { flex: 1, width: '100%', maxWidth: 1240, maxHeight: isPhone ? '100%' : '92%', minHeight: 420, alignSelf: 'center', flexDirection: 'row', overflow: 'hidden', backgroundColor: colors.card, borderRadius: isPhone ? 0 : 22, paddingBottom: isPhone ? Math.max(insets.bottom, 10) : 0 },
+  chatPane: { flex: 1, minWidth: 0, backgroundColor: colors.background },
+  header: { minHeight: 76, paddingHorizontal: 22, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.borderSoft, backgroundColor: colors.card, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  headerCopy: { flex: 1, minWidth: 0 },
+  headerEyebrow: { color: colors.gold, fontSize: 10, fontWeight: '800', letterSpacing: 1.1 },
+  headerTitle: { color: colors.text, fontSize: 18, fontWeight: '800', marginTop: 3 },
+  caseContext: { color: colors.textSecondary, fontSize: 12, marginTop: 3 },
+  headerButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 12 },
+  modeRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 22, paddingTop: 14 },
+  modeOption: { borderBottomWidth: 2, borderBottomColor: 'transparent', paddingHorizontal: 4, paddingBottom: 9, marginRight: 13 },
+  modeOptionSelected: { borderBottomColor: colors.gold },
+  modeText: { color: colors.textMuted, fontSize: 12, fontWeight: '700' },
+  modeTextSelected: { color: colors.primary },
+  messagesScroll: { flex: 1 },
+  messagesContent: { width: '100%', maxWidth: 840, alignSelf: 'center', paddingHorizontal: isPhone ? 18 : 42, paddingTop: 24, paddingBottom: 24 },
+  loadingMessages: { alignItems: 'center', gap: 9, paddingVertical: 25 },
+  mutedText: { color: colors.textMuted, fontSize: 12 },
+  emptyChat: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, paddingVertical: isPhone ? 42 : 75 },
+  luxMark: { width: 55, height: 55, borderRadius: 17, backgroundColor: colors.primaryDeep, alignItems: 'center', justifyContent: 'center', marginBottom: 19 },
+  luxMarkText: { color: colors.gold, fontSize: 16, fontWeight: '900', letterSpacing: 1 },
+  emptyTitle: { color: colors.text, fontSize: 23, fontWeight: '800', textAlign: 'center' },
+  emptyDescription: { color: colors.textSecondary, maxWidth: 430, fontSize: 14, lineHeight: 21, textAlign: 'center', marginTop: 9 },
+  suggestions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8, marginTop: 25 },
+  suggestion: { borderWidth: 1, borderColor: colors.border, borderRadius: 20, paddingVertical: 9, paddingHorizontal: 13, backgroundColor: colors.card },
+  suggestionText: { color: colors.primary, fontSize: 12, fontWeight: '700' },
+  messageBlock: { maxWidth: 760, marginBottom: 22 },
+  userBlock: { alignSelf: 'flex-end', alignItems: 'flex-end' },
+  assistantBlock: { alignSelf: 'flex-start', alignItems: 'flex-start' },
+  messageRole: { color: colors.textMuted, fontSize: 10, fontWeight: '800', letterSpacing: 1, marginBottom: 6 },
+  messageText: { fontSize: 15, lineHeight: 23 },
+  userText: { color: colors.textOnPrimary, backgroundColor: colors.primary, borderRadius: 16, borderBottomRightRadius: 5, paddingHorizontal: 15, paddingVertical: 11 },
+  assistantText: { color: colors.text, paddingRight: 16 },
+  citationHint: { color: colors.primary, fontSize: 11, fontWeight: '700', marginTop: 8 },
+  thinking: { flexDirection: 'row', alignItems: 'center', gap: 9, marginBottom: 18 },
+  inlineAlert: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 12, padding: 11, backgroundColor: colors.dangerSoft },
+  inlineAlertText: { color: colors.danger, flex: 1, fontSize: 12 },
+  composer: { flexDirection: 'row', alignItems: 'flex-end', gap: 10, marginHorizontal: isPhone ? 14 : 34, borderWidth: 1, borderColor: colors.border, borderRadius: 17, padding: 8, backgroundColor: colors.card },
+  input: { flex: 1, minHeight: 42, maxHeight: 120, color: colors.text, fontSize: 15, lineHeight: 21, paddingHorizontal: 9, paddingTop: 10, paddingBottom: 8 },
+  sendButton: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary },
+  sendButtonDisabled: { opacity: 0.42 },
+  composerHint: { color: colors.textMuted, fontSize: 10, textAlign: 'center', marginHorizontal: 22, marginTop: 7, marginBottom: 10 },
+  dialogOverlay: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 22, backgroundColor: 'rgba(7, 28, 51, 0.48)' },
+  actionDialog: { width: '100%', maxWidth: 390, borderRadius: 19, padding: 21, backgroundColor: colors.card },
+  dialogTitle: { color: colors.text, fontSize: 18, fontWeight: '800', marginBottom: 14 },
+  dialogDescription: { color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: -4, marginBottom: 15 },
+  dialogRow: { minHeight: 45, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  dialogRowText: { color: colors.text, fontSize: 14, fontWeight: '700' },
+  cancelRow: { borderTopWidth: 1, borderTopColor: colors.borderSoft, alignItems: 'center', marginTop: 6, paddingTop: 15 },
+  cancelText: { color: colors.textSecondary, fontSize: 13, fontWeight: '700' },
+  dialogInput: { height: 47, borderWidth: 1, borderColor: colors.border, borderRadius: 12, paddingHorizontal: 12, color: colors.text, backgroundColor: colors.backgroundAlt, marginBottom: 15 },
+  dialogActions: { flexDirection: 'row', gap: 10 },
+  secondaryButton: { flex: 1, minHeight: 45, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.backgroundAlt },
+  secondaryButtonText: { color: colors.textSecondary, fontWeight: '700' },
+  primaryButton: { flex: 1, minHeight: 45, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary },
+  primaryButtonText: { color: '#FFFFFF', fontWeight: '800' },
 });
