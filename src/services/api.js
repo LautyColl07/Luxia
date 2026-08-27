@@ -35,6 +35,8 @@ const PROTECTED_ENDPOINT_PREFIXES = [
   '/legal-studies',
   '/lux/chat',
   '/lux/legal/query',
+  '/lux/conversations',
+  '/lux/memory',
   '/transcriptions',
   '/transcripts',
 ];
@@ -58,7 +60,7 @@ function runWithTimeout(promise, timeoutMs, timeoutMessage) {
 
   const timeoutPromise = new Promise((_, reject) => {
     timeoutId = setTimeout(() => {
-      reject(createRequestError(timeoutMessage, 0));
+      reject(createRequestError(timeoutMessage, 408, null, 'TIMEOUT'));
     }, timeoutMs);
   });
 
@@ -592,11 +594,12 @@ function getCaseDetailMock(id) {
   });
 }
 
-function createRequestError(message, status = 0, data = null) {
+function createRequestError(message, status = 0, data = null, code = null) {
   const error = new Error(message);
   error.status = status;
   error.data = data;
   error.response = data;
+  if (code) error.code = code;
   return error;
 }
 
@@ -611,6 +614,29 @@ function getAuthDiagnostic(token) {
     hasToken: Boolean(token),
     tokenLength: typeof token === 'string' ? token.length : 0,
   };
+}
+
+function getResponseShape(data) {
+  if (data === null || data === undefined) return null;
+  if (Array.isArray(data)) return ['array'];
+  if (typeof data !== 'object') return [typeof data];
+  return Object.keys(data).slice(0, 20);
+}
+
+function getSafeErrorCode(data, error = null) {
+  const code = data?.errorCode ?? data?.code ?? error?.code;
+  return typeof code === 'string' && code.trim() ? code.trim().slice(0, 80) : null;
+}
+
+function getSafeErrorMessage(data, error = null) {
+  const value = typeof data === 'string'
+    ? data
+    : data?.error?.message ?? data?.error ?? data?.message ?? error?.message;
+  return typeof value === 'string' && value.trim() ? value.trim().slice(0, 240) : null;
+}
+
+function logLuxDebug(details) {
+  logApiDiagnostic('log', '[LUX DEBUG]', details);
 }
 
 function isTransientConnectionError(error) {
@@ -809,6 +835,18 @@ export async function request(endpoint, options = {}) {
         message: error?.message || String(error),
         ...getAuthDiagnostic(authHeaders?.Authorization),
       });
+      if (path === '/lux/chat') {
+        logLuxDebug({
+          url,
+          method,
+          conversationId: safeOptionalString(fetchOptions.body?.conversationId),
+          ...getAuthDiagnostic(authHeaders?.Authorization),
+          status: error?.status || 0,
+          errorCode: getSafeErrorCode(null, error) || (error?.status === 408 ? 'TIMEOUT' : 'NETWORK_ERROR'),
+          responseShape: null,
+        });
+      }
+      if (error?.code === 'TIMEOUT' || error?.status === 408) throw error;
       throw createRequestError(CONNECTION_ERROR_MESSAGE, 0, error);
     }
   };
@@ -826,6 +864,17 @@ export async function request(endpoint, options = {}) {
       currentUser: Boolean(auth?.currentUser),
       ...getAuthDiagnostic(authToken),
     });
+    if (path === '/lux/chat') {
+      logLuxDebug({
+        url,
+        method,
+        conversationId: safeOptionalString(fetchOptions.body?.conversationId),
+        ...getAuthDiagnostic(authToken),
+        status: error?.status || 0,
+        errorCode: getSafeErrorCode(null, error) || 'AUTH_ERROR',
+        responseShape: null,
+      });
+    }
     throw error;
   }
   let response = await makeRequest(authInfo.headers);
@@ -852,6 +901,18 @@ export async function request(endpoint, options = {}) {
     }
   }
 
+  if (path === '/lux/chat') {
+    logLuxDebug({
+      url,
+      method,
+      conversationId: safeOptionalString(fetchOptions.body?.conversationId),
+      ...getAuthDiagnostic(authInfo.token),
+      status: response.status,
+      errorCode: response.ok ? null : getSafeErrorCode(data),
+      responseShape: getResponseShape(data),
+    });
+  }
+
   if (typeof __DEV__ !== 'undefined' && __DEV__ && path === '/lux/legal/query') {
     const responseKeys = data && typeof data === 'object' ? Object.keys(data) : [];
     const nestedKeys = data?.data && typeof data.data === 'object' ? Object.keys(data.data) : [];
@@ -874,7 +935,9 @@ export async function request(endpoint, options = {}) {
       url,
       method,
       status: response.status,
-      body: typeof data === 'string' ? data.slice(0, 500) : data,
+      errorCode: getSafeErrorCode(data),
+      errorMessage: getSafeErrorMessage(data),
+      responseShape: getResponseShape(data),
       currentUser: Boolean(auth?.currentUser),
       ...getAuthDiagnostic(authInfo.token),
     });
@@ -2024,42 +2087,182 @@ export async function sendLuxMessage(message, context = {}) {
     };
   }
 
-  try {
-    const data = await request('/lux/chat', {
-      method: 'POST',
-      timeout: LUX_REQUEST_TIMEOUT_MS,
-      timeoutMessage: LUX_TIMEOUT_ERROR_MESSAGE,
-      body: {
-        message: normalizedMessage,
-        context: {
-          screen: 'dashboard',
-          ...context,
-          // El contexto activo se toma del estado local confiable de la app;
-          // el backend vuelve a validar toda referencia antes de persistirla.
-          ...getActiveWorkContextQuery(),
-        },
+  const conversationId = safeOptionalString(context?.conversationId);
+  const data = await request('/lux/chat', {
+    method: 'POST',
+    timeout: LUX_REQUEST_TIMEOUT_MS,
+    timeoutMessage: LUX_TIMEOUT_ERROR_MESSAGE,
+    body: {
+      message: normalizedMessage,
+      ...(conversationId ? { conversationId } : {}),
+      context: {
+        screen: 'dashboard',
+        ...context,
+        ...(conversationId ? { conversationId } : {}),
+        // El contexto activo se toma del estado local confiable de la app;
+        // el backend vuelve a validar toda referencia antes de persistirla.
+        ...getActiveWorkContextQuery(),
       },
-    });
+    },
+  });
 
-    const reply = safeString(data?.reply, LUX_CONNECTION_ERROR_MESSAGE);
+  const responseData = unwrapLuxData(data);
+  const reply = firstTextValue(
+    typeof responseData === 'string' ? responseData : null,
+    responseData?.reply,
+    responseData?.answer,
+    responseData?.response,
+    responseData?.message
+  );
 
-    return {
-      success: Boolean(data?.success),
-      reply,
-      raw: data,
-    };
-  } catch (error) {
-    if (__DEV__) {
-      console.warn('[LUX] No se pudo conectar con el asistente.');
-    }
-    const isTimeout = error?.message === LUX_TIMEOUT_ERROR_MESSAGE;
-
-    return {
-      success: false,
-      reply: isTimeout ? LUX_TIMEOUT_ERROR_MESSAGE : LUX_CONNECTION_ERROR_MESSAGE,
-      error,
-    };
+  if (!reply) {
+    throw createRequestError('LUX devolvió una respuesta inválida.', 502, data, 'RESPONSE_PARSE_ERROR');
   }
+
+  return {
+    success: responseData?.success === undefined ? true : Boolean(responseData.success),
+    reply,
+    conversationId: safeOptionalString(responseData?.conversationId ?? data?.conversationId),
+    citations: responseData?.citations ?? responseData?.legalCitations,
+    raw: data,
+  };
+}
+
+function normalizeLuxMessage(item = {}) {
+  const role = item.role === 'user' || item.role === 'assistant' ? item.role : 'assistant';
+  return {
+    id: safeString(item.id ?? item.messageId, `lux-message-${Date.now()}-${Math.random().toString(16).slice(2)}`),
+    role,
+    text: safeString(item.text ?? item.content ?? item.message ?? item.answer, ''),
+    createdAt: item.createdAt ?? item.created_at ?? new Date().toISOString(),
+    legal: item.legal ?? item.metadata?.legal ?? null,
+  };
+}
+
+function unwrapLuxData(response) {
+  if (response && typeof response === 'object' && response.data !== undefined) return response.data;
+  return response;
+}
+
+export function normalizeLuxConversation(item = {}) {
+  const messages = Array.isArray(item.messages)
+    ? item.messages.map(normalizeLuxMessage).filter((message) => message.text)
+    : [];
+  return {
+    id: safeString(item.id ?? item.conversationId, ''),
+    title: safeString(item.title ?? item.name, 'Nueva conversación'),
+    updatedAt: item.updatedAt ?? item.updated_at ?? item.createdAt ?? new Date().toISOString(),
+    createdAt: item.createdAt ?? item.created_at ?? item.updatedAt ?? new Date().toISOString(),
+    archived: Boolean(item.archived),
+    pendingSync: Boolean(item.pendingSync),
+    selectedCaseId: item.selectedCaseId ?? item.caseId ?? null,
+    selectedCaseName: safeOptionalString(item.selectedCaseName ?? item.caseName),
+    messages,
+  };
+}
+
+export function normalizeLuxMemory(item = {}) {
+  return {
+    id: safeString(item.id ?? item.memoryId, `lux-memory-${Date.now()}-${Math.random().toString(16).slice(2)}`),
+    text: safeString(item.text ?? item.content ?? item.memory, ''),
+    enabled: item.enabled !== false,
+    updatedAt: item.updatedAt ?? item.updated_at ?? new Date().toISOString(),
+  };
+}
+
+function getLuxCollectionPayload(response) {
+  const payload = unwrapLuxData(response);
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.items)) return payload.items;
+  if (Array.isArray(payload?.conversations)) return payload.conversations;
+  if (Array.isArray(payload?.memories)) return payload.memories;
+  if (Array.isArray(payload?.messages)) return payload.messages;
+  if (Array.isArray(response)) return response;
+  if (Array.isArray(response?.items)) return response.items;
+  if (Array.isArray(response?.data)) return response.data;
+  if (Array.isArray(response?.conversations)) return response.conversations;
+  if (Array.isArray(response?.memories)) return response.memories;
+  return [];
+}
+
+export async function getLuxConversations(options = {}) {
+  const response = await request('/lux/conversations', { method: 'GET', timeout: REQUEST_TIMEOUT_MS, ...options });
+  return getLuxCollectionPayload(response).map(normalizeLuxConversation).filter((item) => item.id);
+}
+
+export async function createLuxConversation(payload = {}) {
+  const response = await request('/lux/conversations', {
+    method: 'POST',
+    body: {
+      title: safeString(payload.title, 'Nueva conversación'),
+      selectedCaseId: payload.selectedCaseId ?? null,
+      selectedCaseName: payload.selectedCaseName ?? null,
+    },
+  });
+  return normalizeLuxConversation(unwrapLuxData(response));
+}
+
+export async function getLuxConversation(conversationId) {
+  const id = safeOptionalString(conversationId);
+  if (!id) throw new Error('No hay una conversación seleccionada.');
+  const [conversationResponse, messagesResponse] = await Promise.all([
+    request(`/lux/conversations/${encodeURIComponent(id)}`, { method: 'GET' }),
+    request(`/lux/conversations/${encodeURIComponent(id)}/messages`, { method: 'GET' }),
+  ]);
+  const conversation = unwrapLuxData(conversationResponse) || {};
+  const messages = getLuxCollectionPayload(messagesResponse).map(normalizeLuxMessage).filter((item) => item.text);
+  return normalizeLuxConversation({ ...conversation, messages });
+}
+
+export async function updateLuxConversation(conversationId, payload = {}) {
+  const id = safeOptionalString(conversationId);
+  if (!id) throw new Error('No hay una conversación seleccionada.');
+  const response = await request(`/lux/conversations/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: payload,
+  });
+  return normalizeLuxConversation(unwrapLuxData(response));
+}
+
+export async function deleteLuxConversation(conversationId) {
+  const id = safeOptionalString(conversationId);
+  if (!id) throw new Error('No hay una conversación seleccionada.');
+  return request(`/lux/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export async function searchLuxConversations(query, options = {}) {
+  const normalizedQuery = safeString(query, '').trim();
+  if (!normalizedQuery) return getLuxConversations(options);
+  const response = await request(`/lux/conversations?search=${encodeURIComponent(normalizedQuery)}`, {
+    method: 'GET',
+    timeout: REQUEST_TIMEOUT_MS,
+    ...options,
+  });
+  return getLuxCollectionPayload(response).map(normalizeLuxConversation).filter((item) => item.id);
+}
+
+export async function getLuxMemory(options = {}) {
+  const response = await request('/lux/memory', { method: 'GET', timeout: REQUEST_TIMEOUT_MS, ...options });
+  const items = getLuxCollectionPayload(response);
+  return items.map(normalizeLuxMemory).filter((item) => item.text);
+}
+
+export async function createLuxMemory(text) {
+  const response = await request('/lux/memory', { method: 'POST', body: { text: safeString(text, '') } });
+  return normalizeLuxMemory(unwrapLuxData(response));
+}
+
+export async function updateLuxMemory(memoryId, payload = {}) {
+  const id = safeOptionalString(memoryId);
+  if (!id) throw new Error('No hay un recuerdo seleccionado.');
+  const response = await request(`/lux/memory/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload });
+  return normalizeLuxMemory(unwrapLuxData(response));
+}
+
+export async function deleteLuxMemory(memoryId) {
+  const id = safeOptionalString(memoryId);
+  if (!id) throw new Error('No hay un recuerdo seleccionado.');
+  return request(`/lux/memory/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
 export async function sendGeneralLuxMessage(message, context = {}) {

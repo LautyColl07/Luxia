@@ -368,6 +368,23 @@ export default function MoreScreen({ navigation }) {
 
       <CardSection
         colors={colors}
+        icon="brain"
+        styles={styles}
+        subtitle="Revisá y administrá las preferencias que LUX recuerda."
+        title="Memoria de LUX"
+      >
+        <ActionRow
+          colors={colors}
+          description="Ver, editar o eliminar tus recuerdos guardados."
+          icon="brain-outline"
+          onPress={() => navigation.navigate('LuxMemory')}
+          styles={styles}
+          title="Administrar memoria"
+        />
+      </CardSection>
+
+      <CardSection
+        colors={colors}
         icon="lock-outline"
         styles={styles}
         subtitle="Acciones rapidas para proteger tu acceso."

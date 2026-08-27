@@ -1,4 +1,4 @@
-export const SERVER_IP = "172.16.6.103";
+export const SERVER_IP = "25.1.22.89";
 export const SERVER_PORT = 3000;
 export const API_PORT = SERVER_PORT;
 export const AI_PORT = 5000;

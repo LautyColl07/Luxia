@@ -13,6 +13,7 @@ import ActivityHistoryScreen from '../screens/ActivityHistoryScreen';
 import DashboardScreen from '../screens/DashboardScreen';
 import DocumentsScreen from '../screens/DocumentsScreen';
 import LiveTranscriptionScreen from '../screens/LiveTranscriptionScreen';
+import LuxMemoryScreen from '../screens/LuxMemoryScreen';
 import MoreScreen from '../screens/MoreScreen';
 import NewCaseScreen from '../screens/NewCaseScreen';
 import NewHearingScreen from '../screens/NewHearingScreen';
@@ -128,6 +129,7 @@ export default function DashboardNavigator() {
         options={{ title: 'Transcripción en vivo' }}
       />
       <Stack.Screen component={UploadDocumentScreen} name="UploadDocument" options={{ title: 'Subir documento' }} />
+      <Stack.Screen component={LuxMemoryScreen} name="LuxMemory" options={{ title: 'Memoria de LUX' }} />
     </Stack.Navigator>
   );
 }
