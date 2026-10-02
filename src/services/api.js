@@ -1,11 +1,12 @@
 import { API_BASE_URL as CONFIG_API_BASE_URL, API_ROOT_URL } from '../config/api';
+import { IS_CAPTURE_MODE } from '../config/captureMode';
 import { auth } from '../config/firebase';
 import { signOut } from 'firebase/auth';
 import mockData from '../data/mockData';
 import { normalizeStatusLabel } from '../utils/status';
 import { getUserDisplayName, getUserEmail, getUserRole } from '../utils/userDisplay';
 
-export const USE_MOCKS = false;
+export const USE_MOCKS = IS_CAPTURE_MODE;
 
 const DASHBOARD_RESUMEN_ENDPOINT = '/dashboard/resumen';
 
@@ -16,7 +17,8 @@ export const FILE_BASE_URL = API_ROOT_URL;
 let authToken = null;
 let authState = 'initializing';
 let mockStore = JSON.parse(JSON.stringify(mockData));
-const REQUEST_TIMEOUT_MS = 8000;
+const REQUEST_TIMEOUT_MS = 15000;
+const DATA_REQUEST_TIMEOUT_MS = 30000;
 const LUX_REQUEST_TIMEOUT_MS = 120000;
 const AUTH_INITIALIZING_MESSAGE = 'Estamos restaurando tu sesión. Intentá nuevamente en unos instantes.';
 const CONNECTION_ERROR_MESSAGE = 'No pudimos conectarnos. Revisá tu conexión e intentá nuevamente.';
@@ -25,7 +27,6 @@ const PROTECTED_ENDPOINT_PREFIXES = [
   '/auth',
   '/activity',
   '/dashboard/resumen',
-  '/notificaciones',
   '/causas',
   '/cases',
   '/audiencias',
@@ -34,7 +35,6 @@ const PROTECTED_ENDPOINT_PREFIXES = [
   '/tasks',
   '/legal-studies',
   '/lux/chat',
-  '/lux/legal/query',
   '/lux/conversations',
   '/lux/memory',
   '/transcriptions',
@@ -603,16 +603,30 @@ function createRequestError(message, status = 0, data = null, code = null) {
   return error;
 }
 
+function unsupportedBackendEndpoint(endpoint) {
+  throw createRequestError(
+    `El backend actual no expone ${endpoint}.`,
+    501,
+    { endpoint },
+    'UNSUPPORTED_ENDPOINT'
+  );
+}
+
 function logApiDiagnostic(level, label, details) {
   if (typeof __DEV__ !== 'undefined' && __DEV__ && typeof console?.[level] === 'function') {
-    console[level](label, details);
+    const safeDetails = {
+      url: typeof details?.url === 'string' ? details.url : null,
+      method: typeof details?.method === 'string' ? details.method : null,
+      status: Number.isFinite(Number(details?.status)) ? Number(details.status) : null,
+      hasAuthorization: Boolean(details?.hasAuthorization ?? details?.hasToken),
+    };
+    console[level](`${label} ${JSON.stringify(safeDetails)}`);
   }
 }
 
 function getAuthDiagnostic(token) {
   return {
-    hasToken: Boolean(token),
-    tokenLength: typeof token === 'string' ? token.length : 0,
+    hasAuthorization: Boolean(token),
   };
 }
 
@@ -675,8 +689,12 @@ function getErrorMessage(status, data) {
     return data?.error || 'El formato del archivo no esta permitido. Usa PDF, DOC, DOCX, JPG o PNG.';
   }
 
-  if (status === 0 || status >= 500) {
+  if (status === 0) {
     return CONNECTION_ERROR_MESSAGE;
+  }
+
+  if (status >= 500) {
+    return `El servidor devolvio HTTP ${status}. El problema corresponde al backend.`;
   }
 
   if (typeof data === 'string' && data.trim()) {
@@ -699,7 +717,10 @@ function getErrorMessage(status, data) {
 }
 
 function isProtectedEndpoint(path) {
-  return PROTECTED_ENDPOINT_PREFIXES.some((prefix) => path === prefix || path.startsWith(prefix + '/'));
+  const pathWithoutQuery = String(path || '').split(/[?#]/, 1)[0];
+  return PROTECTED_ENDPOINT_PREFIXES.some(
+    (prefix) => pathWithoutQuery === prefix || pathWithoutQuery.startsWith(prefix + '/')
+  );
 }
 
 function omitAuthorizationHeader(headers = {}) {
@@ -767,6 +788,15 @@ async function getRequestAuthHeaders(path, customHeaders = {}, forceRefresh = fa
 }
 
 export async function request(endpoint, options = {}) {
+  if (IS_CAPTURE_MODE) {
+    throw createRequestError(
+      'Esta accion no esta disponible en MODO CAPTURA.',
+      503,
+      null,
+      'CAPTURE_MODE'
+    );
+  }
+
   if (!API_BASE_URL) {
     throw new Error('Configura API_BASE_URL en src/config/api.js para usar la API real.');
   }
@@ -821,6 +851,7 @@ export async function request(endpoint, options = {}) {
         method,
         status: response.status,
         ok: response.ok,
+        ...getAuthDiagnostic(authHeaders?.Authorization),
       });
       return response;
     } catch (error) {
@@ -913,23 +944,6 @@ export async function request(endpoint, options = {}) {
     });
   }
 
-  if (typeof __DEV__ !== 'undefined' && __DEV__ && path === '/lux/legal/query') {
-    const responseKeys = data && typeof data === 'object' ? Object.keys(data) : [];
-    const nestedKeys = data?.data && typeof data.data === 'object' ? Object.keys(data.data) : [];
-    console.info('[LUX legal telemetry]', {
-      endpoint: '/api/v1/lux/legal/query',
-      pathname: path,
-      status: response.status,
-      bodyKeys: Object.keys(fetchOptions.body || {}),
-      hasConversationId: Boolean(fetchOptions.body?.conversationId),
-      responseKeys,
-      nestedKeys,
-    });
-    console.log('[LUX ENDPOINT]', '/api/v1/lux/legal/query');
-    console.log('[LUX BODY KEYS]', Object.keys(fetchOptions.body || {}).join(','));
-    console.log('[LUX STATUS]', response.status);
-  }
-
   if (!response.ok) {
     logApiDiagnostic('error', '[API HTTP error]', {
       url,
@@ -946,7 +960,12 @@ export async function request(endpoint, options = {}) {
       setAuthToken(null);
       void signOut(auth).catch(() => undefined);
     }
-    throw createRequestError(getErrorMessage(response.status, data), response.status, data);
+    const requestError = createRequestError(getErrorMessage(response.status, data), response.status, data);
+    // Keep request metadata available to the UI without exposing credentials.
+    requestError.endpoint = path;
+    requestError.url = url;
+    requestError.method = method;
+    throw requestError;
   }
 
   return data;
@@ -965,6 +984,15 @@ export function getAuthHeaders() {
 }
 
 export async function getCurrentIdToken() {
+  if (IS_CAPTURE_MODE) {
+    throw createRequestError(
+      'Los tokens reales no estan disponibles en MODO CAPTURA.',
+      503,
+      null,
+      'CAPTURE_MODE'
+    );
+  }
+
   if (authState === 'initializing') {
     throw createRequestError(AUTH_INITIALIZING_MESSAGE, 425);
   }
@@ -1152,7 +1180,11 @@ export async function getDashboardResumen(options = {}) {
   }
 
   dashboardResumenInFlight = (async () => {
-    const data = await request(withWorkScope(DASHBOARD_RESUMEN_ENDPOINT));
+    const endpoint =
+      activeWorkContext?.type === 'study'
+        ? withWorkScope(DASHBOARD_RESUMEN_ENDPOINT)
+        : DASHBOARD_RESUMEN_ENDPOINT;
+    const data = await request(endpoint);
 
     return enrichDashboardResumenWithCases(normalizeDashboardResumen(data));
   })().finally(() => {
@@ -1224,7 +1256,8 @@ export async function getCases(context = null, params = {}) {
 
   const response = await requestWithFallback(
     `/causas${queryStr}`,
-    `/cases${queryStr}`
+    `/cases${queryStr}`,
+    { timeout: DATA_REQUEST_TIMEOUT_MS }
   );
 
   const page = normalizePaginatedResponse(response, normalizeCase);
@@ -1401,12 +1434,18 @@ export async function getHearings() {
     return simulateDelay(items);
   }
 
-  const firstResponse = await request(appendQueryParams(withWorkScope('/audiencias'), { page: 1, limit: 100 }));
+  const firstResponse = await request(
+    appendQueryParams(withWorkScope('/audiencias'), { page: 1, limit: 100 }),
+    { timeout: DATA_REQUEST_TIMEOUT_MS }
+  );
   const firstPage = normalizePaginatedResponse(firstResponse, normalizeHearing);
   const byId = new Map(firstPage.items.map((item) => [String(item.id), item]));
 
   for (let page = 2; page <= firstPage.totalPages; page += 1) {
-    const response = await request(appendQueryParams(withWorkScope('/audiencias'), { page, limit: 100 }));
+    const response = await request(
+      appendQueryParams(withWorkScope('/audiencias'), { page, limit: 100 }),
+      { timeout: DATA_REQUEST_TIMEOUT_MS }
+    );
     const nextPage = normalizePaginatedResponse(response, normalizeHearing);
     nextPage.items.forEach((item) => byId.set(String(item.id), item));
   }
@@ -1499,7 +1538,7 @@ export async function getDocuments() {
     return simulateDelay(items);
   }
 
-  const data = await request(withWorkScope('/documentos'));
+  const data = await request(withWorkScope('/documentos'), { timeout: DATA_REQUEST_TIMEOUT_MS });
   return sortByDateDesc(toArray(data).map((item) => normalizeDocument(item)), 'uploadedAt');
 }
 
@@ -1676,7 +1715,7 @@ export async function transcribeDocument(documentId) {
     });
   }
 
-  return request(`/documentos/${documentId}/transcribir`, { method: 'POST' });
+  return unsupportedBackendEndpoint('/documentos/:id/transcribir');
 }
 
 function buildHearingTranscriptionPayload({ caseDetail, hearing } = {}) {
@@ -1775,7 +1814,8 @@ export async function uploadHearingAudio({ asset, caseDetail, hearing } = {}) {
       formData.append(key, String(value));
     }
   });
-  formData.append('audio', {
+  await appendFormDataFile(formData, 'audio', {
+    file: asset.file,
     uri: asset.uri,
     name: asset.name || `audiencia-${hearingId}.m4a`,
     type: asset.mimeType || 'audio/m4a',
@@ -1811,26 +1851,21 @@ export async function startHearingLiveTranscription({ caseDetail, hearing } = {}
   }
 
   const hearingCaseId = safeOptionalString(hearing?.caseId ?? hearing?.causaId ?? caseDetail?.id);
-  const payload = await request('/audiencias/start', {
+  const payload = await request(`/audiencias/${hearingId}/transcripcion/live/start`, {
     method: 'POST',
     body: {
-      hearingId,
+      ...buildHearingTranscriptionPayload({ caseDetail, hearing }),
       caseId: hearingCaseId,
       ...(activeWorkContext?.type === 'study' && activeWorkContext?.legalStudyId
         ? { legalStudyId: activeWorkContext.legalStudyId }
         : {}),
-      title: `Audiencia ${hearingId}`,
     },
   });
-  const sessionId = getTranscriptionSessionId(payload);
-
-  if (!sessionId) {
-    throw createRequestError('El backend no devolvio sessionId.', 500, payload);
-  }
 
   return {
     ...normalizeHearingTranscription(payload || {}, hearingId),
-    sessionId,
+    // This contract is keyed by hearingId, not by a transcript sessionId.
+    sessionId: hearingId,
   };
 }
 
@@ -1842,10 +1877,10 @@ export async function uploadHearingLiveTranscriptionChunk({
   sessionId,
   startTime,
 } = {}) {
-  const activeSessionId = safeString(sessionId, '').trim();
+  const activeHearingId = safeString(hearingId || sessionId, '').trim();
 
-  if (!activeSessionId || !audioUri) {
-    throw createRequestError('No hay una sesion o bloque de audio valido.', 400);
+  if (!activeHearingId || !audioUri) {
+    throw createRequestError('No hay una audiencia o bloque de audio valido.', 400);
   }
 
   const formData = new FormData();
@@ -1858,7 +1893,7 @@ export async function uploadHearingLiveTranscriptionChunk({
   formData.append('startTime', String(startTime));
   formData.append('endTime', String(endTime));
 
-  const payload = await request(`/audiencias/${activeSessionId}/chunk`, {
+  const payload = await request(`/audiencias/${activeHearingId}/transcripcion/live/chunk`, {
     method: 'POST',
     timeout: 150000,
     timeoutMessage: 'La transcripcion del bloque tardo demasiado. El siguiente bloque puede continuar.',
@@ -1876,13 +1911,13 @@ export async function uploadHearingLiveTranscriptionChunk({
 }
 
 export async function finishHearingLiveTranscription({ hearingId, sessionId } = {}) {
-  const activeSessionId = safeString(sessionId, '').trim();
+  const activeHearingId = safeString(hearingId || sessionId, '').trim();
 
-  if (!activeSessionId) {
-    throw createRequestError('No hay una sesion activa para finalizar.', 400);
+  if (!activeHearingId) {
+    throw createRequestError('No hay una audiencia activa para finalizar.', 400);
   }
 
-  const payload = await request(`/audiencias/${activeSessionId}/finish`, {
+  const payload = await request(`/audiencias/${activeHearingId}/transcripcion/live/finish`, {
     method: 'POST',
     timeout: 150000,
     timeoutMessage: 'No pudimos finalizar la transcripcion dentro del tiempo esperado.',
@@ -1947,7 +1982,7 @@ function normalizeLiveTranscriptionSession(data = {}) {
 export async function startLiveTranscription({ title, caseId, hearingId } = {}) {
   const normalizedHearingId = safeOptionalString(hearingId);
   const normalizedTitle = safeOptionalString(title) || (normalizedHearingId ? `Audiencia ${normalizedHearingId}` : 'Transcripcion en vivo');
-  const payload = await request('/audiencias/start', {
+  const payload = await request('/transcriptions/start', {
     method: 'POST',
     body: {
       title: safeOptionalString(title) || 'Transcripción en vivo',
@@ -1989,7 +2024,7 @@ export async function uploadLiveTranscriptionChunk({
   formData.append('startTime', String(startTime));
   formData.append('endTime', String(endTime));
 
-  const payload = await request(`/audiencias/${sessionId}/chunk`, {
+  const payload = await request(`/transcriptions/${sessionId}/chunk`, {
     method: 'POST',
     timeout: 150000,
     timeoutMessage: 'La transcripcion del bloque tardo demasiado. El siguiente bloque puede continuar.',
@@ -2010,7 +2045,7 @@ export async function finishLiveTranscription(sessionId) {
     throw createRequestError('No hay una sesion activa para finalizar.', 400);
   }
 
-  const payload = await request(`/audiencias/${sessionId}/finish`, {
+  const payload = await request(`/transcriptions/${sessionId}/finish`, {
     method: 'POST',
     timeout: 150000,
     timeoutMessage: 'No pudimos finalizar la sesion de transcripcion dentro del tiempo esperado.',
@@ -2063,21 +2098,16 @@ export async function getNotifications(options = {}) {
     return notificationsInFlight;
   }
 
-  notificationsInFlight = (async () => {
-    try {
-      const data = await request('/notificaciones');
-      return sortByDateDesc(toArray(data).map((item) => normalizeNotification(item)), 'createdAt');
-    } catch {
-      return [];
-    }
-  })().finally(() => {
+  // The current backend does not expose /api/v1/notificaciones. Keep this
+  // optional UI section local until that backend contract exists.
+  notificationsInFlight = Promise.resolve([]).finally(() => {
     notificationsInFlight = null;
   });
 
   return notificationsInFlight;
 }
 
-export async function sendLuxMessage(message, context = {}) {
+export async function sendLuxMessage(message, context = {}, requestOptions = {}) {
   const normalizedMessage = safeString(message, '').trim();
 
   if (!normalizedMessage) {
@@ -2087,8 +2117,15 @@ export async function sendLuxMessage(message, context = {}) {
     };
   }
 
-  const conversationId = safeOptionalString(context?.conversationId);
+  const requestedConversationId = safeOptionalString(context?.conversationId);
+  // Local-only conversations cannot be resolved by the backend. Omit their
+  // identifier so the server can create or resolve a real conversation.
+  const conversationId = requestedConversationId?.startsWith('local-conversation-')
+    ? null
+    : requestedConversationId;
+  const { conversationId: _localConversationId, ...contextWithoutConversationId } = context || {};
   const data = await request('/lux/chat', {
+    ...requestOptions,
     method: 'POST',
     timeout: LUX_REQUEST_TIMEOUT_MS,
     timeoutMessage: LUX_TIMEOUT_ERROR_MESSAGE,
@@ -2097,7 +2134,7 @@ export async function sendLuxMessage(message, context = {}) {
       ...(conversationId ? { conversationId } : {}),
       context: {
         screen: 'dashboard',
-        ...context,
+        ...contextWithoutConversationId,
         ...(conversationId ? { conversationId } : {}),
         // El contexto activo se toma del estado local confiable de la app;
         // el backend vuelve a validar toda referencia antes de persistirla.
@@ -2186,8 +2223,7 @@ function getLuxCollectionPayload(response) {
 }
 
 export async function getLuxConversations(options = {}) {
-  const response = await request('/lux/conversations', { method: 'GET', timeout: REQUEST_TIMEOUT_MS, ...options });
-  return getLuxCollectionPayload(response).map(normalizeLuxConversation).filter((item) => item.id);
+  return unsupportedBackendEndpoint('/lux/conversations');
 }
 
 export async function createLuxConversation(payload = {}) {
@@ -2273,16 +2309,18 @@ export async function queryLegalAssistant({ question, conversationId, signal } =
   const normalizedQuestion = safeString(question, '').trim();
   if (!normalizedQuestion) throw new Error('Escribe una consulta jurídica.');
 
-  return request('/lux/legal/query', {
-    method: 'POST',
+  return sendLuxMessage(
+    normalizedQuestion,
+    {
+      conversationId: safeOptionalString(conversationId),
+      mode: 'legal',
+    },
+    {
     signal,
     timeout: LUX_REQUEST_TIMEOUT_MS,
     timeoutMessage: 'La consulta jurídica tardó demasiado en responder.',
-    body: {
-      question: normalizedQuestion,
-      ...(safeOptionalString(conversationId) ? { conversationId: safeOptionalString(conversationId) } : {}),
-    },
-  });
+    }
+  );
 }
 
 export async function sendLegalLuxQuery({ question, conversationId, signal } = {}) {

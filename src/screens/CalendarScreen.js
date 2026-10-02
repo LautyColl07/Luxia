@@ -78,7 +78,29 @@ export default function CalendarScreen({ navigation }) {
       setLoading(true);
       setError('');
 
-      const [hearings, cases] = await Promise.all([getHearings(), getAllCases()]);
+      const [hearingsResult, casesResult] = await Promise.allSettled([
+        getHearings(),
+        getAllCases(),
+      ]);
+      const hearings = hearingsResult.status === 'fulfilled' ? hearingsResult.value : [];
+      const cases = casesResult.status === 'fulfilled' ? casesResult.value : [];
+      const failedResult = [hearingsResult, casesResult].find(
+        (result) => result.status === 'rejected'
+      );
+
+      if (failedResult) {
+        const failedError = failedResult.reason;
+        console.error('[CalendarScreen] Una fuente del calendario no respondio.', {
+          name: failedError?.name || 'Error',
+          status: failedError?.status || 0,
+        });
+        setError(
+          failedError instanceof Error
+            ? failedError.message
+            : 'No pudimos cargar una parte de la agenda judicial.'
+        );
+      }
+
       const detailedCases = await Promise.all(
         cases.map(async (caseItem) => {
           try {
@@ -228,6 +250,12 @@ export default function CalendarScreen({ navigation }) {
       showsVerticalScrollIndicator={false}
       style={styles.screen}
     >
+      {error ? (
+        <View style={styles.sourceWarning}>
+          <MaterialCommunityIcons color={colors.danger} name="alert-outline" size={18} />
+          <Text style={styles.sourceWarningText}>{error}</Text>
+        </View>
+      ) : null}
       <View style={styles.topBar}>
         <Text style={styles.topBarTitle}>Agenda</Text>
         <StudyContextSelector />
@@ -461,6 +489,20 @@ const createStyles = (colors, layout, topInset) => StyleSheet.create({
     paddingHorizontal: layout.gutter,
     paddingBottom: 34,
     gap: 16,
+  },
+  sourceWarning: {
+    backgroundColor: colors.dangerSoft,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  sourceWarningText: {
+    color: colors.danger,
+    flex: 1,
+    fontSize: 12,
   },
   topBar: {
     flexDirection: 'row',

@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -19,14 +20,8 @@ import LuxConversationSidebar from './LuxConversationSidebar';
 import { useAuth } from '../context/AuthContext';
 import { useAppTheme } from '../context/ThemeContext';
 import {
-  createLuxConversation,
-  deleteLuxConversation,
-  getLuxConversation,
-  getLuxConversations,
   normalizeLuxConversation,
-  searchLuxConversations,
   sendGeneralLuxMessage,
-  updateLuxConversation,
 } from '../services/api';
 import { useResponsiveLayout } from '../theme/layout';
 
@@ -48,11 +43,6 @@ function createMessage(role, text, extra = {}) {
   return { id: newId(role), role, text: String(text || ''), createdAt: new Date().toISOString(), ...extra };
 }
 
-function mergeConversation(remote, local) {
-  const normalized = normalizeLuxConversation(remote);
-  return { ...local, ...normalized, messages: normalized.messages.length ? normalized.messages : local?.messages || [] };
-}
-
 function getStorageKey(userId) {
   return `${STORAGE_PREFIX}.${userId || 'anonymous'}`;
 }
@@ -68,10 +58,15 @@ function getLuxErrorMessage(error) {
   if (error?.code === 'TIMEOUT' || error?.status === 408) return 'LUX tardó demasiado en responder.';
   if (error?.status === 401) return 'Tu sesión venció. Volvé a iniciar sesión.';
   if (error?.status === 403) return 'No tenés acceso a esta conversación.';
+  if (error?.status === 404 && error?.endpoint === '/lux/chat') {
+    return 'LUX no está disponible: el backend no publicó la ruta /lux/chat.';
+  }
   if (error?.status === 404) return 'Esta conversación ya no está disponible.';
   if (error?.code === 'RESPONSE_PARSE_ERROR') return 'LUX devolvió una respuesta inválida.';
   if (error?.status === 0 || error?.code === 'NETWORK_ERROR') return 'No se pudo conectar con el servidor.';
-  if (error?.status >= 500) return 'Hubo un error en LUX.';
+  if (error?.status >= 500) {
+    return `LUX devolvió HTTP ${error.status}. El problema corresponde al backend.`;
+  }
   if (error?.status === 425) return 'Estamos restaurando tu sesión. Intentá nuevamente en unos instantes.';
   return 'No se pudo enviar el mensaje. Intentá nuevamente.';
 }
@@ -84,10 +79,11 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
   const isPhone = layout.isPhone;
   const styles = useMemo(() => createStyles(colors, insets, isPhone), [colors, insets, isPhone]);
   const selectedIdRef = useRef(null);
-  const remoteConversationIdsRef = useRef(new Set());
   const loadSequenceRef = useRef(0);
   const searchSequenceRef = useRef(0);
   const inputValueRef = useRef('');
+  const messagesScrollRef = useRef(null);
+  const openAnimation = useRef(new Animated.Value(0)).current;
   const [conversations, setConversations] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -107,6 +103,40 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
   const [showRename, setShowRename] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const storageKey = getStorageKey(currentUser?.uid);
+
+  const scrollToBottom = useCallback(() => {
+    requestAnimationFrame(() => {
+      messagesScrollRef.current?.scrollToEnd({ animated: true });
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!visible) {
+      openAnimation.setValue(0);
+      return undefined;
+    }
+
+    openAnimation.setValue(0);
+    const animation = Animated.spring(openAnimation, {
+      damping: 18,
+      mass: 0.8,
+      stiffness: 210,
+      toValue: 1,
+      useNativeDriver: true,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [openAnimation, visible]);
+
+  useEffect(() => {
+    if (!visible) return undefined;
+    const firstScroll = setTimeout(scrollToBottom, 50);
+    const secondScroll = setTimeout(scrollToBottom, 220);
+    return () => {
+      clearTimeout(firstScroll);
+      clearTimeout(secondScroll);
+    };
+  }, [isSending, messages, scrollToBottom, selectedId, visible]);
 
   useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
 
@@ -145,20 +175,9 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
     setMessages(conversation.messages || []);
     if (isPhone) setSidebarVisible(false);
     setSyncError('');
-    setLoadingMessages(true);
-    if (conversation.pendingSync) {
-      setLoadingMessages(false);
-      return;
-    }
-    const sequence = loadSequenceRef.current + 1;
-    loadSequenceRef.current = sequence;
-    try {
-      const remote = await getLuxConversation(id);
-      if (loadSequenceRef.current !== sequence || selectedIdRef.current !== id) return;
-      const merged = mergeConversation(remote, conversation);
-      updateConversation(id, () => merged);
-      setMessages(merged.messages || []);
-    } catch (error) {
+    setLoadingMessages(false);
+    /* Local conversation history is authoritative; the deployed backend has no conversation route. */
+    /*
       if (error?.status === 404) {
         setConversations((current) => {
           const next = current.filter((item) => item.id !== id);
@@ -175,10 +194,28 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
     } finally {
       if (loadSequenceRef.current === sequence) setLoadingMessages(false);
     }
-  }, [conversations, isPhone, searchResults, updateConversation]);
+    */
+  }, [conversations, isPhone, searchResults]);
 
   const createRealConversation = useCallback(async () => {
     setCreatingConversation(true);
+    const local = createConversation();
+    setConversations((current) => {
+      const pendingId = selectedIdRef.current;
+      const next = [local, ...current.filter((item) => item.id !== pendingId)];
+      void persist(next);
+      return next;
+    });
+    setSelectedId(local.id);
+    selectedIdRef.current = local.id;
+    setMessages([]);
+    setQuery('');
+    setSearchResults(null);
+    setSyncError('');
+    if (isPhone) setSidebarVisible(false);
+    setCreatingConversation(false);
+    return local;
+    /*
     try {
       const remote = await createLuxConversation({ title: 'Nueva conversación', ...contextValue });
       const remoteId = normalizeConversationId(remote?.id);
@@ -216,7 +253,8 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
     } finally {
       setCreatingConversation(false);
     }
-  }, [contextValue, isPhone, persist]);
+    */
+  }, [isPhone, persist]);
 
   useEffect(() => {
     if (!visible) return undefined;
@@ -227,6 +265,21 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
     (async () => {
       let localItems = [];
       try {
+        const cached = JSON.parse((await AsyncStorage.getItem(storageKey)) || '{}');
+        localItems = Array.isArray(cached.conversations) ? cached.conversations.map(normalizeLuxConversation) : [];
+      } catch { localItems = []; }
+      if (!mounted) return;
+      const localVisible = localItems.filter((item) => !item.archived);
+      setConversations(localVisible);
+      if (localVisible.length) {
+        setSelectedId(localVisible[0].id);
+        selectedIdRef.current = localVisible[0].id;
+        setMessages(localVisible[0].messages || []);
+      } else {
+        setSelectedId(null); selectedIdRef.current = null; setMessages([]);
+      }
+      /* The deployed backend does not expose conversation persistence routes. */
+      /*
         const cached = JSON.parse((await AsyncStorage.getItem(storageKey)) || '{}');
         localItems = Array.isArray(cached.conversations) ? cached.conversations.map(normalizeLuxConversation) : [];
       } catch { localItems = []; }
@@ -262,7 +315,9 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
       } finally {
         if (mounted) setLoadingConversations(false);
       }
-    })();
+      */
+      setLoadingConversations(false);
+      })();
     return () => { mounted = false; loadSequenceRef.current += 1; };
   }, [isPhone, persist, storageKey, visible]);
 
@@ -276,6 +331,11 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
     const sequence = searchSequenceRef.current + 1;
     searchSequenceRef.current = sequence;
     setLoadingConversations(true);
+    const normalizedQuery = debouncedQuery.toLowerCase();
+    setSearchResults(conversations.filter((item) => item.title.toLowerCase().includes(normalizedQuery)));
+    setLoadingConversations(false);
+    return () => { searchSequenceRef.current += 1; };
+    /*
     (async () => {
       try {
         const result = await searchLuxConversations(debouncedQuery);
@@ -289,7 +349,7 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
         if (sequence === searchSequenceRef.current) setLoadingConversations(false);
       }
     })();
-    return () => { searchSequenceRef.current += 1; };
+    */
   }, [conversations, debouncedQuery, visible]);
 
   const activeConversation = conversations.find((item) => item.id === selectedId) || null;
@@ -310,11 +370,7 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
     setIsSending(true);
     const userMessage = createMessage('user', text);
     let conversationId = normalizeConversationId(selectedIdRef.current);
-    if (
-      !conversationId ||
-      !remoteConversationIdsRef.current.has(conversationId) ||
-      conversations.find((item) => item.id === conversationId)?.pendingSync
-    ) {
+    if (!conversationId) {
       const remote = await createRealConversation();
       conversationId = normalizeConversationId(remote?.id);
       if (!conversationId) { setIsSending(false); return; }
@@ -336,7 +392,6 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
       if (response?.conversationId && response.conversationId !== conversationId) {
         const responseConversationId = normalizeConversationId(response.conversationId);
         if (responseConversationId) {
-          remoteConversationIdsRef.current.add(responseConversationId);
           updateConversation(conversationId, (item) => ({ ...item, id: responseConversationId }));
           if (selectedIdRef.current === conversationId) { selectedIdRef.current = responseConversationId; setSelectedId(responseConversationId); }
         }
@@ -350,8 +405,7 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
     const title = renameValue.trim();
     if (!actionConversation || !title) return;
     try {
-      const updated = await updateLuxConversation(actionConversation.id, { title });
-      updateConversation(actionConversation.id, (item) => ({ ...item, ...(updated?.id ? updated : { title }), updatedAt: new Date().toISOString(), pendingSync: false }));
+      updateConversation(actionConversation.id, (item) => ({ ...item, title, updatedAt: new Date().toISOString() }));
       setShowRename(false); setActionConversation(null); setSyncError('');
     } catch {
       setSyncError('No pudimos renombrar la conversación.');
@@ -362,7 +416,6 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
     if (!actionConversation) return;
     const id = actionConversation.id;
     try {
-      await updateLuxConversation(id, { archived: true });
       setConversations((current) => { const next = current.filter((item) => item.id !== id); void persist(next); return next; });
       if (selectedIdRef.current === id) { setSelectedId(null); selectedIdRef.current = null; setMessages([]); }
       setActionConversation(null); setSyncError('');
@@ -375,7 +428,6 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
     if (!actionConversation) return;
     const id = actionConversation.id;
     try {
-      await deleteLuxConversation(id);
       setConversations((current) => { const next = current.filter((item) => item.id !== id); void persist(next); return next; });
       if (selectedIdRef.current === id) { setSelectedId(null); selectedIdRef.current = null; setMessages([]); }
       setShowDelete(false); setActionConversation(null); setSyncError('');
@@ -388,9 +440,30 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
   }, [actionConversation, persist]);
 
   return (
-    <Modal animationType="fade" onRequestClose={onClose} transparent visible={visible}>
+    <Modal animationType="none" onRequestClose={onClose} transparent visible={visible}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.overlay}>
-        <View style={styles.sheet}>
+        <Animated.View
+          style={[
+            styles.sheet,
+            {
+              opacity: openAnimation,
+              transform: [
+                {
+                  translateY: openAnimation.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [isPhone ? 180 : 220, 0],
+                  }),
+                },
+                {
+                  scale: openAnimation.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0.92, 1],
+                  }),
+                },
+              ],
+            },
+          ]}
+        >
           {(!isPhone || sidebarVisible) ? <LuxConversationSidebar compact={isPhone} conversations={visibleConversations} loading={loadingConversations} onChangeQuery={setQuery} onClose={isPhone ? () => setSidebarVisible(false) : undefined} onNewConversation={handleNewConversation} onOpenAction={(item) => { setActionConversation(item); setRenameValue(item.title); }} onSelectConversation={selectConversation} query={query} selectedId={selectedId} /> : null}
           {(!isPhone || !sidebarVisible) ? (
             <View style={styles.chatPane}>
@@ -400,18 +473,44 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
                 <Pressable accessibilityLabel="Cerrar LUX" accessibilityRole="button" onPress={onClose} style={styles.headerButton}><MaterialCommunityIcons color={colors.textSecondary} name="close" size={22} /></Pressable>
               </View>
               <View style={styles.modeRow}>{[{ key: CHAT_MODE.GENERAL, label: 'Chat actual' }, { key: CHAT_MODE.LEGAL, label: 'Consulta jurídica' }].map((option) => <Pressable accessibilityRole="tab" accessibilityState={{ selected: chatMode === option.key }} key={option.key} onPress={() => selectMode(option.key)} style={[styles.modeOption, chatMode === option.key && styles.modeOptionSelected]}><Text style={[styles.modeText, chatMode === option.key && styles.modeTextSelected]}>{option.label}</Text></Pressable>)}</View>
-              <ScrollView contentContainerStyle={styles.messagesContent} showsVerticalScrollIndicator={false} style={styles.messagesScroll}>
+              <ScrollView
+                contentContainerStyle={styles.messagesContent}
+                persistentScrollbar
+                ref={messagesScrollRef}
+                showsVerticalScrollIndicator
+                style={styles.messagesScroll}
+              >
                 {loadingMessages ? <View style={styles.loadingMessages}><ActivityIndicator color={colors.primary} /><Text style={styles.mutedText}>Cargando historial…</Text></View> : null}
                 {!loadingMessages && !messages.length ? <View accessibilityLabel={modeWelcome[chatMode]} style={styles.emptyChat}><View style={styles.luxMark}><Text style={styles.luxMarkText}>LUX</Text></View><Text style={styles.emptyTitle}>¿En qué puedo ayudarte?</Text><Text style={styles.emptyDescription}>Consultá causas, documentos y cuestiones jurídicas con una respuesta clara y enfocada.</Text><View style={styles.suggestions}>{['Analizar una causa', 'Revisar documentos', 'Consulta jurídica'].map((suggestion) => <Pressable key={suggestion} onPress={() => setInputValue(suggestion)} style={styles.suggestion}><Text style={styles.suggestionText}>{suggestion}</Text></Pressable>)}</View></View> : null}
                 {messages.map((item) => <View key={item.id} style={[styles.messageBlock, item.role === 'user' ? styles.userBlock : styles.assistantBlock]}><Text style={styles.messageRole}>{item.role === 'user' ? 'Vos' : 'LUX'}</Text><Text selectable style={[styles.messageText, item.role === 'user' ? styles.userText : styles.assistantText]}>{item.text}</Text>{item.legal?.citations?.length ? <Text style={styles.citationHint}>Fuentes oficiales consultadas: {item.legal.citations.length}</Text> : null}</View>)}
                 {isSending ? <View style={styles.thinking}><ActivityIndicator color={colors.primary} size="small" /><Text style={styles.mutedText}>LUX está pensando…</Text></View> : null}
                 {syncError ? <View style={styles.inlineAlert}><MaterialCommunityIcons color={colors.danger} name="alert-outline" size={17} /><Text style={styles.inlineAlertText}>{syncError}</Text></View> : null}
               </ScrollView>
-              <View style={styles.composer}><TextInput accessibilityLabel="Escribir mensaje a LUX" multiline onChangeText={setInputValue} onSubmitEditing={Platform.OS === 'web' ? handleSend : undefined} placeholder="Escribí tu consulta…" placeholderTextColor={colors.textMuted} style={styles.input} value={input} /><Pressable accessibilityLabel="Enviar mensaje a LUX" accessibilityRole="button" disabled={!input.trim() || isSending || isStreaming} onPress={handleSend} style={[styles.sendButton, (!input.trim() || isSending) && styles.sendButtonDisabled]}><MaterialCommunityIcons color="#FFFFFF" name="arrow-up" size={21} /></Pressable></View>
+              <View style={styles.composer}>
+                <TextInput
+                  accessibilityLabel="Escribir mensaje a LUX"
+                  blurOnSubmit={Platform.OS !== 'web'}
+                  multiline
+                  onChangeText={setInputValue}
+                  onKeyPress={(event) => {
+                    if (Platform.OS === 'web' && event.nativeEvent?.key === 'Enter' && !event.nativeEvent?.shiftKey) {
+                      event.preventDefault?.();
+                      handleSend();
+                    }
+                  }}
+                  onSubmitEditing={Platform.OS === 'web' ? undefined : handleSend}
+                  placeholder="Escribí tu consulta…"
+                  placeholderTextColor={colors.textMuted}
+                  style={styles.input}
+                  submitBehavior={Platform.OS === 'web' ? 'newline' : 'submit'}
+                  value={input}
+                />
+                <Pressable accessibilityLabel="Enviar mensaje a LUX" accessibilityRole="button" disabled={!input.trim() || isSending || isStreaming} onPress={handleSend} style={[styles.sendButton, (!input.trim() || isSending) && styles.sendButtonDisabled]}><MaterialCommunityIcons color="#FFFFFF" name="arrow-up" size={21} /></Pressable>
+              </View>
               <Text style={styles.composerHint}>LUX brinda información orientativa. Verificá las fuentes antes de tomar decisiones.</Text>
             </View>
           ) : null}
-        </View>
+        </Animated.View>
       </KeyboardAvoidingView>
 
       <Modal animationType="fade" transparent visible={Boolean(actionConversation) && !showRename && !showDelete} onRequestClose={() => setActionConversation(null)}><View style={styles.dialogOverlay}><View style={styles.actionDialog}><Text style={styles.dialogTitle}>{actionConversation?.title}</Text><Pressable onPress={() => setShowRename(true)} style={styles.dialogRow}><MaterialCommunityIcons color={colors.primary} name="pencil-outline" size={19} /><Text style={styles.dialogRowText}>Renombrar</Text></Pressable><Pressable onPress={handleArchive} style={styles.dialogRow}><MaterialCommunityIcons color={colors.primary} name="archive-outline" size={19} /><Text style={styles.dialogRowText}>Archivar</Text></Pressable><Pressable onPress={() => setShowDelete(true)} style={styles.dialogRow}><MaterialCommunityIcons color={colors.danger} name="trash-can-outline" size={19} /><Text style={[styles.dialogRowText, { color: colors.danger }]}>Eliminar</Text></Pressable><Pressable onPress={() => setActionConversation(null)} style={styles.cancelRow}><Text style={styles.cancelText}>Cancelar</Text></Pressable></View></View></Modal>
@@ -422,16 +521,16 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
 }
 
 const createStyles = (colors, insets, isPhone) => StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: 'rgba(7, 28, 51, 0.5)', justifyContent: isPhone ? 'flex-end' : 'center', padding: isPhone ? 0 : 22 },
-  sheet: { flex: 1, width: '100%', maxWidth: 1240, maxHeight: isPhone ? '100%' : '92%', minHeight: 420, alignSelf: 'center', flexDirection: 'row', overflow: 'hidden', backgroundColor: colors.card, borderRadius: isPhone ? 0 : 22, paddingBottom: isPhone ? Math.max(insets.bottom, 10) : 0 },
+  overlay: { flex: 1, backgroundColor: 'rgba(7, 28, 51, 0.5)', justifyContent: 'flex-end', padding: isPhone ? 0 : 22 },
+  sheet: { flex: 1, width: '100%', maxWidth: 1240, maxHeight: isPhone ? '100%' : '74%', minHeight: isPhone ? 0 : 420, alignSelf: 'center', flexDirection: 'row', overflow: 'hidden', backgroundColor: colors.card, borderRadius: isPhone ? 0 : 22, paddingTop: isPhone ? insets.top : 0, paddingBottom: isPhone ? Math.max(insets.bottom, 10) : 0 },
   chatPane: { flex: 1, minWidth: 0, backgroundColor: colors.background },
-  header: { minHeight: 76, paddingHorizontal: 22, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.borderSoft, backgroundColor: colors.card, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  header: { minHeight: isPhone ? 68 : 76, paddingHorizontal: isPhone ? 16 : 22, paddingVertical: isPhone ? 10 : 14, borderBottomWidth: 1, borderBottomColor: colors.borderSoft, backgroundColor: colors.card, flexDirection: 'row', alignItems: 'center', gap: isPhone ? 8 : 12 },
   headerCopy: { flex: 1, minWidth: 0 },
   headerEyebrow: { color: colors.gold, fontSize: 10, fontWeight: '800', letterSpacing: 1.1 },
   headerTitle: { color: colors.text, fontSize: 18, fontWeight: '800', marginTop: 3 },
   caseContext: { color: colors.textSecondary, fontSize: 12, marginTop: 3 },
-  headerButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 12 },
-  modeRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 22, paddingTop: 14 },
+  headerButton: { width: isPhone ? 44 : 40, height: isPhone ? 44 : 40, alignItems: 'center', justifyContent: 'center', borderRadius: 12 },
+  modeRow: { flexDirection: 'row', gap: 8, paddingHorizontal: isPhone ? 16 : 22, paddingTop: 14 },
   modeOption: { borderBottomWidth: 2, borderBottomColor: 'transparent', paddingHorizontal: 4, paddingBottom: 9, marginRight: 13 },
   modeOptionSelected: { borderBottomColor: colors.gold },
   modeText: { color: colors.textMuted, fontSize: 12, fontWeight: '700' },

@@ -5,7 +5,7 @@ import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Switch, Te
 
 import { useAuth } from '../context/AuthContext';
 import { useAppTheme } from '../context/ThemeContext';
-import { createLuxMemory, deleteLuxMemory, getLuxMemory, normalizeLuxMemory, updateLuxMemory } from '../services/api';
+import { normalizeLuxMemory } from '../services/api';
 import { useResponsiveLayout } from '../theme/layout';
 
 export const MEMORY_TOGGLE_BACKEND_SUPPORTED = false;
@@ -38,6 +38,9 @@ export default function LuxMemoryScreen() {
       local = Array.isArray(saved.memories) ? saved.memories.map(normalizeLuxMemory) : [];
     } catch { local = []; }
     setMemories(local);
+    setLoading(false);
+    return;
+    /*
     try {
       const remote = await getLuxMemory();
       setMemories(remote);
@@ -45,7 +48,8 @@ export default function LuxMemoryScreen() {
     } catch {
       if (!local.length) setError('No pudimos cargar tu memoria. Revisá tu conexión.');
     } finally { setLoading(false); }
-  }, [key, persist]);
+    */
+  }, [key]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -54,12 +58,17 @@ export default function LuxMemoryScreen() {
     if (!editing || !text) return;
     const next = memories.map((item) => item.id === editing.id ? { ...item, text } : item);
     setMemories(next); setEditing(null); void persist(next);
-    try { await updateLuxMemory(editing.id, { text }); } catch { /* local value remains available */ }
   }, [editValue, editing, memories, persist]);
 
   const saveNewMemory = useCallback(async () => {
     const text = addValue.trim();
     if (!text) return;
+    const now = new Date().toISOString();
+    const created = { id: `local-memory-${Date.now()}-${Math.random().toString(16).slice(2)}`, text, createdAt: now, updatedAt: now };
+    const next = [...memories, created];
+    setMemories(next); void persist(next); setAdding(false); setAddValue(''); setError('');
+    return;
+    /*
     try {
       const created = await createLuxMemory(text);
       const next = [...memories, created];
@@ -67,12 +76,12 @@ export default function LuxMemoryScreen() {
     } catch {
       setError('No pudimos guardar el recuerdo.');
     }
+    */
   }, [addValue, memories, persist]);
 
   const removeMemory = useCallback(async (item) => {
     const next = memories.filter((memory) => memory.id !== item.id);
     setMemories(next); void persist(next);
-    try { await deleteLuxMemory(item.id); } catch { /* local delete remains applied */ }
   }, [memories, persist]);
 
   return (

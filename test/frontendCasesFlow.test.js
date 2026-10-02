@@ -27,6 +27,7 @@ function loadApi(fetchImplementation) {
     if (request === '../config/api') {
       return { API_BASE_URL: 'https://api.test/api/v1', API_ROOT_URL: 'https://api.test' };
     }
+    if (request === '../config/captureMode') return { IS_CAPTURE_MODE: false };
     if (request === '../config/firebase') {
       return { auth: { currentUser: { getIdToken: async () => 'test-token' } } };
     }
@@ -110,6 +111,24 @@ test('errores 401, 403 y 500 se propagan; no se convierten en una lista vacia', 
     api.setAuthState('authenticated');
     await assert.rejects(api.getAllCases(), (error) => error?.status === status);
   }
+});
+
+test('dashboard resumen es una ruta protegida y envia el token Firebase', async () => {
+  let captured;
+  const api = loadApi(async (url, options) => {
+    captured = { url: String(url), options };
+    return jsonResponse(200, {
+      usuario: { nombre: 'Usuario' },
+      metricas: { causasActivas: 1, audienciasHoy: 0, documentos: 0, tareasPendientes: 0 },
+      proximasAudiencias: [],
+    });
+  });
+  api.setAuthState('authenticated');
+
+  await api.getDashboardResumen();
+
+  assert.equal(captured.url, 'https://api.test/api/v1/dashboard/resumen');
+  assert.equal(captured.options.headers.Authorization, 'Bearer test-token');
 });
 
 test('los componentes usan el resultado exitoso, conservan estados de error y recargan al recuperar foco', () => {

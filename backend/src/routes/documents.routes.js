@@ -153,6 +153,12 @@ function normalizeFileResponse(file) {
   };
 }
 
+function buildScopedFileWhere(caseScopeWhere) {
+  return {
+    case: caseScopeWhere,
+  };
+}
+
 router.use(requireFirebaseAuth);
 router.use(documentsRateLimit);
 
@@ -267,6 +273,7 @@ router.get('/', async (req, res) => {
   try {
     const page = parsePositiveInteger(req.query?.page, 1, MAX_PAGE, 'page');
     const limit = parsePositiveInteger(req.query?.limit, 50, MAX_LIMIT, 'limit');
+    const caseScopeWhere = await getCaseScopeWhere(prisma, req);
     const files = await prisma.file.findMany({
       include: {
         case: true,
@@ -280,7 +287,7 @@ router.get('/', async (req, res) => {
         createdAt: 'desc',
       },
       where: {
-        userId: req.authUser.id,
+        ...buildScopedFileWhere(caseScopeWhere),
       },
       skip: (page - 1) * limit,
       take: limit,
@@ -356,5 +363,6 @@ router.use((error, req, res, next) => {
 
 module.exports = router;
 module.exports.__testables = {
+  buildScopedFileWhere,
   getAuthorizedHearing,
 };

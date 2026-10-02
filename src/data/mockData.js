@@ -7,11 +7,18 @@ function createRelativeDate(daysOffset, hours, minutes) {
 }
 
 const user = {
-  id: 1,
-  name: 'Usuario',
-  email: 'usuario@luxia.com',
-  role: 'Profesional',
+  id: 'capture-user-local',
+  name: 'Valentina Demo',
+  email: 'capturas@luxia.invalid',
+  role: 'Profesional de prueba',
 };
+
+const legalStudies = [
+  {
+    id: 'capture-study-local',
+    name: 'Estudio Juridico Demo',
+  },
+];
 
 const cases = [
   {
@@ -181,6 +188,7 @@ const metricas = {
 
 const mockData = {
   user,
+  legalStudies,
   metricas,
   cases,
   hearings,

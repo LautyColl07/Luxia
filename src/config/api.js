@@ -1,8 +1,8 @@
-export const SERVER_IP = "25.1.22.89";
+export const SERVER_IP = "172.16.4.251";
 export const SERVER_PORT = 3000;
 export const API_PORT = SERVER_PORT;
 export const AI_PORT = 5000;
-  
+
 export function buildServerUrls(serverIp = SERVER_IP) {
   const apiRootUrl = `http://${serverIp}:${SERVER_PORT}`;
 
@@ -14,6 +14,8 @@ export function buildServerUrls(serverIp = SERVER_IP) {
   };
 }
 
+// SERVER_IP is the single source of truth for every frontend service URL.
+// If the server changes, update only this constant and restart Expo.
 const SERVER_URLS = buildServerUrls();
 
 export const API_ROOT_URL = SERVER_URLS.API_ROOT_URL;

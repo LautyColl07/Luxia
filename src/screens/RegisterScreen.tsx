@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Animated,
   Easing,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -294,10 +295,17 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={styles.keyboardAvoidingView}
-      >
+      <View style={styles.background}>
+        <Image
+          source={require("../../assets/luxia-login-background.png")}
+          resizeMode="cover"
+          style={styles.backgroundImage}
+        />
+        <View style={styles.overlay}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            style={styles.keyboardAvoidingView}
+          >
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
@@ -309,6 +317,14 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
               <Text style={styles.subtitle}>
                 Completa tus datos para acceder a la plataforma de gestion judicial.
               </Text>
+
+              <View style={styles.logoCircle}>
+                <Image
+                  source={require("../../assets/luxia-auth-logo.png")}
+                  style={styles.logo}
+                  resizeMode="contain"
+                />
+              </View>
 
               <View style={styles.progressHeader}>
                 <Text style={styles.stepCounter}>
@@ -541,7 +557,9 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
             </TouchableOpacity>
           </View>
         </ScrollView>
-      </KeyboardAvoidingView>
+          </KeyboardAvoidingView>
+        </View>
+      </View>
     </SafeAreaView>
   );
 };
@@ -636,7 +654,25 @@ const PasswordField = ({
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: COLORS.background,
+    backgroundColor: "#071C33",
+  },
+  background: {
+    flex: 1,
+    backgroundColor: "#071C33",
+  },
+  backgroundImage: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    width: "100%",
+    height: "100%",
+    opacity: 0.72,
+  },
+  overlay: {
+    flex: 1,
+    backgroundColor: "rgba(7, 28, 51, 0.46)",
   },
   keyboardAvoidingView: {
     flex: 1,
@@ -650,7 +686,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 18,
     paddingVertical: 24,
-    backgroundColor: COLORS.background,
   },
   card: {
     width: "100%",
@@ -679,6 +714,29 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
     textAlign: "center",
+  },
+  logoCircle: {
+    width: 132,
+    height: 132,
+    borderRadius: 66,
+    alignSelf: "center",
+    marginTop: -2,
+    marginBottom: 2,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 4,
+    borderColor: COLORS.gold,
+    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#071C33",
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.22,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  logo: {
+    width: "100%",
+    height: "100%",
   },
   progressHeader: {
     gap: 8,

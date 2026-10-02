@@ -1,10 +1,18 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
 import { FirebaseOptions, getApp, getApps, initializeApp } from "firebase/app";
+import {
+  browserSessionPersistence,
+  getAuth,
+  inMemoryPersistence,
+  initializeAuth,
+} from "firebase/auth";
 // TypeScript resolves Firebase's generic declaration, while Metro resolves the React Native entrypoint.
 // @ts-expect-error getReactNativePersistence is declared only in Firebase Auth's React Native condition.
-import { getAuth, getReactNativePersistence, initializeAuth } from "firebase/auth";
+import { getReactNativePersistence } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
+
+import { IS_CAPTURE_MODE } from "./captureMode";
 
 const firebaseFallbackConfig = {
   apiKey: "AIzaSyDwGuMIFRLXNvrFRHdfwRPhcb7g9TlRt_g",
@@ -45,7 +53,9 @@ export const firebaseConfig: FirebaseOptions | null = isFirebaseConfigured
     }
   : null;
 
-const app = firebaseConfig ? (getApps().length > 0 ? getApp() : initializeApp(firebaseConfig)) : null;
+const app = !IS_CAPTURE_MODE && firebaseConfig
+  ? (getApps().length > 0 ? getApp() : initializeApp(firebaseConfig))
+  : null;
 
 const isAuthAlreadyInitializedError = (error: unknown) =>
   typeof error === "object" &&
@@ -59,9 +69,20 @@ const initializePersistentAuth = () => {
   }
 
   // Firebase's React Native persistence adapter is not supported by the web
-  // build. On web, getAuth selects the browser persistence implementation.
+  // build. Use session storage on web so a broken IndexedDB instance cannot
+  // leave the app waiting forever while restoring auth state.
   if (Platform.OS === "web") {
-    return getAuth(app);
+    try {
+      return initializeAuth(app, { persistence: browserSessionPersistence });
+    } catch (error) {
+      if (isAuthAlreadyInitializedError(error)) {
+        return getAuth(app);
+      }
+
+      // A restricted browser storage environment must still be able to show
+      // the login screen and recover without an infinite loading state.
+      return initializeAuth(app, { persistence: inMemoryPersistence });
+    }
   }
 
   try {

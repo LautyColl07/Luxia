@@ -7,6 +7,7 @@ import {
   StyleSheet,
   ActivityIndicator,
   KeyboardAvoidingView,
+  Image,
   ScrollView,
   Platform,
   Alert,
@@ -73,21 +74,36 @@ export default function LoginScreen({ navigation }: any) {
       style={styles.keyboardView}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
-      <ScrollView
-        contentContainerStyle={styles.scrollContainer}
-        keyboardDismissMode="none"
-        keyboardShouldPersistTaps="always"
-      >
-        <View style={styles.container}>
-          <View style={styles.card}>
-            <View style={styles.header}>
-              <Text style={styles.title}>Iniciar sesion</Text>
-              <Text style={styles.subtitle}>
-                Accede a tu cuenta para continuar en Luxia.
-              </Text>
-            </View>
+      <View style={styles.background}>
+        <Image
+          source={require("../../assets/luxia-login-background.png")}
+          style={styles.backgroundImage}
+          resizeMode="cover"
+        />
+        <View style={styles.overlay}>
+          <ScrollView
+            contentContainerStyle={styles.scrollContainer}
+            keyboardDismissMode="none"
+            keyboardShouldPersistTaps="always"
+          >
+            <View style={styles.container}>
+              <View style={styles.card}>
+                <View style={styles.header}>
+                  <Text style={styles.title}>Iniciar sesion</Text>
+                  <Text style={styles.subtitle}>
+                    Accede a tu cuenta para continuar en Luxia.
+                  </Text>
 
-            <View style={styles.form}>
+                  <View style={styles.logoCircle}>
+                    <Image
+                      source={require("../../assets/luxia-auth-logo.png")}
+                      style={styles.logo}
+                      resizeMode="contain"
+                    />
+                  </View>
+                </View>
+
+                <View style={styles.form}>
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Correo electronico</Text>
 
@@ -205,17 +221,19 @@ export default function LoginScreen({ navigation }: any) {
                   Necesitas ayuda para acceder?
                 </Text>
               </TouchableOpacity>
-            </View>
-          </View>
+                </View>
+              </View>
 
-          <View style={styles.registerContainer}>
-            <Text style={styles.registerText}>No tenes cuenta? </Text>
-            <TouchableOpacity onPress={() => navigation.navigate("Register")}>
-              <Text style={styles.registerLink}>Crear cuenta</Text>
-            </TouchableOpacity>
-          </View>
+              <View style={styles.registerContainer}>
+                <Text style={styles.registerText}>No tenes cuenta? </Text>
+                <TouchableOpacity onPress={() => navigation.navigate("Register")}>
+                  <Text style={styles.registerLink}>Crear cuenta</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </ScrollView>
         </View>
-      </ScrollView>
+      </View>
     </KeyboardAvoidingView>
   );
 }
@@ -223,14 +241,31 @@ export default function LoginScreen({ navigation }: any) {
 const styles = StyleSheet.create({
   keyboardView: {
     flex: 1,
-    backgroundColor: "#F3F5F7",
+    backgroundColor: "#071C33",
+  },
+  background: {
+    flex: 1,
+    backgroundColor: "#071C33",
+  },
+  backgroundImage: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    width: "100%",
+    height: "100%",
+    opacity: 0.72,
+  },
+  overlay: {
+    flex: 1,
+    backgroundColor: "rgba(7, 28, 51, 0.46)",
   },
   scrollContainer: {
     flexGrow: 1,
   },
   container: {
     flex: 1,
-    backgroundColor: "#F3F5F7",
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: 24,
@@ -239,7 +274,7 @@ const styles = StyleSheet.create({
   card: {
     width: "100%",
     maxWidth: 520,
-    backgroundColor: "#FBFBFC",
+    backgroundColor: "rgba(251, 251, 252, 0.98)",
     borderRadius: 22,
     borderWidth: 1.5,
     borderColor: "#C4A77D",
@@ -255,7 +290,7 @@ const styles = StyleSheet.create({
   },
   header: {
     alignItems: "center",
-    marginBottom: 30,
+    marginBottom: 26,
   },
   title: {
     color: "#1E2A36",
@@ -268,6 +303,27 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: "center",
     lineHeight: 20,
+  },
+  logoCircle: {
+    width: 156,
+    height: 156,
+    borderRadius: 78,
+    marginTop: 22,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 4,
+    borderColor: "#C4A77D",
+    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#071C33",
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.22,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  logo: {
+    width: "100%",
+    height: "100%",
   },
   form: {
     gap: 18,

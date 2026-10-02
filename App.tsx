@@ -5,11 +5,14 @@ import { ActivityIndicator, Platform, StyleSheet, View } from "react-native";
 import { createNavigationContainerRef, NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
+import { useFonts } from "expo-font";
+import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import ForgotPasswordScreen from "./src/screens/ForgotPasswordScreen";
 import HelpAccessScreen from "./src/screens/HelpAccessScreen";
+import IntroScreen from "./src/screens/IntroScreen";
 import LoginScreen from "./src/screens/LoginScreen";
 import MainAppScreen from "./src/screens/MainAppScreen";
 import RegisterScreen from "./src/screens/RegisterScreen";
@@ -19,6 +22,7 @@ import { ThemeProvider, useAppTheme } from "./src/context/ThemeContext";
 import { RootStackParamList } from "./src/types/navigation";
 import WebHeader from "./src/components/WebHeader";
 import WebSidebar from "./src/components/WebSidebar";
+import CaptureModeBadge from "./src/components/CaptureModeBadge";
 import { useResponsiveLayout } from "./src/theme/layout";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -142,6 +146,7 @@ const AppContent = () => {
           <StudyContextProvider>
             <AppNavigator />
           </StudyContextProvider>
+          <CaptureModeBadge />
         </AuthProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
@@ -149,6 +154,25 @@ const AppContent = () => {
 };
 
 const App = () => {
+  const [fontsLoaded] = useFonts({
+    ...Feather.font,
+    ...Ionicons.font,
+    ...MaterialCommunityIcons.font,
+  });
+  const [showIntro, setShowIntro] = useState(Platform.OS !== "web");
+
+  if (!fontsLoaded) {
+    return (
+      <View style={iconFontLoadingStyles.iconFontLoading}>
+        <ActivityIndicator color="#C9B38C" size="large" />
+      </View>
+    );
+  }
+
+  if (Platform.OS !== "web" && showIntro) {
+    return <IntroScreen onFinish={() => setShowIntro(false)} />;
+  }
+
   return (
     <ThemeProvider>
       <AppContent />
@@ -188,3 +212,12 @@ const createStyles = (colors: { background: string }) =>
       minHeight: 0,
     },
   });
+
+const iconFontLoadingStyles = StyleSheet.create({
+  iconFontLoading: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#07111E",
+  },
+});

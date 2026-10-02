@@ -10,6 +10,7 @@ import {
 import { onIdTokenChanged, User } from "firebase/auth";
 
 import { auth } from "../config/firebase";
+import { IS_CAPTURE_MODE } from "../config/captureMode";
 import { resetRegisterSyncCache, syncRegisterOnce } from "../services/authClient";
 import { setAuthState, setAuthToken } from "../services/api";
 
@@ -35,6 +36,20 @@ type AuthProviderProps = {
   children: ReactNode;
 };
 
+// This object only lives in memory and is never sent to Firebase or the backend.
+const CAPTURE_USER = {
+  uid: "capture-user-local",
+  email: "capturas@luxia.invalid",
+  displayName: "Valentina Demo",
+  emailVerified: true,
+  isAnonymous: false,
+  phoneNumber: null,
+  photoURL: null,
+  providerData: [],
+} as unknown as User;
+
+const AUTH_READY_TIMEOUT_MS = 8000;
+
 const isSameFirebaseUser = (first: User | null, second: User | null) => {
   if (!first || !second) {
     return first === second;
@@ -48,15 +63,26 @@ const isSameFirebaseUser = (first: User | null, second: User | null) => {
 };
 
 export const AuthProvider = ({ children }: AuthProviderProps) => {
-  const [currentUser, setCurrentUser] = useState<User | null>(auth?.currentUser ?? null);
-  const [isAuthReady, setIsAuthReady] = useState(!auth);
+  const [currentUser, setCurrentUser] = useState<User | null>(
+    IS_CAPTURE_MODE ? CAPTURE_USER : auth?.currentUser ?? null
+  );
+  const [isAuthReady, setIsAuthReady] = useState(IS_CAPTURE_MODE || !auth);
   const [authStatus, setAuthStatus] = useState<AuthStatus>(
-    auth ? "initializing" : "unauthenticated"
+    IS_CAPTURE_MODE ? "authenticated" : auth ? "initializing" : "unauthenticated"
   );
   const syncedLoginUidRef = useRef<string | null>(null);
   const registerSyncPromiseRef = useRef<Promise<unknown> | null>(null);
 
   useEffect(() => {
+    if (IS_CAPTURE_MODE) {
+      setAuthToken(null);
+      setAuthState("authenticated");
+      setCurrentUser(CAPTURE_USER);
+      setAuthStatus("authenticated");
+      setIsAuthReady(true);
+      return undefined;
+    }
+
     if (!auth) {
       setAuthToken(null);
       setAuthState("unauthenticated");
@@ -68,10 +94,30 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
     let isMounted = true;
     const syncAbortController = new AbortController();
+    let authReadyTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+      if (!isMounted) {
+        return;
+      }
+
+      setAuthToken(null);
+      setAuthState("unauthenticated");
+      setCurrentUser(null);
+      setAuthStatus("unauthenticated");
+      setIsAuthReady(true);
+
+      if (__DEV__) {
+        console.warn("[AuthContext] Firebase no respondio a tiempo; se muestra el inicio de sesion.");
+      }
+    }, AUTH_READY_TIMEOUT_MS);
 
     const unsubscribe = onIdTokenChanged(auth, async (nextUser) => {
       if (!isMounted) {
         return;
+      }
+
+      if (authReadyTimer) {
+        clearTimeout(authReadyTimer);
+        authReadyTimer = null;
       }
 
       if (!nextUser) {
@@ -140,6 +186,9 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     return () => {
       isMounted = false;
       syncAbortController.abort();
+      if (authReadyTimer) {
+        clearTimeout(authReadyTimer);
+      }
       unsubscribe();
     };
   }, []);

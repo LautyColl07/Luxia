@@ -44,6 +44,7 @@ function loadApi(fetchImplementation) {
       if (request === '../config/api') {
         return { API_BASE_URL: 'https://api.test/api/v1', API_ROOT_URL: 'https://api.test' };
       }
+      if (request === '../config/captureMode') return { IS_CAPTURE_MODE: false };
       if (request === '../config/firebase') {
         return { auth: { currentUser: { getIdToken: async () => 'test-token' } } };
       }
@@ -87,6 +88,28 @@ test('el chat usa POST /api/v1/lux/chat, Firebase y el contrato message/conversa
   assert.equal(body.context.conversationId, 'conv-123');
   assert.equal(result.reply, 'Hola, soy LUX.');
   assert.equal(result.conversationId, 'conv-123');
+});
+
+test('el chat no envia identificadores de conversaciones locales al backend', async () => {
+  let captured;
+  const api = loadApi(async (url, options) => {
+    captured = { url: String(url), options };
+    return jsonResponse(200, {
+      success: true,
+      reply: 'Hola. ¿En qué te ayudo?',
+    });
+  });
+  api.setAuthState('authenticated');
+
+  await api.sendGeneralLuxMessage('hola', {
+    conversationId: 'local-conversation-123',
+    mode: 'legal',
+  });
+
+  const body = JSON.parse(captured.options.body);
+  assert.equal(body.conversationId, undefined);
+  assert.equal(body.context.conversationId, undefined);
+  assert.equal(captured.options.headers.Authorization, 'Bearer test-token');
 });
 
 test('el chat propaga el status HTTP y no devuelve el fallback generico', async () => {

@@ -12,6 +12,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import ActionFeedbackModal from './ActionFeedbackModal';
 import { useAppTheme } from '../context/ThemeContext';
 import {
   finishHearingLiveTranscription,
@@ -52,6 +53,8 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [selectedAudio, setSelectedAudio] = useState(null);
+  const [actionFeedback, setActionFeedback] = useState(null);
   const recordingRef = useRef(false);
   const sessionIdRef = useRef(null);
   const chunkIndexRef = useRef(0);
@@ -268,6 +271,7 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
       });
 
       if (pickerResult.canceled) {
+        setStatusText('Carga de audio cancelada.');
         return;
       }
 
@@ -278,6 +282,11 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
         return;
       }
 
+      setSelectedAudio({
+        name: asset.name || 'Audio de audiencia',
+        size: asset.size,
+        mimeType: asset.mimeType || 'audio/m4a',
+      });
       setIsUploadingAudio(true);
       setStatusText('Subiendo audio...');
       const uploadResponse = await uploadHearingAudio({ asset, caseDetail, hearing });
@@ -293,7 +302,10 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
         status: uploadResponse?.status || 'uploaded',
       }));
       setStatusText('Audio subido correctamente.');
-      Alert.alert('Listo', 'Audio subido correctamente');
+      setActionFeedback({
+        title: 'Audio subido',
+        message: 'El audio quedó asociado a esta audiencia y ya está disponible para transcribir.',
+      });
       await onDocumentsChanged?.();
 
       try {
@@ -448,7 +460,7 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
           variant="secondary"
         />
         <ActionButton
-          disabled={isRecording || isUploadingAudio || isTranscribing}
+          disabled={isRecording || isStarting || isFinishing || isUploadingAudio || isTranscribing || isGeneratingPdf}
           label={isUploadingAudio ? 'Subiendo...' : 'Subir audio'}
           onPress={() => void handleUploadAudio()}
           styles={styles}
@@ -468,6 +480,20 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
           {loadingTranscript ? 'Cargando transcripción...' : statusText}
         </Text>
       )}
+
+      {selectedAudio ? (
+        <View style={styles.selectedAudio}>
+          <View style={styles.selectedAudioIcon}>
+            <Text style={styles.selectedAudioIconText}>♫</Text>
+          </View>
+          <View style={styles.selectedAudioCopy}>
+            <Text numberOfLines={1} style={styles.selectedAudioName}>{selectedAudio.name}</Text>
+            <Text style={styles.selectedAudioMeta}>
+              {selectedAudio.mimeType} · {selectedAudio.size ? `${Math.ceil(selectedAudio.size / 1024 / 1024)} MB` : 'archivo seleccionado'}
+            </Text>
+          </View>
+        </View>
+      ) : null}
 
       <View style={styles.transcriptPreview}>
         <Text style={styles.previewTitle}>Vista previa de la transcripción</Text>
@@ -498,6 +524,14 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
           ) : null}
         </View>
       ) : null}
+
+      <ActionFeedbackModal
+        actionLabel="Continuar"
+        message={actionFeedback?.message}
+        onClose={() => setActionFeedback(null)}
+        title={actionFeedback?.title}
+        visible={Boolean(actionFeedback)}
+      />
     </View>
   );
 }
@@ -561,6 +595,43 @@ const createStyles = (colors) => StyleSheet.create({
   },
   buttonGrid: {
     gap: 10,
+  },
+  selectedAudio: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    backgroundColor: colors.backgroundAlt,
+    padding: 12,
+  },
+  selectedAudioIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.accentSoft,
+  },
+  selectedAudioIconText: {
+    color: colors.primary,
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  selectedAudioCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  selectedAudioName: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  selectedAudioMeta: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    marginTop: 3,
   },
   primaryButton: {
     minHeight: 50,

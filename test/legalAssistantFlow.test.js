@@ -20,6 +20,7 @@ function loadApi(fetchImplementation) {
     fetch: fetchImplementation, module, exports: module.exports,
     require: (request) => {
       if (request === '../config/api') return { API_BASE_URL: 'https://api.test/api/v1', API_ROOT_URL: 'https://api.test' };
+      if (request === '../config/captureMode') return { IS_CAPTURE_MODE: false };
       if (request === '../config/firebase') return { auth: { currentUser: { getIdToken: async () => 'test-token' } } };
       if (request === 'firebase/auth') return { signOut: async () => undefined };
       if (request === '../data/mockData') return [];
@@ -32,7 +33,7 @@ function loadApi(fetchImplementation) {
   return module.exports;
 }
 
-test('la consulta juridica usa el endpoint y token existentes con conversationId', async () => {
+test('la consulta juridica usa el chat autenticado y conversationId', async () => {
   let captured;
   const api = loadApi(async (url, options) => {
     captured = { url, options };
@@ -40,9 +41,13 @@ test('la consulta juridica usa el endpoint y token existentes con conversationId
   });
   api.setAuthState('ready');
   await api.queryLegalAssistant({ question: 'Que dice la ley?', conversationId: 'legal-test-1' });
-  assert.equal(captured.url, 'https://api.test/api/v1/lux/legal/query');
+  assert.equal(captured.url, 'https://api.test/api/v1/lux/chat');
   assert.equal(captured.options.headers.Authorization, 'Bearer test-token');
-  assert.deepEqual(JSON.parse(captured.options.body), { question: 'Que dice la ley?', conversationId: 'legal-test-1' });
+  const body = JSON.parse(captured.options.body);
+  assert.equal(body.message, 'Que dice la ley?');
+  assert.equal(body.conversationId, 'legal-test-1');
+  assert.equal(body.context.conversationId, 'legal-test-1');
+  assert.equal(body.context.mode, 'legal');
 });
 
 test('el cliente conserva los estados HTTP para que la interfaz los traduzca', async () => {

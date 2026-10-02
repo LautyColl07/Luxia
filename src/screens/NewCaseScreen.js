@@ -1,12 +1,12 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import ActionFeedbackModal from '../components/ActionFeedbackModal';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { createCase } from '../services/api';
 import { useResponsiveLayout } from '../theme/layout';
-import { showSuccessAndGoBack } from '../utils/formFeedback';
 import { normalizeStatusLabel } from '../utils/status';
 
 const STATUS_OPTIONS = ['Activa', 'Pendiente', 'En proceso', 'Archivada'];
@@ -26,6 +26,7 @@ export default function NewCaseScreen({ navigation }) {
   });
   const [scope, setScope] = useState('PRIVATE');
   const [submitting, setSubmitting] = useState(false);
+  const [successFeedback, setSuccessFeedback] = useState(null);
 
   const updateField = (key, value) => setForm((current) => ({ ...current, [key]: value }));
 
@@ -59,7 +60,10 @@ export default function NewCaseScreen({ navigation }) {
         selectPersonalContext();
       }
 
-      showSuccessAndGoBack(navigation, 'Causa cargada', 'La causa se guardo correctamente.');
+      setSuccessFeedback({
+        title: 'Causa creada',
+        message: `La causa “${form.title.trim()}” se guardó correctamente.`,
+      });
     } catch (error) {
       console.error('[NewCaseScreen] No se pudo crear la causa.');
       Alert.alert(
@@ -69,6 +73,11 @@ export default function NewCaseScreen({ navigation }) {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const closeSuccessFeedback = () => {
+    setSuccessFeedback(null);
+    navigation.goBack();
   };
 
   return (
@@ -212,8 +221,17 @@ export default function NewCaseScreen({ navigation }) {
         onPress={handleSubmit}
         style={[styles.submitButton, submitting && styles.submitButtonDisabled]}
       >
+        {submitting ? <ActivityIndicator color={colors.textOnPrimary} size="small" /> : null}
         <Text style={styles.submitButtonText}>{submitting ? 'Guardando cambios...' : 'Guardar causa'}</Text>
       </Pressable>
+
+      <ActionFeedbackModal
+        actionLabel="Volver a causas"
+        message={successFeedback?.message}
+        onClose={closeSuccessFeedback}
+        title={successFeedback?.title}
+        visible={Boolean(successFeedback)}
+      />
     </ScrollView>
   );
 }

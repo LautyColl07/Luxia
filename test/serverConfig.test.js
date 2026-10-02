@@ -25,21 +25,21 @@ function loadConfig() {
 
 test('una sola SERVER_IP construye todas las URLs de infraestructura frontend', () => {
   const config = loadConfig();
-  const urls = config.buildServerUrls('172.16.1.50');
+  const urls = config.buildServerUrls('25.1.22.89');
 
-  assert.equal(urls.API_ROOT_URL, 'http://172.16.1.50:3000');
-  assert.equal(urls.API_BASE_URL, 'http://172.16.1.50:3000/api/v1');
-  assert.equal(urls.AI_BASE_URL, 'http://172.16.1.50:5000');
-  assert.equal(urls.SOCKET_URL, 'http://172.16.1.50:3000');
+  assert.equal(urls.API_ROOT_URL, 'http://25.1.22.89:3000');
+  assert.equal(urls.API_BASE_URL, 'http://25.1.22.89:3000/api/v1');
+  assert.equal(urls.AI_BASE_URL, 'http://25.1.22.89:5000');
+  assert.equal(urls.SOCKET_URL, 'http://25.1.22.89:3000');
 
   for (const endpoint of [
     '/auth/me',
     '/cases',
     '/documentos',
     '/audiencias',
-    '/lux/legal/query',
+    '/lux/chat',
   ]) {
-    assert.equal(`${urls.API_BASE_URL}${endpoint}`.startsWith('http://172.16.1.50:3000/api/v1/'), true);
+    assert.equal(`${urls.API_BASE_URL}${endpoint}`.startsWith('http://25.1.22.89:3000/api/v1/'), true);
   }
 });
 

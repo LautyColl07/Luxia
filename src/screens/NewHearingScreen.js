@@ -1,7 +1,9 @@
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import ActionFeedbackModal from '../components/ActionFeedbackModal';
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
@@ -15,7 +17,6 @@ import {
   formatTimeTextInput,
   parseMaskedDateToIso,
 } from '../utils/date';
-import { showSuccessAndGoBack } from '../utils/formFeedback';
 
 const MODALITY_OPTIONS = ['Presencial', 'Virtual', 'Mixta', 'Telefonica'];
 const TIME_PRESETS = ['09:00', '11:15', '15:00', '17:30'];
@@ -30,6 +31,7 @@ export default function NewHearingScreen({ navigation, route }) {
   const [loadingCases, setLoadingCases] = useState(true);
   const [casesError, setCasesError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [successFeedback, setSuccessFeedback] = useState(null);
   const [form, setForm] = useState({
     title: '',
     caseId: initialCaseId,
@@ -80,8 +82,8 @@ export default function NewHearingScreen({ navigation, route }) {
 
     return [
       { label: 'Hoy', value: toMaskedDate(now) },
-      { label: 'Manana', value: toMaskedDate(tomorrow) },
-      { label: 'Proxima semana', value: toMaskedDate(nextWeek) },
+      { label: 'Mañana', value: toMaskedDate(tomorrow) },
+      { label: 'Próxima semana', value: toMaskedDate(nextWeek) },
     ];
   }, []);
   const isValidDate = /^\d{2}\/\d{2}\/\d{4}$/.test(form.date.trim()) && Boolean(parseMaskedDateToIso(form.date.trim()));
@@ -133,7 +135,10 @@ export default function NewHearingScreen({ navigation, route }) {
         location: form.location.trim(),
       });
 
-      showSuccessAndGoBack(navigation, 'Audiencia cargada', 'La audiencia se guardo correctamente.');
+      setSuccessFeedback({
+        title: 'Audiencia creada',
+        message: `La audiencia “${form.title.trim()}” se guardó correctamente.`,
+      });
     } catch (error) {
       console.error('[NewHearingScreen] No se pudo crear la audiencia.');
       Alert.alert(
@@ -143,6 +148,11 @@ export default function NewHearingScreen({ navigation, route }) {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const closeSuccessFeedback = () => {
+    setSuccessFeedback(null);
+    navigation.goBack();
   };
 
   if (loadingCases && !cases.length) {
@@ -183,12 +193,19 @@ export default function NewHearingScreen({ navigation, route }) {
       showsVerticalScrollIndicator={false}
       style={styles.screen}
     >
-      <Text style={styles.title}>Registrar audiencia</Text>
-      <Text style={styles.subtitle}>
-        Programa una audiencia y vinculala con la causa correspondiente.
-      </Text>
+      <View style={styles.heroCard}>
+        <View style={styles.heroIcon}>
+          <MaterialCommunityIcons color={colors.primary} name="calendar-plus-outline" size={26} />
+        </View>
+        <View style={styles.heroCopy}>
+          <Text style={styles.title}>Nueva audiencia</Text>
+          <Text style={styles.subtitle}>
+            Completá los datos y vinculá la audiencia con una causa.
+          </Text>
+        </View>
+      </View>
 
-      <Field label="Titulo de la audiencia" styles={styles}>
+      <Field label="Título de la audiencia" styles={styles}>
         <TextInput
           onChangeText={(value) => updateField('title', value)}
           placeholder="Ej. Audiencia preliminar"
@@ -198,7 +215,7 @@ export default function NewHearingScreen({ navigation, route }) {
         />
       </Field>
 
-      <Field label="Causa vinculada" styles={styles}>
+      <Field label="Causa vinculada" hint="Elegí una causa para asociar esta audiencia." styles={styles}>
         <View style={styles.selectorList}>
           {cases.map((item) => {
             const selected = String(item?.id) === form.caseId;
@@ -208,12 +225,17 @@ export default function NewHearingScreen({ navigation, route }) {
                 onPress={() => updateField('caseId', String(item?.id))}
                 style={[styles.selectorCard, selected && styles.selectorCardActive]}
               >
-                <Text style={[styles.selectorTitle, selected && styles.selectorTitleActive]}>
-                  {item?.title || 'Causa sin titulo'}
-                </Text>
-                <Text style={[styles.selectorMeta, selected && styles.selectorMetaActive]}>
-                  {item?.court || 'Juzgado a confirmar'}
-                </Text>
+                <View style={styles.selectorContent}>
+                  <Text style={[styles.selectorTitle, selected && styles.selectorTitleActive]}>
+                    {item?.title || 'Causa sin titulo'}
+                  </Text>
+                  <Text style={[styles.selectorMeta, selected && styles.selectorMetaActive]}>
+                    {item?.court || 'Juzgado a confirmar'}
+                  </Text>
+                </View>
+                <View style={[styles.selectorCheck, selected && styles.selectorCheckActive]}>
+                  {selected ? <MaterialCommunityIcons color={colors.textOnPrimary} name="check" size={16} /> : null}
+                </View>
               </Pressable>
             );
           })}
@@ -248,7 +270,7 @@ export default function NewHearingScreen({ navigation, route }) {
 
       <View style={styles.assistRow}>
         <View style={styles.assistBlock}>
-          <Text style={styles.assistLabel}>Fechas rapidas</Text>
+          <Text style={styles.assistLabel}>Fechas rápidas</Text>
           <View style={styles.assistChips}>
             {datePresets.map((preset) => (
               <Pressable
@@ -310,7 +332,7 @@ export default function NewHearingScreen({ navigation, route }) {
 
       {selectedCase ? (
         <View style={styles.summaryCard}>
-          <Text style={styles.summaryTitle}>Resumen</Text>
+          <Text style={styles.summaryTitle}>Resumen de la audiencia</Text>
           <Text style={styles.summaryText}>Causa: {selectedCase?.title}</Text>
           <Text style={styles.summaryText}>Juzgado: {selectedCase?.court || 'Juzgado a confirmar'}</Text>
           <Text style={styles.summaryText}>
@@ -328,18 +350,28 @@ export default function NewHearingScreen({ navigation, route }) {
         onPress={handleSubmit}
         style={[styles.submitButton, submitting && styles.submitButtonDisabled]}
       >
+        {submitting ? <ActivityIndicator color={colors.textOnPrimary} size="small" /> : null}
         <Text style={styles.submitButtonText}>
           {submitting ? 'Guardando cambios...' : 'Guardar audiencia'}
         </Text>
       </Pressable>
+
+      <ActionFeedbackModal
+        actionLabel="Volver al calendario"
+        message={successFeedback?.message}
+        onClose={closeSuccessFeedback}
+        title={successFeedback?.title}
+        visible={Boolean(successFeedback)}
+      />
     </ScrollView>
   );
 }
 
-function Field({ children, label, styles }) {
+function Field({ children, hint, label, styles }) {
   return (
     <View style={styles.field}>
       <Text style={styles.label}>{label}</Text>
+      {hint ? <Text style={styles.fieldHint}>{hint}</Text> : null}
       {children}
     </View>
   );
@@ -368,6 +400,33 @@ const createStyles = (colors, layout) => StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
   },
+  heroCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    backgroundColor: colors.card,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    padding: 18,
+    shadowColor: colors.shadow,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
+    elevation: 3,
+  },
+  heroIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.accentSoft,
+  },
+  heroCopy: {
+    flex: 1,
+    gap: 5,
+  },
   field: {
     gap: 10,
     flex: 1,
@@ -376,6 +435,12 @@ const createStyles = (colors, layout) => StyleSheet.create({
     color: colors.text,
     fontSize: 15,
     fontWeight: '700',
+  },
+  fieldHint: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: -4,
   },
   input: {
     minHeight: 50,
@@ -400,12 +465,32 @@ const createStyles = (colors, layout) => StyleSheet.create({
     backgroundColor: colors.card,
     borderRadius: 22,
     padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
     borderWidth: 1,
     borderColor: colors.borderSoft,
   },
   selectorCardActive: {
     borderColor: colors.primary,
     backgroundColor: colors.accentSoft,
+  },
+  selectorContent: {
+    flex: 1,
+  },
+  selectorCheck: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    backgroundColor: colors.backgroundAlt,
+  },
+  selectorCheckActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
   selectorTitle: {
     color: colors.text,
