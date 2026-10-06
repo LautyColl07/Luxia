@@ -243,7 +243,7 @@ export default function NewHearingScreen({ navigation, route }) {
       </Field>
 
       <View style={styles.dualRow}>
-        <Field label="Fecha" styles={styles}>
+        <Field containerStyle={styles.dualField} label="Fecha" styles={styles}>
           <TextInput
             keyboardType="number-pad"
             maxLength={10}
@@ -255,7 +255,7 @@ export default function NewHearingScreen({ navigation, route }) {
           />
         </Field>
 
-        <Field label="Horario" styles={styles}>
+        <Field containerStyle={styles.dualField} label="Horario" styles={styles}>
           <TextInput
             keyboardType="number-pad"
             maxLength={5}
@@ -367,9 +367,9 @@ export default function NewHearingScreen({ navigation, route }) {
   );
 }
 
-function Field({ children, hint, label, styles }) {
+function Field({ children, containerStyle, hint, label, styles }) {
   return (
-    <View style={styles.field}>
+    <View style={[styles.field, containerStyle]}>
       <Text style={styles.label}>{label}</Text>
       {hint ? <Text style={styles.fieldHint}>{hint}</Text> : null}
       {children}
@@ -429,7 +429,6 @@ const createStyles = (colors, layout) => StyleSheet.create({
   },
   field: {
     gap: 10,
-    flex: 1,
   },
   label: {
     color: colors.text,
@@ -512,6 +511,11 @@ const createStyles = (colors, layout) => StyleSheet.create({
     flexDirection: layout.isCompact ? 'column' : 'row',
     gap: 12,
   },
+  dualField: layout.isCompact
+    ? {}
+    : {
+        flex: 1,
+      },
   optionRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
