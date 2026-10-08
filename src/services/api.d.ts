@@ -38,7 +38,8 @@ export function queryLegalAssistant(options: {
 }): Promise<unknown>;
 export function sendGeneralLuxMessage(
   message: string,
-  context?: Record<string, unknown>
+  context?: Record<string, unknown>,
+  options?: Record<string, unknown>
 ): Promise<{ success: boolean; reply: string; raw?: unknown; error?: unknown }>;
 export function normalizeLuxConversation(value?: unknown): {
   id: string;
@@ -61,3 +62,8 @@ export function getLuxMemory(options?: Record<string, unknown>): Promise<unknown
 export function createLuxMemory(text: string): Promise<unknown>;
 export function updateLuxMemory(memoryId: string, payload?: Record<string, unknown>): Promise<unknown>;
 export function deleteLuxMemory(memoryId: string): Promise<unknown>;
+export function request(endpoint: string, options?: Record<string, unknown>): Promise<any>;
+export function appendFormDataFile(formData: FormData, fieldName: string, file: {
+  uri: string; name: string; type: string; file?: Blob;
+}): Promise<void>;
+export function normalizeLuxMessage(value: Record<string, unknown>): import('../voice/types').LuxMessage;

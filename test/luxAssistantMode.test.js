@@ -20,7 +20,7 @@ test('el modal inicia en LEGAL y mantiene tabs, historiales y saludos separados'
 test('LEGAL y GENERAL usan el endpoint autenticado lux/chat', () => {
   assert.match(modalSource, /chatMode === CHAT_MODE\.LEGAL/);
   assert.match(modalSource, /chatMode === CHAT_MODE\.GENERAL/);
-  assert.match(modalSource, /sendGeneralLuxMessage\(text, context\)/);
+  assert.match(modalSource, /sendGeneralLuxMessage\(text, context, \{ signal: controller\.signal \}\)/);
   assert.doesNotMatch(apiSource, /\/lux\/legal\/query/);
   assert.match(apiSource, /request\('\/lux\/chat'/);
 });

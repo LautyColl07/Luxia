@@ -10,7 +10,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useAppTheme } from '../context/ThemeContext';
-import { request } from '../services/api';
+import { appendFormDataFile, request } from '../services/api';
 import { useResponsiveLayout } from '../theme/layout';
 import {
   exportTranscriptionAsPdf,
@@ -95,7 +95,7 @@ export default function TranscriptionTestScreen() {
     setStatus('Transcribiendo en tiempo real...');
 
     const formData = new FormData();
-    formData.append('audio', {
+    await appendFormDataFile(formData, 'audio', {
       uri: audio.uri,
       name: audio.fileName || `audiencia-${Date.now()}.m4a`,
       type: audio.mimeType || DEFAULT_AUDIO_MIME_TYPE,

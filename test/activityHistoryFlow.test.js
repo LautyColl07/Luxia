@@ -102,6 +102,6 @@ test('LUX usa el backend autenticado y bloquea doble envio desde el modal', () =
   assert.match(apiSource, /request\('\/lux\/chat'/);
   assert.match(apiSource, /\.\.\.getActiveWorkContextQuery\(\)/);
   assert.doesNotMatch(apiSource, /AI_BASE_URL/);
-  assert.match(modalSource, /if \(!text \|\| isSending \|\| isStreaming\)/);
-  assert.match(modalSource, /disabled=\{!input\.trim\(\) \|\| isSending \|\| isStreaming\}/);
+  assert.match(modalSource, /if \(!text \|\| isSending \|\| isStreaming \|\| sendLockRef\.current/);
+  assert.match(modalSource, /disabled=\{!input\.trim\(\) \|\| isSending \|\| isStreaming \|\| voice\.controller\.busy/);
 });

@@ -2,6 +2,9 @@ import { API_BASE_URL as CONFIG_API_BASE_URL, API_ROOT_URL } from '../config/api
 import { IS_CAPTURE_MODE } from '../config/captureMode';
 import { auth } from '../config/firebase';
 import { signOut } from 'firebase/auth';
+import { Platform } from 'react-native';
+import { File } from 'expo-file-system';
+import { fetch as expoFetch } from 'expo/fetch';
 import mockData from '../data/mockData';
 import { normalizeStatusLabel } from '../utils/status';
 import { getUserDisplayName, getUserEmail, getUserRole } from '../utils/userDisplay';
@@ -35,6 +38,7 @@ const PROTECTED_ENDPOINT_PREFIXES = [
   '/tasks',
   '/legal-studies',
   '/lux/chat',
+  '/lux/voice',
   '/lux/conversations',
   '/lux/memory',
   '/transcriptions',
@@ -52,22 +56,6 @@ const LUX_TIMEOUT_ERROR_MESSAGE = 'LUX tardó demasiado en responder. Intentá d
 function simulateDelay(result, ms = 450) {
   return new Promise((resolve) => {
     setTimeout(() => resolve(result), ms);
-  });
-}
-
-function runWithTimeout(promise, timeoutMs, timeoutMessage) {
-  let timeoutId = null;
-
-  const timeoutPromise = new Promise((_, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(createRequestError(timeoutMessage, 408, null, 'TIMEOUT'));
-    }, timeoutMs);
-  });
-
-  return Promise.race([promise, timeoutPromise]).finally(() => {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
   });
 }
 
@@ -612,13 +600,52 @@ function unsupportedBackendEndpoint(endpoint) {
   );
 }
 
+function safeExceptionText(value, limit = 240) {
+  if (typeof value !== 'string') return null;
+  let text = authToken ? value.split(authToken).join('[redacted-token]') : value;
+  text = text
+    .replace(/Bearer\s+[^\s"'<>]+/gi, 'Bearer [redacted-token]')
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[redacted-token]')
+    .replace(/(?:file|content|blob|data):[^\s"'<>)]*/gi, '[redacted-uri]')
+    .replace(/(https?:\/\/[^\s?#"'<>)]+)[?#][^\s"'<>)]*/gi, '$1');
+  return text.slice(0, limit);
+}
+
+function createPreparationError(cause) {
+  const error = createRequestError(
+    'No pudimos preparar el archivo para enviarlo. Intentá nuevamente.',
+    0, null, 'REQUEST_PREPARATION_ERROR'
+  );
+  error.cause = cause;
+  return error;
+}
+
+function isSerializationError(error) {
+  return error?.code === 'REQUEST_PREPARATION_ERROR' ||
+    /^(Unsupported FormDataPart implementation|Unsupported FormData implementation|Unsupported BodyInit type)$/.test(error?.message || '');
+}
+
 function logApiDiagnostic(level, label, details) {
   if (typeof __DEV__ !== 'undefined' && __DEV__ && typeof console?.[level] === 'function') {
     const safeDetails = {
-      url: typeof details?.url === 'string' ? details.url : null,
+      url: safeExceptionText(details?.url, 500),
       method: typeof details?.method === 'string' ? details.method : null,
       status: Number.isFinite(Number(details?.status)) ? Number(details.status) : null,
       hasAuthorization: Boolean(details?.hasAuthorization ?? details?.hasToken),
+      clientRequestId: typeof details?.clientRequestId === 'string' ? details.clientRequestId : null,
+      durationMs: Number.isFinite(Number(details?.durationMs)) ? Number(details.durationMs) : null,
+      audioDurationMs: Number.isFinite(Number(details?.audioDurationMs)) ? Number(details.audioDurationMs) : null,
+      timeoutMs: Number.isFinite(Number(details?.timeoutMs)) ? Number(details.timeoutMs) : null,
+      fileSize: Number.isFinite(Number(details?.fileSize)) ? Number(details.fileSize) : null,
+      mimeType: typeof details?.mimeType === 'string' ? details.mimeType : null,
+      fileName: safeExceptionText(details?.fileName),
+      uriScheme: typeof details?.uriScheme === 'string' ? details.uriScheme : null,
+      classification: typeof details?.classification === 'string' ? details.classification : null,
+      transport: typeof details?.transport === 'string' ? details.transport : null,
+      exceptionName: safeExceptionText(details?.exceptionName),
+      exceptionCode: safeExceptionText(details?.exceptionCode),
+      exceptionMessage: safeExceptionText(details?.exceptionMessage),
+      exceptionStack: safeExceptionText(details?.exceptionStack, 4000),
     };
     console[level](`${label} ${JSON.stringify(safeDetails)}`);
   }
@@ -638,7 +665,7 @@ function getResponseShape(data) {
 }
 
 function getSafeErrorCode(data, error = null) {
-  const code = data?.errorCode ?? data?.code ?? error?.code;
+  const code = data?.error?.code ?? data?.errorCode ?? data?.code ?? error?.code;
   return typeof code === 'string' && code.trim() ? code.trim().slice(0, 80) : null;
 }
 
@@ -787,7 +814,87 @@ async function getRequestAuthHeaders(path, customHeaders = {}, forceRefresh = fa
   }
 }
 
+// A deadline covers authentication, upload and response-body download. Aborting
+// also closes the connection, unlike racing fetch against a timer alone.
 export async function request(endpoint, options = {}) {
+  const controller = new AbortController();
+  let cancelledByCaller = Boolean(options.signal?.aborted);
+  const abort = () => {
+    cancelledByCaller = true;
+    controller.abort();
+    rejectDeadline(createRequestError('La solicitud fue cancelada.', 499, null, 'CANCELLED'));
+  };
+  const timeoutMs = Number(options.timeout) > 0 ? Number(options.timeout) : REQUEST_TIMEOUT_MS;
+  const startedAt = Date.now();
+  let timedOut = false;
+  let rejectDeadline;
+  const deadline = new Promise((_, reject) => { rejectDeadline = reject; });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+    rejectDeadline(createRequestError(
+      options.timeoutMessage || 'La solicitud tardó demasiado en responder.',
+      408,
+      null,
+      'TIMEOUT'
+    ));
+  }, timeoutMs);
+  options.signal?.addEventListener('abort', abort, { once: true });
+  if (options.signal?.aborted) controller.abort();
+  try {
+    if (controller.signal.aborted) throw createRequestError('La solicitud fue cancelada.', 499, null, 'CANCELLED');
+    return await Promise.race([
+      requestWithAuth(endpoint, {
+        ...options,
+        signal: controller.signal,
+        requestStartedAt: startedAt,
+        requestTimeoutMs: timeoutMs,
+      }),
+      deadline,
+    ]);
+  } catch (error) {
+    let classifiedError = error;
+    let classification = 'HTTP_ERROR';
+    if (timedOut || error?.code === 'TIMEOUT' || error?.status === 408) {
+      controller.abort();
+      classification = 'TIMEOUT';
+      classifiedError = createRequestError(options.timeoutMessage || 'La solicitud tardó demasiado en responder.', 408, null, 'TIMEOUT');
+    } else if (cancelledByCaller || controller.signal.aborted || error?.name === 'AbortError' || error?.code === 'CANCELLED' || error?.code === 'REQUEST_CANCELLED') {
+      classification = 'CANCELLED';
+      classifiedError = createRequestError('La solicitud fue cancelada.', 499, null, 'CANCELLED');
+    } else if (error?.code === 'REQUEST_PREPARATION_ERROR') {
+      classification = 'REQUEST_PREPARATION_ERROR';
+    } else if (error?.code === 'NETWORK_ERROR' || error?.status === 0) {
+      classification = 'NETWORK_ERROR';
+    }
+    if (classification !== 'HTTP_ERROR') {
+      const source = error?.cause || error?.data || error;
+      const method = String(options.method || 'GET').toUpperCase();
+      const path = endpoint.startsWith('/') ? endpoint : '/' + endpoint;
+      logApiDiagnostic('error', '[API request failed]', {
+        url: API_BASE_URL + path,
+        method,
+        status: classifiedError?.status,
+        durationMs: Date.now() - startedAt,
+        timeoutMs,
+        classification,
+        exceptionName: source?.name || error?.name || typeof source,
+        exceptionCode: source?.code || error?.code || null,
+        exceptionMessage: source?.message || error?.message || String(source),
+        exceptionStack: source?.stack,
+        transport: error?.transport,
+        ...options.diagnostics,
+        ...getAuthDiagnostic(authToken),
+      });
+    }
+    throw classifiedError;
+  } finally {
+    clearTimeout(timer);
+    options.signal?.removeEventListener('abort', abort);
+  }
+}
+
+async function requestWithAuth(endpoint, options = {}) {
   if (IS_CAPTURE_MODE) {
     throw createRequestError(
       'Esta accion no esta disponible en MODO CAPTURA.',
@@ -801,71 +908,79 @@ export async function request(endpoint, options = {}) {
     throw new Error('Configura API_BASE_URL en src/config/api.js para usar la API real.');
   }
 
-  const requestTimeoutMs =
-    Number.isFinite(Number(options.timeout)) && Number(options.timeout) > 0
-      ? Number(options.timeout)
-      : REQUEST_TIMEOUT_MS;
-  const requestTimeoutMessage =
-    options.timeoutMessage || 'La solicitud a ' + endpoint + ' supero el maximo de ' + requestTimeoutMs + ' ms.';
-  const { timeout, timeoutMessage, ...fetchOptions } = options;
+  const requestStartedAt = Number(options.requestStartedAt) || Date.now();
+  const requestTimeoutMs = Number(options.requestTimeoutMs) || REQUEST_TIMEOUT_MS;
+  const { timeout, timeoutMessage, responseType, diagnostics, prepareBody, requestStartedAt: _requestStartedAt,
+    requestTimeoutMs: _requestTimeoutMs, ...fetchOptions } = options;
   const path = endpoint.startsWith('/') ? endpoint : '/' + endpoint;
   const url = API_BASE_URL + path;
   const requestHeaders = isProtectedEndpoint(path)
     ? omitAuthorizationHeader(fetchOptions.headers)
     : fetchOptions.headers;
   const method = String(fetchOptions.method || 'GET').toUpperCase();
-  const hasJsonBody =
-    fetchOptions.body !== undefined &&
-    fetchOptions.body !== null &&
-    !(fetchOptions.body instanceof FormData) &&
-    typeof fetchOptions.body !== 'string';
-  const body = hasJsonBody ? JSON.stringify(fetchOptions.body) : fetchOptions.body;
   const makeRequest = async (authHeaders) => {
-    logApiDiagnostic('info', '[API request]', {
-      url,
-      method,
-      endpoint: path,
-      ...getAuthDiagnostic(authHeaders?.Authorization),
-    });
-
+    if (fetchOptions.signal?.aborted) throw createRequestError('La solicitud fue cancelada.', 499, null, 'CANCELLED');
+    let stage = 'preparation';
+    let transport = null;
     try {
-      const response = await runWithTimeout(
-        fetch(url, {
-          ...fetchOptions,
-          body,
-          headers: {
-            Accept: 'application/json',
-            ...(body !== undefined && body !== null && !(body instanceof FormData)
-              ? { 'Content-Type': 'application/json' }
-              : {}),
-            ...authHeaders,
-            ...requestHeaders,
-          },
-        }),
-        requestTimeoutMs,
-        requestTimeoutMessage
-      );
+      const inputBody = prepareBody ? await prepareBody() : fetchOptions.body;
+      if (fetchOptions.signal?.aborted) throw createRequestError('La solicitud fue cancelada.', 499, null, 'CANCELLED');
+      const isMultipart = inputBody instanceof FormData;
+      const hasJsonBody = inputBody !== undefined && inputBody !== null && !isMultipart && typeof inputBody !== 'string';
+      const body = hasJsonBody ? JSON.stringify(inputBody) : inputBody;
+      // SDK 57 installs expo/fetch globally, but an opt-out/polyfill can change it.
+      // Native multipart File.bytes() parts must always use the Expo transport.
+      const nativeMultipart = isMultipart && Platform.OS !== 'web';
+      const send = nativeMultipart ? expoFetch : fetch;
+      transport = nativeMultipart ? 'expo/fetch' : 'global-fetch';
+      const headers = {
+        Accept: 'application/json',
+        ...(body !== undefined && body !== null && !isMultipart ? { 'Content-Type': 'application/json' } : {}),
+        ...authHeaders,
+        ...requestHeaders,
+      };
+      if (isMultipart) {
+        // Let the selected transport generate Content-Type and its boundary.
+        for (const key of Object.keys(headers)) {
+          if (key.toLowerCase() === 'content-type') delete headers[key];
+        }
+      }
+      logApiDiagnostic('info', '[API request]', {
+        url,
+        method,
+        endpoint: path,
+        timeoutMs: requestTimeoutMs,
+        transport,
+        ...diagnostics,
+        ...getAuthDiagnostic(authHeaders?.Authorization),
+      });
+      stage = 'transport';
+      const response = await send(url, {
+        ...fetchOptions,
+        body,
+        headers,
+      });
 
       logApiDiagnostic('info', '[API response]', {
         url,
         method,
         status: response.status,
-        ok: response.ok,
+        durationMs: Date.now() - requestStartedAt,
+        timeoutMs: requestTimeoutMs,
+        transport,
+        ...diagnostics,
         ...getAuthDiagnostic(authHeaders?.Authorization),
       });
       return response;
     } catch (error) {
-      if (error?.name === 'AbortError') {
-        throw createRequestError('La solicitud fue cancelada.', 499, error);
+      if (error?.name === 'AbortError' || error?.code === 'CANCELLED') {
+        throw error;
       }
-
-      logApiDiagnostic('error', '[API network/timeout error]', {
-        url,
-        method,
-        name: error?.name || 'Error',
-        message: error?.message || String(error),
-        ...getAuthDiagnostic(authHeaders?.Authorization),
-      });
+      if (stage === 'preparation' || isSerializationError(error)) {
+        const preparationError = error?.code === 'REQUEST_PREPARATION_ERROR' ? error : createPreparationError(error);
+        preparationError.transport = transport;
+        throw preparationError;
+      }
       if (path === '/lux/chat') {
         logLuxDebug({
           url,
@@ -877,8 +992,10 @@ export async function request(endpoint, options = {}) {
           responseShape: null,
         });
       }
-      if (error?.code === 'TIMEOUT' || error?.status === 408) throw error;
-      throw createRequestError(CONNECTION_ERROR_MESSAGE, 0, error);
+      const networkError = createRequestError(CONNECTION_ERROR_MESSAGE, 0, null, 'NETWORK_ERROR');
+      networkError.cause = error;
+      networkError.transport = transport;
+      throw networkError;
     }
   };
 
@@ -921,6 +1038,14 @@ export async function request(endpoint, options = {}) {
     return null;
   }
 
+  if (response.ok && responseType === 'audio') {
+    const mimeType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
+    if (!mimeType?.startsWith('audio/') && mimeType !== 'video/webm' && mimeType !== 'application/ogg') {
+      throw createRequestError('El servidor no devolvió un archivo de audio.', 502, null, 'INVALID_AUDIO');
+    }
+    return { bytes: new Uint8Array(await response.arrayBuffer()), mimeType };
+  }
+
   const rawText = await response.text();
   let data = null;
 
@@ -949,6 +1074,11 @@ export async function request(endpoint, options = {}) {
       url,
       method,
       status: response.status,
+      durationMs: Date.now() - requestStartedAt,
+      timeoutMs: requestTimeoutMs,
+      classification: data?.error?.code === 'REQUEST_CANCELLED' ? 'CANCELLED' : response.status === 408 ? 'TIMEOUT' : 'HTTP_ERROR',
+      exceptionCode: getSafeErrorCode(data),
+      ...diagnostics,
       errorCode: getSafeErrorCode(data),
       errorMessage: getSafeErrorMessage(data),
       responseShape: getResponseShape(data),
@@ -960,7 +1090,12 @@ export async function request(endpoint, options = {}) {
       setAuthToken(null);
       void signOut(auth).catch(() => undefined);
     }
-    const requestError = createRequestError(getErrorMessage(response.status, data), response.status, data);
+    const requestError = createRequestError(
+      typeof data?.error?.message === 'string' ? data.error.message : getErrorMessage(response.status, data),
+      response.status, data, data?.error?.code || undefined
+    );
+    requestError.requestId = data?.error?.requestId;
+    requestError.retryable = data?.error?.retryable;
     // Keep request metadata available to the UI without exposing credentials.
     requestError.endpoint = path;
     requestError.url = url;
@@ -1569,11 +1704,7 @@ function isBlobLike(value) {
   );
 }
 
-function isBrowserRuntime() {
-  return typeof window !== 'undefined' && typeof window.document !== 'undefined';
-}
-
-async function appendFormDataFile(formData, fieldName, file = {}) {
+export async function appendFormDataFile(formData, fieldName, file = {}) {
   const name = file.name || `documento-${Date.now()}`;
   const type = file.type || 'application/octet-stream';
 
@@ -1582,7 +1713,7 @@ async function appendFormDataFile(formData, fieldName, file = {}) {
     return;
   }
 
-  if (isBrowserRuntime()) {
+  if (Platform.OS === 'web') {
     let response;
     try {
       response = await fetch(file.uri);
@@ -1599,11 +1730,21 @@ async function appendFormDataFile(formData, fieldName, file = {}) {
     return;
   }
 
-  formData.append(fieldName, {
-    uri: file.uri,
-    name,
-    type,
-  });
+  try {
+    const nativeFile = new File(file.uri);
+    // Expo's serializer supports bytes(), not RN/XHR's { uri, name, type }.
+    // Keep the recorder/picker MIME and filename; OS-derived File.type can differ.
+    formData.append(fieldName, {
+      name,
+      type,
+      async bytes() {
+        try { return await nativeFile.bytes(); }
+        catch (error) { throw createPreparationError(error); }
+      },
+    });
+  } catch (error) {
+    throw createPreparationError(error);
+  }
 }
 
 export async function uploadDocument(data) {
@@ -1884,9 +2025,9 @@ export async function uploadHearingLiveTranscriptionChunk({
   }
 
   const formData = new FormData();
-  formData.append('audio', {
+  await appendFormDataFile(formData, 'audio', {
     uri: audioUri,
-    name: `audiencia-${hearingId || activeSessionId}-chunk-${chunkIndex}.m4a`,
+    name: `audiencia-${activeHearingId}-chunk-${chunkIndex}.m4a`,
     type: 'audio/m4a',
   });
   formData.append('chunkIndex', String(chunkIndex));
@@ -1985,7 +2126,6 @@ export async function startLiveTranscription({ title, caseId, hearingId } = {}) 
   const payload = await request('/transcriptions/start', {
     method: 'POST',
     body: {
-      title: safeOptionalString(title) || 'Transcripción en vivo',
       caseId: safeOptionalString(caseId),
       hearingId: normalizedHearingId,
       ...(activeWorkContext?.type === 'study' && activeWorkContext?.legalStudyId
@@ -2015,7 +2155,7 @@ export async function uploadLiveTranscriptionChunk({
   }
 
   const formData = new FormData();
-  formData.append('audio', {
+  await appendFormDataFile(formData, 'audio', {
     uri: audioUri,
     name: `chunk-${chunkIndex}.m4a`,
     type: 'audio/m4a',
@@ -2161,18 +2301,27 @@ export async function sendLuxMessage(message, context = {}, requestOptions = {})
     reply,
     conversationId: safeOptionalString(responseData?.conversationId ?? data?.conversationId),
     citations: responseData?.citations ?? responseData?.legalCitations,
+    documents: responseData?.documents,
+    assistantMessage: responseData?.assistantMessage,
+    messageId: responseData?.messageId,
     raw: data,
   };
 }
 
-function normalizeLuxMessage(item = {}) {
+export function normalizeLuxMessage(item = {}) {
   const role = item.role === 'user' || item.role === 'assistant' ? item.role : 'assistant';
+  const metadata = item.metadata ?? item.metadataJson ?? {};
   return {
+    ...item,
     id: safeString(item.id ?? item.messageId, `lux-message-${Date.now()}-${Math.random().toString(16).slice(2)}`),
     role,
     text: safeString(item.text ?? item.content ?? item.message ?? item.answer, ''),
     createdAt: item.createdAt ?? item.created_at ?? new Date().toISOString(),
-    legal: item.legal ?? item.metadata?.legal ?? null,
+    legal: item.legal ?? metadata.legal ?? null,
+    citations: item.citations ?? metadata.citations ?? item.legal?.citations ?? [],
+    documents: item.documents ?? item.documentsUsed ?? metadata.documents ?? metadata.documentsUsed ?? [],
+    audio: item.audio ?? metadata.audio ?? null,
+    voiceMode: item.voiceMode ?? metadata.voiceMode,
   };
 }
 
@@ -2183,7 +2332,7 @@ function unwrapLuxData(response) {
 
 export function normalizeLuxConversation(item = {}) {
   const messages = Array.isArray(item.messages)
-    ? item.messages.map(normalizeLuxMessage).filter((message) => message.text)
+    ? item.messages.map(normalizeLuxMessage).filter((message) => message.text || message.audio)
     : [];
   return {
     id: safeString(item.id ?? item.conversationId, ''),
@@ -2192,6 +2341,7 @@ export function normalizeLuxConversation(item = {}) {
     createdAt: item.createdAt ?? item.created_at ?? item.updatedAt ?? new Date().toISOString(),
     archived: Boolean(item.archived),
     pendingSync: Boolean(item.pendingSync),
+    backendConversationId: safeOptionalString(item.backendConversationId),
     selectedCaseId: item.selectedCaseId ?? item.caseId ?? null,
     selectedCaseName: safeOptionalString(item.selectedCaseName ?? item.caseName),
     messages,
@@ -2301,8 +2451,8 @@ export async function deleteLuxMemory(memoryId) {
   return request(`/lux/memory/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
-export async function sendGeneralLuxMessage(message, context = {}) {
-  return sendLuxMessage(message, context);
+export async function sendGeneralLuxMessage(message, context = {}, options = {}) {
+  return sendLuxMessage(message, context, options);
 }
 
 export async function queryLegalAssistant({ question, conversationId, signal } = {}) {

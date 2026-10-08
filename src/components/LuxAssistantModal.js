@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -15,12 +16,19 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useIsFocused } from '@react-navigation/native';
 
 import LuxConversationSidebar from './LuxConversationSidebar';
+import LuxVoiceControls from './LuxVoiceControls';
+import LuxMessageContent from './LuxMessageContent';
+import { useLuxVoice } from '../voice/useLuxVoice';
+import { reconcileVoiceMessages } from '../voice/voicePolicy';
+import { useStudyContext } from '../context/StudyContext';
 import { useAuth } from '../context/AuthContext';
 import { useAppTheme } from '../context/ThemeContext';
 import {
   normalizeLuxConversation,
+  normalizeLuxMessage,
   sendGeneralLuxMessage,
 } from '../services/api';
 import { useResponsiveLayout } from '../theme/layout';
@@ -74,14 +82,22 @@ function getLuxErrorMessage(error) {
 export default function LuxAssistantModal({ context: contextValue = {}, onClose, visible }) {
   const { colors } = useAppTheme();
   const { currentUser } = useAuth();
+  const { activeContextKey } = useStudyContext();
+  const focused = useIsFocused();
   const insets = useSafeAreaInsets();
   const layout = useResponsiveLayout();
   const isPhone = layout.isPhone;
-  const styles = useMemo(() => createStyles(colors, insets, isPhone), [colors, insets, isPhone]);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const keyboardVisible = keyboardHeight > 0;
+  const compactHeight = isPhone && layout.height - keyboardHeight < 480;
+  const styles = useMemo(() => createStyles(colors, insets, isPhone, keyboardVisible, compactHeight), [colors, insets, isPhone, keyboardVisible, compactHeight]);
   const selectedIdRef = useRef(null);
   const loadSequenceRef = useRef(0);
   const searchSequenceRef = useRef(0);
   const inputValueRef = useRef('');
+  const sendLockRef = useRef(false);
+  const textRequestRef = useRef(null);
+  const voiceStartRef = useRef(false);
   const messagesScrollRef = useRef(null);
   const openAnimation = useRef(new Animated.Value(0)).current;
   const [conversations, setConversations] = useState([]);
@@ -102,7 +118,14 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
   const [renameValue, setRenameValue] = useState('');
   const [showRename, setShowRename] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
-  const storageKey = getStorageKey(currentUser?.uid);
+  const [voiceControlsVisible, setVoiceControlsVisible] = useState(false);
+  const storageKey = `${getStorageKey(currentUser?.uid)}${activeContextKey === 'personal' ? '' : `.${activeContextKey}`}`;
+
+  useEffect(() => {
+    const show = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', (event) => setKeyboardHeight(event.endCoordinates.height));
+    const hide = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => setKeyboardHeight(0));
+    return () => { show.remove(); hide.remove(); };
+  }, []);
 
   const scrollToBottom = useCallback(() => {
     requestAnimationFrame(() => {
@@ -146,7 +169,10 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
   }, []);
 
   const persist = useCallback(async (items) => {
-    try { await AsyncStorage.setItem(storageKey, JSON.stringify({ conversations: items })); } catch { /* optional cache */ }
+    try {
+      const cached = items.map((item) => ({ ...item, messages: (item.messages || []).filter((message) => !message.optimistic) }));
+      await AsyncStorage.setItem(storageKey, JSON.stringify({ conversations: cached }));
+    } catch { /* optional cache */ }
   }, [storageKey]);
 
   const updateConversation = useCallback((id, updater) => {
@@ -199,7 +225,11 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
 
   const createRealConversation = useCallback(async () => {
     setCreatingConversation(true);
-    const local = createConversation();
+    const local = {
+      ...createConversation(),
+      selectedCaseId: contextValue.caseId ?? contextValue.selectedCaseId ?? null,
+      selectedCaseName: contextValue.caseName ?? contextValue.selectedCaseName ?? null,
+    };
     setConversations((current) => {
       const pendingId = selectedIdRef.current;
       const next = [local, ...current.filter((item) => item.id !== pendingId)];
@@ -254,7 +284,7 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
       setCreatingConversation(false);
     }
     */
-  }, [isPhone, persist]);
+  }, [contextValue, isPhone, persist]);
 
   useEffect(() => {
     if (!visible) return undefined;
@@ -353,53 +383,125 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
   }, [conversations, debouncedQuery, visible]);
 
   const activeConversation = conversations.find((item) => item.id === selectedId) || null;
+  const caseId = contextValue.caseId ?? contextValue.selectedCaseId ?? activeConversation?.selectedCaseId ?? null;
+  const voiceScope = useMemo(() => selectedId ? {
+    localConversationId: selectedId,
+    conversationId: activeConversation?.backendConversationId || (selectedId.startsWith('local-conversation-') ? null : selectedId),
+    caseId,
+  } : null, [selectedId, activeConversation?.backendConversationId, caseId]);
+  const voice = useLuxVoice({
+    visible: visible && focused,
+    userKey: currentUser?.uid || 'anonymous',
+    contextKey: activeContextKey,
+    scope: voiceScope,
+    onPending: (id, scope) => updateConversationMessages(scope.localConversationId, (current) => current.some((item) => item.clientRequestId === id) ? current : [...current, createMessage('user', 'Enviando nota de voz…', { id: `voice-${id}`, clientRequestId: id, optimistic: true })]),
+    onSettled: (id, scope) => updateConversationMessages(scope.localConversationId, (current) => current.filter((item) => item.id !== `voice-${id}`)),
+    onTurn: (result, id, scope) => {
+      const user = { ...result.userMessage, text: result.userMessage.text || result.transcript,
+        voiceMode: voice.controller.state.conversation ? 'conversation' : 'message',
+        audio: result.userMessage.audio || { durationMs: voice.controller.state.draft?.durationMs } };
+      const assistant = { ...result.assistantMessage, speech: result.speech };
+      updateConversationMessages(scope.localConversationId, (current) => reconcileVoiceMessages(current, id, [user, assistant]));
+      updateConversation(scope.localConversationId, (item) => ({ ...item, backendConversationId: result.conversationId,
+        selectedCaseId: scope.caseId, title: item.title === 'Nueva conversación' ? result.transcript.slice(0, 55) || item.title : item.title }));
+    },
+    onSpeech: (message, speech, scope) => updateConversationMessages(scope.localConversationId, (current) => current.map((item) => item.id === message.id ? { ...item, speech } : item)),
+  });
+  const startVoice = useCallback(async (conversation) => {
+    const state = voice.controller.state;
+    if (voiceStartRef.current || sendLockRef.current || voice.controller.busy || state.draft) return;
+    setVoiceControlsVisible(true);
+    Keyboard.dismiss();
+    voiceStartRef.current = true;
+    try {
+      const local = selectedIdRef.current ? null : await createRealConversation();
+      const localConversationId = selectedIdRef.current || local?.id;
+      if (!localConversationId || !visible || !focused) return;
+      await voice.controller.begin({ localConversationId,
+        conversationId: activeConversation?.backendConversationId || (localConversationId.startsWith('local-conversation-') ? null : localConversationId), caseId }, conversation);
+    } finally { voiceStartRef.current = false; }
+  }, [voice.controller, createRealConversation, activeConversation?.backendConversationId, caseId, visible, focused]);
+  const closeVoiceControls = useCallback(() => {
+    setVoiceControlsVisible(false);
+    void voice.controller.close();
+  }, [voice.controller]);
+  const openVoiceControls = useCallback(() => {
+    setVoiceControlsVisible(true);
+    Keyboard.dismiss();
+    if (!voice.controller.busy && !voice.controller.state.draft && !voice.controller.state.conversation) void startVoice(false);
+  }, [startVoice, voice.controller]);
+  const closeLux = useCallback(() => { textRequestRef.current?.abort(); void voice.controller.close(); onClose(); }, [onClose, voice.controller]);
+  useEffect(() => {
+    // Scope changes also invalidate written responses so they cannot enter a new chat.
+    textRequestRef.current?.abort();
+    setIsSending(false);
+    sendLockRef.current = false;
+    setVoiceControlsVisible(false);
+    if (!visible || !focused) setKeyboardHeight(0);
+  }, [activeContextKey, caseId, visible, focused]);
+  useEffect(() => () => { textRequestRef.current?.abort(); }, []);
   const visibleConversations = searchResults || conversations;
   const input = inputValue;
   const isStreaming = isSending;
+  const showVoiceControls = voiceControlsVisible || voice.state.conversation || !!voice.state.draft || voice.state.starting || ['listening', 'processing', 'speaking', 'error'].includes(voice.state.status);
+  const voicePanelMaxHeight = compactHeight ? 112 : Math.max(112, Math.min(keyboardVisible ? 132 : 252, (layout.height - keyboardHeight) * 0.36));
+  const microphoneDisabled = isSending || loadingConversations || creatingConversation;
+  const callDisabled = microphoneDisabled || voice.controller.busy || !!voice.state.draft || !voice.state.capabilities?.enabled ||
+    !voice.state.capabilities?.transcriptionAvailable;
   // Keep the two assistant modes explicit; each conversation still owns its messages.
   const modeWelcome = { [CHAT_MODE.GENERAL]: GENERAL_WELCOME, [CHAT_MODE.LEGAL]: LEGAL_WELCOME };
 
   const handleNewConversation = useCallback(() => {
-    if (!isSending && !creatingConversation) void createRealConversation();
-  }, [creatingConversation, createRealConversation, isSending]);
+    if (!isSending && !creatingConversation) { void voice.controller.close(); void createRealConversation(); }
+  }, [creatingConversation, createRealConversation, isSending, voice.controller]);
 
   const handleSend = useCallback(async () => {
     const text = inputValueRef.current.trim();
     const isStreaming = isSending;
-    if (!text || isSending || isStreaming) return;
+    if (!text || isSending || isStreaming || sendLockRef.current || voice.controller.busy ||
+        (voice.controller.state.conversation && !voice.controller.state.microphonePaused)) return;
+    sendLockRef.current = true;
+    const controller = new AbortController();
+    textRequestRef.current = controller;
     setIsSending(true);
     const userMessage = createMessage('user', text);
     let conversationId = normalizeConversationId(selectedIdRef.current);
     if (!conversationId) {
       const remote = await createRealConversation();
       conversationId = normalizeConversationId(remote?.id);
-      if (!conversationId) { setIsSending(false); return; }
+      if (!conversationId) { setIsSending(false); sendLockRef.current = false; return; }
     }
     updateConversationMessages(conversationId, (current) => [...current, userMessage]);
     setInputValue('');
     setSyncError('');
     try {
       let response;
-      const context = { ...contextValue, conversationId, mode: chatMode.toLowerCase() };
-      response = await sendGeneralLuxMessage(text, context);
+      const context = { ...contextValue, caseId, conversationId: activeConversation?.backendConversationId || conversationId, mode: chatMode.toLowerCase() };
+      response = await sendGeneralLuxMessage(text, context, { signal: controller.signal });
+      if (controller.signal.aborted) return;
       // The real backend now routes both modes through /lux/chat. Legacy clients
       // may still call sendLegalLuxQuery(body) with this shape:
       // const body = { question: text, conversationId: legalConversationIdRef.current };
       // chatMode === CHAT_MODE.LEGAL and chatMode === CHAT_MODE.GENERAL remain UI modes.
       const reply = response.reply;
-      const assistantMessage = createMessage('assistant', reply, response?.citations ? { legal: response } : {});
+      const assistantMessage = response.assistantMessage ? { ...normalizeLuxMessage(response.assistantMessage), persisted: true }
+        : createMessage('assistant', reply, { ...(response.messageId ? { id: String(response.messageId), persisted: true } : {}), citations: response.citations || [], documents: response.documents || [], ...(response?.citations ? { legal: response } : {}) });
       updateConversationMessages(conversationId, (current) => [...current, assistantMessage]);
-      if (response?.conversationId && response.conversationId !== conversationId) {
+      if (response?.conversationId && response.conversationId !== activeConversation?.backendConversationId) {
         const responseConversationId = normalizeConversationId(response.conversationId);
         if (responseConversationId) {
-          updateConversation(conversationId, (item) => ({ ...item, id: responseConversationId }));
-          if (selectedIdRef.current === conversationId) { selectedIdRef.current = responseConversationId; setSelectedId(responseConversationId); }
+          updateConversation(conversationId, (item) => ({ ...item, backendConversationId: responseConversationId }));
         }
       }
+      const shouldRead = voice.controller.state.conversation ? !voice.controller.state.muted : voice.controller.autoRead;
+      if (shouldRead && assistantMessage.persisted && selectedIdRef.current === conversationId) {
+        voice.controller.scope = { localConversationId: conversationId, conversationId: response.conversationId || context.conversationId, caseId };
+        void voice.controller.generateSpeech(assistantMessage);
+      }
     } catch (error) {
-      if (selectedIdRef.current === conversationId) setSyncError(getLuxErrorMessage(error));
-    } finally { setIsSending(false); }
-  }, [chatMode, contextValue, conversations, createRealConversation, isSending, persist, setInputValue, updateConversation, updateConversationMessages]);
+      if (!controller.signal.aborted && selectedIdRef.current === conversationId) setSyncError(getLuxErrorMessage(error));
+    } finally { if (textRequestRef.current === controller) { textRequestRef.current = null; setIsSending(false); sendLockRef.current = false; } }
+  }, [chatMode, contextValue, createRealConversation, isSending, setInputValue, updateConversation, updateConversationMessages, voice.controller, activeConversation?.backendConversationId, caseId]);
 
   const handleRename = useCallback(async () => {
     const title = renameValue.trim();
@@ -440,8 +542,8 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
   }, [actionConversation, persist]);
 
   return (
-    <Modal animationType="none" onRequestClose={onClose} transparent visible={visible}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.overlay}>
+    <Modal animationType="none" onRequestClose={closeLux} transparent visible={visible && focused}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'height' : undefined} style={styles.overlay}>
         <Animated.View
           style={[
             styles.sheet,
@@ -468,13 +570,15 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
           {(!isPhone || !sidebarVisible) ? (
             <View style={styles.chatPane}>
               <View style={styles.header}>
-                <Pressable accessibilityLabel={sidebarVisible ? 'Ocultar conversaciones' : 'Abrir conversaciones'} accessibilityRole="button" onPress={() => setSidebarVisible((current) => !current)} style={styles.headerButton}><MaterialCommunityIcons color={colors.primary} name={isPhone ? 'menu' : 'view-sidebar-outline'} size={23} /></Pressable>
+                <Pressable accessibilityLabel={sidebarVisible ? 'Ocultar conversaciones' : 'Abrir conversaciones'} accessibilityRole="button" onPress={() => setSidebarVisible((current) => !current)} style={styles.headerButton}><MaterialCommunityIcons color={colors.primary} name="menu" size={23} /></Pressable>
                 <View style={styles.headerCopy}><Text style={styles.headerEyebrow}>ASISTENTE JURÍDICO</Text><Text numberOfLines={1} style={styles.headerTitle}>{activeConversation?.title || 'Nueva conversación'}</Text>{activeConversation?.selectedCaseName ? <Text style={styles.caseContext}>Causa: {activeConversation.selectedCaseName}</Text> : null}</View>
-                <Pressable accessibilityLabel="Cerrar LUX" accessibilityRole="button" onPress={onClose} style={styles.headerButton}><MaterialCommunityIcons color={colors.textSecondary} name="close" size={22} /></Pressable>
+                <Pressable accessibilityLabel="Cerrar LUX" accessibilityRole="button" onPress={closeLux} style={styles.headerButton}><MaterialCommunityIcons color={colors.textSecondary} name="close" size={22} /></Pressable>
               </View>
               <View style={styles.modeRow}>{[{ key: CHAT_MODE.GENERAL, label: 'Chat actual' }, { key: CHAT_MODE.LEGAL, label: 'Consulta jurídica' }].map((option) => <Pressable accessibilityRole="tab" accessibilityState={{ selected: chatMode === option.key }} key={option.key} onPress={() => selectMode(option.key)} style={[styles.modeOption, chatMode === option.key && styles.modeOptionSelected]}><Text style={[styles.modeText, chatMode === option.key && styles.modeTextSelected]}>{option.label}</Text></Pressable>)}</View>
               <ScrollView
                 contentContainerStyle={styles.messagesContent}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
                 persistentScrollbar
                 ref={messagesScrollRef}
                 showsVerticalScrollIndicator
@@ -482,10 +586,17 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
               >
                 {loadingMessages ? <View style={styles.loadingMessages}><ActivityIndicator color={colors.primary} /><Text style={styles.mutedText}>Cargando historial…</Text></View> : null}
                 {!loadingMessages && !messages.length ? <View accessibilityLabel={modeWelcome[chatMode]} style={styles.emptyChat}><View style={styles.luxMark}><Text style={styles.luxMarkText}>LUX</Text></View><Text style={styles.emptyTitle}>¿En qué puedo ayudarte?</Text><Text style={styles.emptyDescription}>Consultá causas, documentos y cuestiones jurídicas con una respuesta clara y enfocada.</Text><View style={styles.suggestions}>{['Analizar una causa', 'Revisar documentos', 'Consulta jurídica'].map((suggestion) => <Pressable key={suggestion} onPress={() => setInputValue(suggestion)} style={styles.suggestion}><Text style={styles.suggestionText}>{suggestion}</Text></Pressable>)}</View></View> : null}
-                {messages.map((item) => <View key={item.id} style={[styles.messageBlock, item.role === 'user' ? styles.userBlock : styles.assistantBlock]}><Text style={styles.messageRole}>{item.role === 'user' ? 'Vos' : 'LUX'}</Text><Text selectable style={[styles.messageText, item.role === 'user' ? styles.userText : styles.assistantText]}>{item.text}</Text>{item.legal?.citations?.length ? <Text style={styles.citationHint}>Fuentes oficiales consultadas: {item.legal.citations.length}</Text> : null}</View>)}
+                {messages.map((item) => <View key={item.id} testID={`lux-message-${item.id}`} style={[styles.messageBlock, item.role === 'user' ? styles.userBlock : styles.assistantBlock]}><Text style={styles.messageRole}>{item.role === 'user' ? 'Vos' : 'LUX'}</Text><View style={item.role === 'user' ? styles.userMessageContainer : undefined}><LuxMessageContent message={item} controller={voice.controller} state={voice.state} /></View></View>)}
                 {isSending ? <View style={styles.thinking}><ActivityIndicator color={colors.primary} size="small" /><Text style={styles.mutedText}>LUX está pensando…</Text></View> : null}
                 {syncError ? <View style={styles.inlineAlert}><MaterialCommunityIcons color={colors.danger} name="alert-outline" size={17} /><Text style={styles.inlineAlertText}>{syncError}</Text></View> : null}
               </ScrollView>
+              <View style={styles.chatFooter}>
+              {showVoiceControls ? <LuxVoiceControls voice={voice} disabled={isSending || loadingConversations || creatingConversation} onStart={(conversation) => { void startVoice(conversation); }} onClose={closeVoiceControls} maxHeight={voicePanelMaxHeight} caseName={contextValue.caseName || activeConversation?.selectedCaseName} /> : null}
+              {!showVoiceControls ? <Pressable accessibilityRole="button" accessibilityLabel="Hablar con Lux" accessibilityState={{ disabled: callDisabled }}
+                disabled={callDisabled} onPress={() => { void startVoice(true); }} style={[styles.callButton, callDisabled && { opacity: 0.45 }]}>
+                <MaterialCommunityIcons name="phone-in-talk-outline" size={20} color={colors.primary} />
+                <Text style={styles.callLabel}>Hablar con Lux</Text>
+              </Pressable> : null}
               <View style={styles.composer}>
                 <TextInput
                   accessibilityLabel="Escribir mensaje a LUX"
@@ -505,9 +616,11 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
                   submitBehavior={Platform.OS === 'web' ? 'newline' : 'submit'}
                   value={input}
                 />
-                <Pressable accessibilityLabel="Enviar mensaje a LUX" accessibilityRole="button" disabled={!input.trim() || isSending || isStreaming} onPress={handleSend} style={[styles.sendButton, (!input.trim() || isSending) && styles.sendButtonDisabled]}><MaterialCommunityIcons color="#FFFFFF" name="arrow-up" size={21} /></Pressable>
+                <Pressable accessibilityLabel={showVoiceControls ? 'Controles de voz' : 'Grabar nota de voz'} accessibilityRole="button" accessibilityState={{ disabled: microphoneDisabled, expanded: showVoiceControls }} disabled={microphoneDisabled} onPress={openVoiceControls} style={[styles.microphoneButton, showVoiceControls && styles.microphoneButtonActive, microphoneDisabled && { opacity: 0.4 }]}><MaterialCommunityIcons color={voice.state.microphoneActive ? colors.danger : colors.primary} name={voice.state.conversation ? 'phone-in-talk-outline' : 'microphone-outline'} size={24} /></Pressable>
+                <Pressable accessibilityLabel="Enviar mensaje a LUX" accessibilityRole="button" disabled={!input.trim() || isSending || isStreaming || voice.controller.busy || (voice.state.conversation && !voice.state.microphonePaused)} onPress={handleSend} style={[styles.sendButton, (!input.trim() || isSending || voice.controller.busy || (voice.state.conversation && !voice.state.microphonePaused)) && styles.sendButtonDisabled]}><MaterialCommunityIcons color="#FFFFFF" name="arrow-up" size={21} /></Pressable>
               </View>
-              <Text style={styles.composerHint}>LUX brinda información orientativa. Verificá las fuentes antes de tomar decisiones.</Text>
+              {!keyboardVisible && !compactHeight ? <Text style={styles.composerHint}>{voice.state.conversation && !voice.state.microphonePaused ? 'Pausá el micrófono para enviar un mensaje escrito.' : 'LUX brinda información orientativa. Verificá las fuentes antes de tomar decisiones.'}</Text> : null}
+              </View>
             </View>
           ) : null}
         </Animated.View>
@@ -520,22 +633,22 @@ export default function LuxAssistantModal({ context: contextValue = {}, onClose,
   );
 }
 
-const createStyles = (colors, insets, isPhone) => StyleSheet.create({
+const createStyles = (colors, insets, isPhone, keyboardVisible, compactHeight) => StyleSheet.create({
   overlay: { flex: 1, backgroundColor: 'rgba(7, 28, 51, 0.5)', justifyContent: 'flex-end', padding: isPhone ? 0 : 22 },
-  sheet: { flex: 1, width: '100%', maxWidth: 1240, maxHeight: isPhone ? '100%' : '74%', minHeight: isPhone ? 0 : 420, alignSelf: 'center', flexDirection: 'row', overflow: 'hidden', backgroundColor: colors.card, borderRadius: isPhone ? 0 : 22, paddingTop: isPhone ? insets.top : 0, paddingBottom: isPhone ? Math.max(insets.bottom, 10) : 0 },
-  chatPane: { flex: 1, minWidth: 0, backgroundColor: colors.background },
-  header: { minHeight: isPhone ? 68 : 76, paddingHorizontal: isPhone ? 16 : 22, paddingVertical: isPhone ? 10 : 14, borderBottomWidth: 1, borderBottomColor: colors.borderSoft, backgroundColor: colors.card, flexDirection: 'row', alignItems: 'center', gap: isPhone ? 8 : 12 },
+  sheet: { flex: 1, width: '100%', maxWidth: 1240, maxHeight: isPhone ? '100%' : '74%', minHeight: isPhone ? 0 : 420, alignSelf: 'center', flexDirection: 'row', overflow: 'hidden', backgroundColor: colors.card, borderRadius: isPhone ? 0 : 22, paddingTop: isPhone ? insets.top : 0, paddingBottom: isPhone && !keyboardVisible ? Math.max(insets.bottom, 10) : 0 },
+  chatPane: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: colors.background },
+  header: { flexShrink: 0, minHeight: compactHeight ? 56 : isPhone ? 68 : 76, paddingHorizontal: isPhone ? 16 : 22, paddingVertical: compactHeight ? 6 : isPhone ? 10 : 14, borderBottomWidth: 1, borderBottomColor: colors.borderSoft, backgroundColor: colors.card, flexDirection: 'row', alignItems: 'center', gap: isPhone ? 8 : 12 },
   headerCopy: { flex: 1, minWidth: 0 },
   headerEyebrow: { color: colors.gold, fontSize: 10, fontWeight: '800', letterSpacing: 1.1 },
   headerTitle: { color: colors.text, fontSize: 18, fontWeight: '800', marginTop: 3 },
   caseContext: { color: colors.textSecondary, fontSize: 12, marginTop: 3 },
   headerButton: { width: isPhone ? 44 : 40, height: isPhone ? 44 : 40, alignItems: 'center', justifyContent: 'center', borderRadius: 12 },
-  modeRow: { flexDirection: 'row', gap: 8, paddingHorizontal: isPhone ? 16 : 22, paddingTop: 14 },
-  modeOption: { borderBottomWidth: 2, borderBottomColor: 'transparent', paddingHorizontal: 4, paddingBottom: 9, marginRight: 13 },
+  modeRow: { flexShrink: 0, flexDirection: 'row', gap: 8, paddingHorizontal: isPhone ? 16 : 22, paddingTop: compactHeight ? 6 : 14 },
+  modeOption: { borderBottomWidth: 2, borderBottomColor: 'transparent', paddingHorizontal: 4, paddingBottom: compactHeight ? 6 : 9, marginRight: 13 },
   modeOptionSelected: { borderBottomColor: colors.gold },
   modeText: { color: colors.textMuted, fontSize: 12, fontWeight: '700' },
   modeTextSelected: { color: colors.primary },
-  messagesScroll: { flex: 1 },
+  messagesScroll: { flex: 1, minHeight: compactHeight ? 32 : 80 },
   messagesContent: { width: '100%', maxWidth: 840, alignSelf: 'center', paddingHorizontal: isPhone ? 18 : 42, paddingTop: 24, paddingBottom: 24 },
   loadingMessages: { alignItems: 'center', gap: 9, paddingVertical: 25 },
   mutedText: { color: colors.textMuted, fontSize: 12 },
@@ -552,14 +665,20 @@ const createStyles = (colors, insets, isPhone) => StyleSheet.create({
   assistantBlock: { alignSelf: 'flex-start', alignItems: 'flex-start' },
   messageRole: { color: colors.textMuted, fontSize: 10, fontWeight: '800', letterSpacing: 1, marginBottom: 6 },
   messageText: { fontSize: 15, lineHeight: 23 },
+  userMessageContainer: { backgroundColor: colors.primary, borderRadius: 16, borderBottomRightRadius: 5, paddingHorizontal: 15, paddingVertical: 11 },
   userText: { color: colors.textOnPrimary, backgroundColor: colors.primary, borderRadius: 16, borderBottomRightRadius: 5, paddingHorizontal: 15, paddingVertical: 11 },
   assistantText: { color: colors.text, paddingRight: 16 },
   citationHint: { color: colors.primary, fontSize: 11, fontWeight: '700', marginTop: 8 },
   thinking: { flexDirection: 'row', alignItems: 'center', gap: 9, marginBottom: 18 },
   inlineAlert: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 12, padding: 11, backgroundColor: colors.dangerSoft },
   inlineAlertText: { color: colors.danger, flex: 1, fontSize: 12 },
-  composer: { flexDirection: 'row', alignItems: 'flex-end', gap: 10, marginHorizontal: isPhone ? 14 : 34, borderWidth: 1, borderColor: colors.border, borderRadius: 17, padding: 8, backgroundColor: colors.card },
-  input: { flex: 1, minHeight: 42, maxHeight: 120, color: colors.text, fontSize: 15, lineHeight: 21, paddingHorizontal: 9, paddingTop: 10, paddingBottom: 8 },
+  chatFooter: { flexShrink: 0, paddingHorizontal: isPhone ? 14 : 34, paddingTop: 6, paddingBottom: keyboardVisible || compactHeight ? 4 : 10 },
+  composer: { flexShrink: 0, flexDirection: 'row', alignItems: 'flex-end', gap: 8, borderWidth: 1, borderColor: colors.border, borderRadius: 17, padding: 8, backgroundColor: colors.card },
+  callButton: { flexShrink: 0, flexDirection: 'row', alignSelf: 'flex-start', alignItems: 'center', gap: 8, minHeight: 44, paddingHorizontal: 14, marginBottom: 8, borderRadius: 12, backgroundColor: colors.accentSoft },
+  callLabel: { color: colors.primary, fontSize: 13, fontWeight: '700' },
+  microphoneButton: { width: 44, height: 44, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  microphoneButtonActive: { backgroundColor: colors.accentSoft },
+  input: { flex: 1, minWidth: 0, minHeight: 42, maxHeight: 120, color: colors.text, fontSize: 15, lineHeight: 21, paddingHorizontal: 9, paddingTop: 10, paddingBottom: 8 },
   sendButton: { width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary },
   sendButtonDisabled: { opacity: 0.42 },
   composerHint: { color: colors.textMuted, fontSize: 10, textAlign: 'center', marginHorizontal: 22, marginTop: 7, marginBottom: 10 },

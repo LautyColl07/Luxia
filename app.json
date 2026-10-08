@@ -28,9 +28,7 @@
       },
       "permissions": [
         "android.permission.RECORD_AUDIO",
-        "android.permission.MODIFY_AUDIO_SETTINGS",
-        "android.permission.FOREGROUND_SERVICE",
-        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+        "android.permission.MODIFY_AUDIO_SETTINGS"
       ],
       "package": "com.luxiateam.luxiadashboard"
     },
@@ -38,7 +36,11 @@
       "favicon": "./assets/luxia-logo.png"
     },
     "plugins": [
-      "expo-audio",
+      ["expo-audio", {
+        "microphonePermission": "LuxIA necesita el micrófono para las notas de voz y las conversaciones con Lux.",
+        "enableBackgroundRecording": false,
+        "enableBackgroundPlayback": false
+      }],
       "expo-font",
       "expo-asset",
       "expo-sharing",

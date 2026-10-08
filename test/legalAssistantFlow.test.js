@@ -19,6 +19,9 @@ function loadApi(fetchImplementation) {
     URLSearchParams, clearTimeout, console: { warn: () => undefined },
     fetch: fetchImplementation, module, exports: module.exports,
     require: (request) => {
+      if (request === 'react-native') return { Platform: { OS: 'web' } };
+      if (request === 'expo/fetch') return { fetch: () => { throw new Error('Unexpected native transport on web'); } };
+      if (request === 'expo-file-system') return { File: class {} };
       if (request === '../config/api') return { API_BASE_URL: 'https://api.test/api/v1', API_ROOT_URL: 'https://api.test' };
       if (request === '../config/captureMode') return { IS_CAPTURE_MODE: false };
       if (request === '../config/firebase') return { auth: { currentUser: { getIdToken: async () => 'test-token' } } };

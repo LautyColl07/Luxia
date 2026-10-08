@@ -6,7 +6,12 @@
     "start": "expo start --go --lan",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web --port 3000"
+    "web": "expo start --web --port 3000",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/voice src/services/luxVoice.ts src/services/api.js src/components/LuxAssistantModal.js src/components/LuxVoiceControls.tsx src/components/LuxMessageContent.tsx",
+    "build:web": "expo export --platform web",
+    "test": "node --test test/*.test.js",
+    "test:voice:browser": "node --test test/luxVoiceBrowser.test.js"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -18,6 +23,7 @@
     "expo-asset": "~57.0.17",
     "expo-audio": "~57.0.5",
     "expo-constants": "~57.0.18",
+    "expo-crypto": "~57.0.3",
     "expo-document-picker": "~57.0.2",
     "expo-file-system": "~57.0.7",
     "expo-font": "~57.0.4",
@@ -39,6 +45,10 @@
   "private": true,
   "devDependencies": {
     "@types/react": "~19.2.4",
+    "esbuild": "^0.28.2",
+    "eslint": "^9.39.5",
+    "eslint-config-expo": "^57.0.2",
+    "playwright": "^1.63.0",
     "typescript": "~6.0.3"
   }
 }
