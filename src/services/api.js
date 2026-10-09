@@ -1,7 +1,6 @@
 import { API_BASE_URL as CONFIG_API_BASE_URL, API_ROOT_URL } from '../config/api';
 import { IS_CAPTURE_MODE } from '../config/captureMode';
-import { auth } from '../config/firebase';
-import { signOut } from 'firebase/auth';
+import { localAuth as auth } from './localAuth';
 import { Platform } from 'react-native';
 import { File } from 'expo-file-system';
 import { fetch as expoFetch } from 'expo/fetch';
@@ -13,13 +12,15 @@ export const USE_MOCKS = IS_CAPTURE_MODE;
 
 const DASHBOARD_RESUMEN_ENDPOINT = '/dashboard/resumen';
 
-export const API_BASE_URL = CONFIG_API_BASE_URL;
+export const API_BASE_URL = USE_MOCKS ? '' : CONFIG_API_BASE_URL;
 
-export const FILE_BASE_URL = API_ROOT_URL;
+export const FILE_BASE_URL = USE_MOCKS ? '' : API_ROOT_URL;
 
 let authToken = null;
 let authState = 'initializing';
 let mockStore = JSON.parse(JSON.stringify(mockData));
+const mockTranscriptions = {};
+const DEMO_TRANSCRIPT = 'Transcripcion de demostracion local: se abre la audiencia, las partes ratifican sus presentaciones y el tribunal fija un plazo de cinco dias para acompañar la documentacion pendiente.';
 const REQUEST_TIMEOUT_MS = 15000;
 const DATA_REQUEST_TIMEOUT_MS = 30000;
 const LUX_REQUEST_TIMEOUT_MS = 120000;
@@ -756,7 +757,7 @@ function omitAuthorizationHeader(headers = {}) {
   );
 }
 
-async function getRequestAuthHeaders(path, customHeaders = {}, forceRefresh = false) {
+async function getRequestAuthHeaders(path, customHeaders = {}) {
   const hasAuthorizationHeader = Object.keys(customHeaders).some(
     (key) => key.toLowerCase() === 'authorization'
   );
@@ -765,7 +766,6 @@ async function getRequestAuthHeaders(path, customHeaders = {}, forceRefresh = fa
     return {
       headers: {},
       token: null,
-      usesFirebaseToken: false,
     };
   }
 
@@ -773,7 +773,6 @@ async function getRequestAuthHeaders(path, customHeaders = {}, forceRefresh = fa
     return {
       headers: getAuthHeaders(),
       token: authToken,
-      usesFirebaseToken: false,
     };
   }
 
@@ -788,7 +787,7 @@ async function getRequestAuthHeaders(path, customHeaders = {}, forceRefresh = fa
   }
 
   try {
-    const token = await currentUser.getIdToken(forceRefresh);
+    const token = await currentUser.getIdToken();
 
     if (!token) {
       throw createRequestError(EXPIRED_SESSION_MESSAGE, 401);
@@ -798,7 +797,6 @@ async function getRequestAuthHeaders(path, customHeaders = {}, forceRefresh = fa
     return {
       headers: { Authorization: `Bearer ${token}` },
       token,
-      usesFirebaseToken: true,
     };
   } catch (error) {
     if (error?.status) {
@@ -1025,14 +1023,7 @@ async function requestWithAuth(endpoint, options = {}) {
     }
     throw error;
   }
-  let response = await makeRequest(authInfo.headers);
-  let retriedWithFreshToken = false;
-
-  if (response.status === 401 && authInfo.usesFirebaseToken) {
-    authInfo = await getRequestAuthHeaders(path, requestHeaders, true);
-    response = await makeRequest(authInfo.headers);
-    retriedWithFreshToken = true;
-  }
+  const response = await makeRequest(authInfo.headers);
 
   if (response.status === 204) {
     return null;
@@ -1086,9 +1077,9 @@ async function requestWithAuth(endpoint, options = {}) {
       ...getAuthDiagnostic(authInfo.token),
     });
 
-    if (response.status === 401 && retriedWithFreshToken && authInfo.usesFirebaseToken) {
+    if (response.status === 401 && authInfo.token) {
       setAuthToken(null);
-      void signOut(auth).catch(() => undefined);
+      void auth.signOut();
     }
     const requestError = createRequestError(
       typeof data?.error?.message === 'string' ? data.error.message : getErrorMessage(response.status, data),
@@ -1928,6 +1919,8 @@ export async function getHearingTranscription(hearingId) {
     throw createRequestError('No hay una audiencia valida para consultar.', 400);
   }
 
+  if (USE_MOCKS) return simulateDelay(normalizeHearingTranscription(mockTranscriptions[hearingId] || {}, hearingId));
+
   try {
     const payload = await request(`/audiencias/${hearingId}/transcripcion`);
     return normalizeHearingTranscription(payload || {}, hearingId);
@@ -1945,6 +1938,11 @@ export async function uploadHearingAudio({ asset, caseDetail, hearing } = {}) {
 
   if (!hearingId || !asset?.uri) {
     throw createRequestError('No hay una audiencia o archivo de audio valido.', 400);
+  }
+
+  if (USE_MOCKS) {
+    mockTranscriptions[hearingId] = { ...(mockTranscriptions[hearingId] || {}), hearingId, audioAvailable: true, status: 'uploaded' };
+    return simulateDelay({ success: true, audioAvailable: true, hearingId });
   }
 
   const formData = new FormData();
@@ -1975,6 +1973,11 @@ export async function transcribeHearingAudio({ hearingId } = {}) {
     throw createRequestError('No hay una audiencia valida para transcribir.', 400);
   }
 
+  if (USE_MOCKS) {
+    mockTranscriptions[hearingId] = { ...(mockTranscriptions[hearingId] || {}), hearingId, text: DEMO_TRANSCRIPT, audioAvailable: true, hasTranscript: true, status: 'completed' };
+    return simulateDelay(normalizeHearingTranscription(mockTranscriptions[hearingId], hearingId));
+  }
+
   const payload = await request(`/audiencias/${hearingId}/transcripcion`, {
     method: 'POST',
     timeout: 180000,
@@ -1989,6 +1992,11 @@ export async function startHearingLiveTranscription({ caseDetail, hearing } = {}
 
   if (!hearingId) {
     throw createRequestError('No hay una audiencia valida para iniciar.', 400);
+  }
+
+  if (USE_MOCKS) {
+    mockTranscriptions[hearingId] = { hearingId, text: '', audioAvailable: true, hasTranscript: false, status: 'recording', chunks: [] };
+    return simulateDelay({ ...normalizeHearingTranscription(mockTranscriptions[hearingId], hearingId), sessionId: hearingId });
   }
 
   const hearingCaseId = safeOptionalString(hearing?.caseId ?? hearing?.causaId ?? caseDetail?.id);
@@ -2022,6 +2030,15 @@ export async function uploadHearingLiveTranscriptionChunk({
 
   if (!activeHearingId || !audioUri) {
     throw createRequestError('No hay una audiencia o bloque de audio valido.', 400);
+  }
+
+  if (USE_MOCKS) {
+    const transcript = mockTranscriptions[activeHearingId] || { hearingId: activeHearingId, chunks: [], text: '' };
+    const text = DEMO_TRANSCRIPT.slice(Math.max(0, (Number(chunkIndex) || 0) * 32), Math.max(0, (Number(chunkIndex) || 0) * 32) + 96) || DEMO_TRANSCRIPT.slice(0, 96);
+    transcript.chunks.push({ chunkIndex, startTime, endTime, text });
+    transcript.text = transcript.chunks.map((chunk) => chunk.text).join(' ');
+    mockTranscriptions[activeHearingId] = transcript;
+    return simulateDelay({ chunkIndex, startTime, endTime, text, fullText: transcript.text });
   }
 
   const formData = new FormData();
@@ -2058,6 +2075,11 @@ export async function finishHearingLiveTranscription({ hearingId, sessionId } = 
     throw createRequestError('No hay una audiencia activa para finalizar.', 400);
   }
 
+  if (USE_MOCKS) {
+    mockTranscriptions[activeHearingId] = { ...(mockTranscriptions[activeHearingId] || {}), hearingId: activeHearingId, text: mockTranscriptions[activeHearingId]?.text || DEMO_TRANSCRIPT, audioAvailable: true, hasTranscript: true, status: 'completed' };
+    return simulateDelay(normalizeHearingTranscription(mockTranscriptions[activeHearingId], activeHearingId));
+  }
+
   const payload = await request(`/audiencias/${activeHearingId}/transcripcion/live/finish`, {
     method: 'POST',
     timeout: 150000,
@@ -2070,6 +2092,14 @@ export async function finishHearingLiveTranscription({ hearingId, sessionId } = 
 export async function generateHearingTranscriptionPdf({ hearingId } = {}) {
   if (!hearingId) {
     throw createRequestError('No hay una audiencia valida para generar PDF.', 400);
+  }
+
+  if (USE_MOCKS) {
+    const transcript = mockTranscriptions[hearingId] || { hearingId, text: DEMO_TRANSCRIPT, status: 'completed' };
+    transcript.hasPdf = true;
+    transcript.pdfAvailable = true;
+    mockTranscriptions[hearingId] = transcript;
+    return simulateDelay(normalizeHearingTranscription(transcript, hearingId));
   }
 
   const payload = await request(`/audiencias/${hearingId}/transcripcion/pdf`, {
@@ -2123,6 +2153,11 @@ function normalizeLiveTranscriptionSession(data = {}) {
 export async function startLiveTranscription({ title, caseId, hearingId } = {}) {
   const normalizedHearingId = safeOptionalString(hearingId);
   const normalizedTitle = safeOptionalString(title) || (normalizedHearingId ? `Audiencia ${normalizedHearingId}` : 'Transcripcion en vivo');
+  if (USE_MOCKS) {
+    const sessionId = `transcription-demo-${Date.now()}`;
+    mockTranscriptions[sessionId] = { sessionId, title: normalizedTitle, caseId, hearingId: normalizedHearingId, chunks: [], fullText: '', status: 'recording' };
+    return simulateDelay(sessionId);
+  }
   const payload = await request('/transcriptions/start', {
     method: 'POST',
     body: {
@@ -2152,6 +2187,15 @@ export async function uploadLiveTranscriptionChunk({
 } = {}) {
   if (!sessionId || !audioUri) {
     throw createRequestError('No hay una sesion o archivo de audio valido para enviar.', 400);
+  }
+
+  if (USE_MOCKS) {
+    const transcript = mockTranscriptions[sessionId] || { sessionId, chunks: [], fullText: '' };
+    const text = DEMO_TRANSCRIPT.slice(Math.max(0, (Number(chunkIndex) || 0) * 32), Math.max(0, (Number(chunkIndex) || 0) * 32) + 96) || DEMO_TRANSCRIPT.slice(0, 96);
+    transcript.chunks.push({ chunkIndex, startTime, endTime, text });
+    transcript.fullText = transcript.chunks.map((chunk) => chunk.text).join(' ');
+    mockTranscriptions[sessionId] = transcript;
+    return simulateDelay({ chunkIndex, startTime, endTime, text, sessionId });
   }
 
   const formData = new FormData();
@@ -2185,6 +2229,14 @@ export async function finishLiveTranscription(sessionId) {
     throw createRequestError('No hay una sesion activa para finalizar.', 400);
   }
 
+  if (USE_MOCKS) {
+    const transcript = mockTranscriptions[sessionId] || { sessionId, chunks: [], fullText: '' };
+    transcript.fullText ||= DEMO_TRANSCRIPT;
+    transcript.status = 'completed';
+    mockTranscriptions[sessionId] = transcript;
+    return simulateDelay(normalizeLiveTranscriptionSession(transcript));
+  }
+
   const payload = await request(`/transcriptions/${sessionId}/finish`, {
     method: 'POST',
     timeout: 150000,
@@ -2198,6 +2250,8 @@ export async function getLiveTranscription(sessionId) {
   if (!sessionId) {
     throw createRequestError('No hay una sesion activa para consultar.', 400);
   }
+
+  if (USE_MOCKS) return simulateDelay(normalizeLiveTranscriptionSession(mockTranscriptions[sessionId] || { sessionId, chunks: [], fullText: '' }));
 
   const payload = await request(withWorkScope(`/transcriptions/${sessionId}`));
   return normalizeLiveTranscriptionSession(payload || {});
@@ -2255,6 +2309,21 @@ export async function sendLuxMessage(message, context = {}, requestOptions = {})
       success: false,
       reply: 'Escribe una consulta para que LUX pueda ayudarte.',
     };
+  }
+
+  if (USE_MOCKS) {
+    const now = new Date().toISOString();
+    const id = safeOptionalString(context?.conversationId) || `lux-demo-${Date.now()}`;
+    let conversation = mockStore.luxConversations.find((item) => item.id === id);
+    if (!conversation) {
+      conversation = { id, title: normalizedMessage.slice(0, 56), createdAt: now, updatedAt: now, messages: [] };
+      mockStore.luxConversations.unshift(conversation);
+    }
+    conversation.messages.push({ id: `lux-user-${Date.now()}`, role: 'user', text: normalizedMessage, createdAt: now });
+    const reply = `Respuesta de demostracion local de LUX: tu cuenta tiene ${mockStore.cases.length} causas, ${mockStore.hearings.length} audiencias y ${mockStore.documents.length} documentos de ejemplo. En el modo conectado, LUX analiza las consultas con el servicio juridico.`;
+    conversation.messages.push({ id: `lux-assistant-${Date.now()}`, role: 'assistant', text: reply, createdAt: new Date().toISOString() });
+    conversation.updatedAt = new Date().toISOString();
+    return simulateDelay({ success: true, reply, conversationId: id, citations: [], messages: conversation.messages });
   }
 
   const requestedConversationId = safeOptionalString(context?.conversationId);
@@ -2373,10 +2442,25 @@ function getLuxCollectionPayload(response) {
 }
 
 export async function getLuxConversations(options = {}) {
+  if (USE_MOCKS) return simulateDelay(mockStore.luxConversations.map(normalizeLuxConversation));
   return unsupportedBackendEndpoint('/lux/conversations');
 }
 
 export async function createLuxConversation(payload = {}) {
+  if (USE_MOCKS) {
+    const now = new Date().toISOString();
+    const conversation = normalizeLuxConversation({
+      id: `lux-demo-${Date.now()}`,
+      title: safeString(payload.title, 'Nueva conversacion'),
+      selectedCaseId: payload.selectedCaseId ?? null,
+      selectedCaseName: payload.selectedCaseName ?? null,
+      createdAt: now,
+      updatedAt: now,
+      messages: [],
+    });
+    mockStore.luxConversations.unshift(conversation);
+    return simulateDelay(conversation);
+  }
   const response = await request('/lux/conversations', {
     method: 'POST',
     body: {
@@ -2391,6 +2475,11 @@ export async function createLuxConversation(payload = {}) {
 export async function getLuxConversation(conversationId) {
   const id = safeOptionalString(conversationId);
   if (!id) throw new Error('No hay una conversación seleccionada.');
+  if (USE_MOCKS) {
+    const conversation = mockStore.luxConversations.find((item) => item.id === id);
+    if (!conversation) throw new Error('No encontramos la conversacion local.');
+    return simulateDelay(normalizeLuxConversation(conversation));
+  }
   const [conversationResponse, messagesResponse] = await Promise.all([
     request(`/lux/conversations/${encodeURIComponent(id)}`, { method: 'GET' }),
     request(`/lux/conversations/${encodeURIComponent(id)}/messages`, { method: 'GET' }),
@@ -2403,6 +2492,14 @@ export async function getLuxConversation(conversationId) {
 export async function updateLuxConversation(conversationId, payload = {}) {
   const id = safeOptionalString(conversationId);
   if (!id) throw new Error('No hay una conversación seleccionada.');
+  if (USE_MOCKS) {
+    const index = mockStore.luxConversations.findIndex((item) => item.id === id);
+    if (index < 0) throw new Error('No encontramos la conversacion local.');
+    mockStore.luxConversations[index] = normalizeLuxConversation({
+      ...mockStore.luxConversations[index], ...payload, updatedAt: new Date().toISOString(),
+    });
+    return simulateDelay(mockStore.luxConversations[index]);
+  }
   const response = await request(`/lux/conversations/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     body: payload,
@@ -2413,11 +2510,21 @@ export async function updateLuxConversation(conversationId, payload = {}) {
 export async function deleteLuxConversation(conversationId) {
   const id = safeOptionalString(conversationId);
   if (!id) throw new Error('No hay una conversación seleccionada.');
+  if (USE_MOCKS) {
+    mockStore.luxConversations = mockStore.luxConversations.filter((item) => item.id !== id);
+    return simulateDelay({ success: true });
+  }
   return request(`/lux/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
 export async function searchLuxConversations(query, options = {}) {
   const normalizedQuery = safeString(query, '').trim();
+  if (USE_MOCKS) {
+    const normalized = normalizedQuery.toLowerCase();
+    return simulateDelay(mockStore.luxConversations
+      .filter((item) => !normalized || item.title.toLowerCase().includes(normalized) || item.messages.some((message) => message.text.toLowerCase().includes(normalized)))
+      .map(normalizeLuxConversation));
+  }
   if (!normalizedQuery) return getLuxConversations(options);
   const response = await request(`/lux/conversations?search=${encodeURIComponent(normalizedQuery)}`, {
     method: 'GET',
@@ -2428,12 +2535,18 @@ export async function searchLuxConversations(query, options = {}) {
 }
 
 export async function getLuxMemory(options = {}) {
+  if (USE_MOCKS) return simulateDelay(mockStore.luxMemories.map(normalizeLuxMemory));
   const response = await request('/lux/memory', { method: 'GET', timeout: REQUEST_TIMEOUT_MS, ...options });
   const items = getLuxCollectionPayload(response);
   return items.map(normalizeLuxMemory).filter((item) => item.text);
 }
 
 export async function createLuxMemory(text) {
+  if (USE_MOCKS) {
+    const memory = normalizeLuxMemory({ id: `lux-memory-demo-${Date.now()}`, text: safeString(text, ''), updatedAt: new Date().toISOString() });
+    mockStore.luxMemories.unshift(memory);
+    return simulateDelay(memory);
+  }
   const response = await request('/lux/memory', { method: 'POST', body: { text: safeString(text, '') } });
   return normalizeLuxMemory(unwrapLuxData(response));
 }
@@ -2441,6 +2554,12 @@ export async function createLuxMemory(text) {
 export async function updateLuxMemory(memoryId, payload = {}) {
   const id = safeOptionalString(memoryId);
   if (!id) throw new Error('No hay un recuerdo seleccionado.');
+  if (USE_MOCKS) {
+    const index = mockStore.luxMemories.findIndex((item) => item.id === id);
+    if (index < 0) throw new Error('No encontramos ese recuerdo local.');
+    mockStore.luxMemories[index] = normalizeLuxMemory({ ...mockStore.luxMemories[index], ...payload, updatedAt: new Date().toISOString() });
+    return simulateDelay(mockStore.luxMemories[index]);
+  }
   const response = await request(`/lux/memory/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload });
   return normalizeLuxMemory(unwrapLuxData(response));
 }
@@ -2448,6 +2567,10 @@ export async function updateLuxMemory(memoryId, payload = {}) {
 export async function deleteLuxMemory(memoryId) {
   const id = safeOptionalString(memoryId);
   if (!id) throw new Error('No hay un recuerdo seleccionado.');
+  if (USE_MOCKS) {
+    mockStore.luxMemories = mockStore.luxMemories.filter((item) => item.id !== id);
+    return simulateDelay({ success: true });
+  }
   return request(`/lux/memory/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 

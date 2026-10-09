@@ -24,6 +24,7 @@ export default function LoginScreen({ navigation }: any) {
   const [emailError, setEmailError] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [loginError, setLoginError] = useState("");
 
   const validateForm = () => {
     let isValid = true;
@@ -50,6 +51,7 @@ export default function LoginScreen({ navigation }: any) {
     }
 
     try {
+      setLoginError("");
       setIsLoading(true);
 
       await authClient.login({
@@ -58,12 +60,15 @@ export default function LoginScreen({ navigation }: any) {
         rememberMe,
       });
     } catch (error) {
-      Alert.alert(
-        "No pudimos iniciar sesion",
-        error instanceof Error
-          ? error.message
-          : "Verifica tus datos e intenta nuevamente.",
-      );
+      setLoginError(error instanceof Error ? error.message : "No se pudo iniciar sesion.");
+      if (Platform.OS !== "web") {
+        Alert.alert(
+          "No pudimos iniciar sesion",
+          error instanceof Error
+            ? error.message
+            : "Verifica tus datos e intenta nuevamente.",
+        );
+      }
     } finally {
       setIsLoading(false);
     }
@@ -90,6 +95,7 @@ export default function LoginScreen({ navigation }: any) {
               <View style={styles.card}>
                 <View style={styles.header}>
                   <Text style={styles.title}>Iniciar sesion</Text>
+                  {loginError ? <Text accessibilityRole="alert" style={styles.errorText}>{loginError}</Text> : null}
                   <Text style={styles.subtitle}>
                     Accede a tu cuenta para continuar en Luxia.
                   </Text>

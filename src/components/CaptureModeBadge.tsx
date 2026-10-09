@@ -12,11 +12,11 @@ export default function CaptureModeBadge() {
 
   return (
     <View
-      accessibilityLabel="Modo captura activo"
+      accessibilityLabel="Modo de demostracion local activo"
       pointerEvents="none"
       style={[styles.badge, { top: Math.max(insets.top, 10) }]}
     >
-      <Text style={styles.label}>MODO CAPTURA</Text>
+      <Text style={styles.label}>DEMO LOCAL</Text>
     </View>
   );
 }

@@ -195,6 +195,15 @@ const mockData = {
   documents,
   tasks,
   notifications,
+  luxConversations: [],
+  luxMemories: [
+    {
+      id: 'lux-memory-demo-1',
+      text: 'Prefiero que los resúmenes de causas incluyan el próximo vencimiento y el juzgado.',
+      enabled: true,
+      updatedAt: new Date().toISOString(),
+    },
+  ],
 };
 
 export default mockData;

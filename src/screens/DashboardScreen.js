@@ -96,11 +96,7 @@ export default function DashboardScreen({ navigation }) {
         if (__DEV__) {
           console.warn('[DashboardScreen] No se pudieron actualizar las metricas.');
         }
-        setError(
-          loadError && (loadError.status === 401 || loadError.status === 403)
-            ? 'Tu sesión expiró. Iniciá sesión nuevamente.'
-            : 'No pudimos conectarnos. Revisá tu conexión e intentá nuevamente.'
-        );
+        setError(loadError?.message || 'No pudimos conectarnos al servidor local.');
       }
     } finally {
       if (activeLoadRef.current === loadPromise) {

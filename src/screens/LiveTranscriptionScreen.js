@@ -9,7 +9,6 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { auth } from '../config/firebase';
 import { useAppTheme } from '../context/ThemeContext';
 import { useResponsiveLayout } from '../theme/layout';
 import {

@@ -1,19 +1,19 @@
 import Constants from 'expo-constants';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { signOut } from 'firebase/auth';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
-import { auth } from '../config/firebase';
+import { localAuth as auth } from '../services/localAuth';
 import { useAuth } from '../context/AuthContext';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { getMe, getNotifications, joinLegalStudy } from '../services/api';
 import { authClient } from '../services/authClient';
+import { IS_CAPTURE_MODE } from '../config/captureMode';
 import { useResponsiveLayout } from '../theme/layout';
 import { buildDisplayUser } from '../utils/userDisplay';
 
@@ -42,6 +42,7 @@ export default function MoreScreen({ navigation }) {
   });
   const [loading, setLoading] = useState(true);
   const [sendingReset, setSendingReset] = useState(false);
+  const [recoveryCode, setRecoveryCode] = useState('');
   const [error, setError] = useState('');
 
   // Study Modal State
@@ -106,7 +107,7 @@ export default function MoreScreen({ navigation }) {
 
   const logout = useCallback(async () => {
     try {
-      await signOut(auth);
+      await authClient.logout();
     } catch (logoutError) {
       console.error('[MoreScreen] No se pudo cerrar la sesion.');
       Alert.alert(
@@ -160,14 +161,18 @@ export default function MoreScreen({ navigation }) {
       return;
     }
 
+    if (IS_CAPTURE_MODE) {
+      setRecoveryCode('LUXIA-DEMO-2026');
+      return;
+    }
+
     try {
       setSendingReset(true);
-      await authClient.resetPassword(email);
-      Alert.alert('Correo enviado', `Te enviamos las instrucciones de recuperacion a ${email}.`);
+      setRecoveryCode((await auth.rotateRecoveryCode()).recoveryCode);
     } catch (resetError) {
       console.error('[MoreScreen] No se pudo solicitar la recuperacion.');
       Alert.alert(
-        'No pudimos enviar el correo',
+        'No pudimos generar el codigo',
         resetError instanceof Error ? resetError.message : 'Intenta nuevamente en unos instantes.'
       );
     } finally {
@@ -254,7 +259,7 @@ export default function MoreScreen({ navigation }) {
         title="Cuenta"
       >
         <InfoRow label="Email de la cuenta" styles={styles} value={accountEmail} />
-        <InfoRow label="Metodo de acceso" styles={styles} value="Firebase Auth" />
+        <InfoRow label="Metodo de acceso" styles={styles} value="Servidor local" />
         <InfoRow label="Identificador" styles={styles} value={accountId} />
       </CardSection>
 
@@ -392,12 +397,13 @@ export default function MoreScreen({ navigation }) {
       >
         <ActionRow
           colors={colors}
-          description={sendingReset ? 'Enviando correo...' : 'Se envia al email principal de la cuenta.'}
+          description={sendingReset ? 'Generando codigo...' : 'Guarda el codigo para recuperar la cuenta sin internet.'}
           icon="email-fast-outline"
           onPress={handlePasswordReset}
           styles={styles}
-          title="Recuperar contrasena"
+          title="Generar codigo de recuperacion"
         />
+        {recoveryCode ? <View style={styles.footerCard}><Text style={styles.footerTitle}>Guarda este codigo. Reemplaza al anterior.</Text><Text selectable style={styles.footerMeta}>{recoveryCode}</Text></View> : null}
         <ActionRow
           colors={colors}
           description="Consejos rapidos para volver a entrar a tu cuenta."

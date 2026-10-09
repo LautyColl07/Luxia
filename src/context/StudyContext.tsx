@@ -11,6 +11,7 @@ import {
 } from "react";
 
 import { useAuth } from "./AuthContext";
+import { IS_CAPTURE_MODE } from "../config/captureMode";
 import { getMyLegalStudies, setApiWorkContext } from "../services/api";
 
 const STORAGE_KEY = "luxia.studyContext.v1";
@@ -111,6 +112,12 @@ export function StudyContextProvider({ children }: StudyContextProviderProps) {
   }, []);
 
   useEffect(() => {
+    if (IS_CAPTURE_MODE) {
+      setActiveContext(PERSONAL_CONTEXT);
+      setIsHydrated(true);
+      return;
+    }
+
     let mounted = true;
 
     AsyncStorage.getItem(STORAGE_KEY)

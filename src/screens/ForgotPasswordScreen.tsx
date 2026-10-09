@@ -25,10 +25,14 @@ type ForgotPasswordScreenProps = NativeStackScreenProps<
 
 const ForgotPasswordScreen = ({ navigation }: ForgotPasswordScreenProps) => {
   const [email, setEmail] = useState("");
+  const [recoveryCode, setRecoveryCode] = useState("");
+  const [password, setPassword] = useState("");
+  const [newRecoveryCode, setNewRecoveryCode] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const handleSubmit = async () => {
+    if (isSubmitting) return;
     const trimmedEmail = email.trim();
 
     if (!trimmedEmail) {
@@ -47,14 +51,18 @@ const ForgotPasswordScreen = ({ navigation }: ForgotPasswordScreenProps) => {
       setIsSubmitting(true);
       setError("");
       setMessage("");
+      setNewRecoveryCode("");
 
-      const result = await authClient.resetPassword(trimmedEmail);
-      setMessage(result.message);
+      const result = await authClient.resetPassword(trimmedEmail, recoveryCode, password);
+      setMessage(result.message || "Contrasena actualizada. Ya podes iniciar sesion.");
+      setNewRecoveryCode(result.recoveryCode || "");
+      setPassword("");
+      setRecoveryCode("");
     } catch (requestError) {
       setError(
         requestError instanceof Error
           ? requestError.message
-          : "No pudimos enviar el email de restablecimiento. Intenta nuevamente."
+          : "No pudimos recuperar el acceso. Intenta nuevamente."
       );
     } finally {
       setIsSubmitting(false);
@@ -75,7 +83,7 @@ const ForgotPasswordScreen = ({ navigation }: ForgotPasswordScreenProps) => {
             <View style={styles.card}>
               <Text style={styles.title}>Recuperar acceso</Text>
               <Text style={styles.subtitle}>
-                Ingresa tu correo electronico para enviarte el enlace de recuperacion.
+                Ingresa tu email, el codigo de recuperacion guardado y una nueva contrasena. No hace falta internet.
               </Text>
 
               <Text style={styles.label}>Correo electronico</Text>
@@ -102,8 +110,19 @@ const ForgotPasswordScreen = ({ navigation }: ForgotPasswordScreenProps) => {
                 />
               </View>
 
-              {error ? <Text style={styles.errorText}>{error}</Text> : null}
+              <Text style={[styles.label, { marginTop: 16 }]}>Codigo de recuperacion</Text>
+              <View style={styles.inputWrapper}>
+                <TextInput autoCapitalize="none" autoCorrect={false} value={recoveryCode} onChangeText={setRecoveryCode}
+                  placeholder="Tu codigo guardado" placeholderTextColor={COLORS.textMuted} style={styles.input} />
+              </View>
+              <Text style={[styles.label, { marginTop: 16 }]}>Nueva contrasena</Text>
+              <View style={styles.inputWrapper}>
+                <TextInput autoCapitalize="none" autoCorrect={false} secureTextEntry value={password} onChangeText={setPassword}
+                  placeholder="Minimo 8 caracteres" placeholderTextColor={COLORS.textMuted} style={styles.input} />
+              </View>
+              {error ? <Text accessibilityRole="alert" style={styles.errorText}>{error}</Text> : null}
               {message ? <Text style={styles.successText}>{message}</Text> : null}
+              {newRecoveryCode ? <Text selectable style={styles.successText}>Guarda tu nuevo codigo: {newRecoveryCode}</Text> : null}
 
               <TouchableOpacity
                 activeOpacity={0.9}
@@ -114,7 +133,7 @@ const ForgotPasswordScreen = ({ navigation }: ForgotPasswordScreenProps) => {
                 {isSubmitting ? (
                   <ActivityIndicator color={COLORS.white} size="small" />
                 ) : (
-                  <Text style={styles.primaryButtonText}>Enviar instrucciones</Text>
+                  <Text style={styles.primaryButtonText}>Cambiar contrasena</Text>
                 )}
               </TouchableOpacity>
 

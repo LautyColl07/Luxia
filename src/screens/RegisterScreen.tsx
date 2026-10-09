@@ -5,6 +5,7 @@ import {
   Easing,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -26,6 +27,7 @@ import {
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 
 import { authClient } from "../services/authClient";
+import type { LocalSession } from "../services/localAuth";
 import { CARD_SHADOW, COLORS, TYPOGRAPHY } from "../theme/luxiaTheme";
 import { RootStackParamList } from "../types/navigation";
 import {
@@ -118,6 +120,7 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [errors, setErrors] = useState<RegisterErrors>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingSession, setPendingSession] = useState<LocalSession | null>(null);
   const [isAnimating, setIsAnimating] = useState(false);
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const translateAnim = useRef(new Animated.Value(0)).current;
@@ -265,14 +268,7 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
     setErrors({});
 
     try {
-      const normalizedUsername = resolveRegisterUsername({
-        firstName: form.firstName,
-        lastName: form.lastName,
-        email: form.email,
-        username: form.username,
-      });
-
-      await authClient.register({
+      const result = await authClient.register({
         firstName: form.firstName.trim(),
         lastName: form.lastName.trim(),
         email: form.email.trim(),
@@ -281,6 +277,11 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
         username: form.username.trim(),
         password: form.password,
       });
+      if (result.recoveryCode) {
+        setPendingSession(result);
+      } else {
+        await authClient.completeLocalRegistration(result);
+      }
     } catch (error) {
       const message =
         error instanceof Error
@@ -293,8 +294,34 @@ const RegisterScreen = ({ navigation }: RegisterScreenProps) => {
     }
   };
 
+  const finishRegistration = async () => {
+    if (!pendingSession || isSubmitting) return;
+    setIsSubmitting(true);
+    try {
+      await authClient.completeLocalRegistration(pendingSession);
+      setPendingSession(null);
+    } catch (error) {
+      setErrors({ general: error instanceof Error ? error.message : "No se pudo guardar la sesion." });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
+      <Modal visible={Boolean(pendingSession)} transparent animationType="fade" onRequestClose={() => {}}>
+        <View style={styles.recoveryOverlay}>
+          <View style={[styles.card, { minHeight: 0 }]}>
+            <Text style={styles.title}>Guarda tu codigo de recuperacion</Text>
+            <Text style={styles.subtitle}>Este codigo permite recuperar tu cuenta en el servidor local si olvidas la contrasena. Guardalo antes de continuar.</Text>
+            <Text selectable style={[styles.summaryValue, { textAlign: "center" }]}>{pendingSession?.recoveryCode}</Text>
+            {errors.general ? <Text style={styles.errorText}>{errors.general}</Text> : null}
+            <TouchableOpacity disabled={isSubmitting} onPress={finishRegistration} style={[styles.primaryButton, { flex: 0 }]}>
+              {isSubmitting ? <ActivityIndicator color={COLORS.white} /> : <Text style={styles.primaryButtonText}>Ya lo guarde, entrar</Text>}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
       <View style={styles.background}>
         <Image
           source={require("../../assets/luxia-login-background.png")}
@@ -652,6 +679,13 @@ const PasswordField = ({
 };
 
 const styles = StyleSheet.create({
+  recoveryOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(7, 28, 51, 0.8)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
   safeArea: {
     flex: 1,
     backgroundColor: "#071C33",
