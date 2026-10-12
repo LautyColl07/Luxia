@@ -4,6 +4,37 @@ const test = require('node:test');
 const legalStudiesRouter = require('../src/routes/legalStudies.routes');
 const documentsRouter = require('../src/routes/documents.routes');
 
+test('un usuario valido sin estudio recibe una lista vacia', async () => {
+  const studies = await legalStudiesRouter.__testables.getStudiesForUser(
+    {
+      legalStudyMember: {
+        findMany: async ({ where }) => {
+          assert.deepEqual(where, { userId: 'user-without-study', status: 'ACTIVE' });
+          return [];
+        },
+      },
+    },
+    'user-without-study'
+  );
+
+  assert.deepEqual(studies, []);
+});
+
+test('un usuario valido recibe solamente sus estudios activos', async () => {
+  const studies = await legalStudiesRouter.__testables.getStudiesForUser(
+    {
+      legalStudyMember: {
+        findMany: async () => [
+          { legalStudy: { id: 'study-1', name: 'Estudio Sur' } },
+        ],
+      },
+    },
+    'user-with-study'
+  );
+
+  assert.deepEqual(studies, [{ id: 'study-1', name: 'Estudio Sur' }]);
+});
+
 test('un estudio se crea para el usuario autenticado sin usar el nombre como credencial de acceso', async () => {
   let studyData = null;
   const prisma = {

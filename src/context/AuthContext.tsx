@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { onIdTokenChanged, User } from "firebase/auth";
+import { signOut } from "firebase/auth";
 
 import { auth } from "../config/firebase";
 import { IS_CAPTURE_MODE } from "../config/captureMode";
@@ -16,6 +17,7 @@ import { setAuthState, setAuthToken } from "../services/api";
 
 export type AuthStatus =
   | "initializing"
+  | "synchronizing"
   | "authenticated"
   | "unauthenticated"
   | "temporarilyOffline";
@@ -24,12 +26,18 @@ type AuthContextValue = {
   currentUser: User | null;
   isAuthReady: boolean;
   authStatus: AuthStatus;
+  syncStatus: "idle" | "syncing" | "synced" | "warning" | "failed";
+  authError: string | null;
+  clearAuthError: () => void;
 };
 
 const AuthContext = createContext<AuthContextValue>({
   currentUser: null,
   isAuthReady: false,
   authStatus: "initializing",
+  syncStatus: "idle",
+  authError: null,
+  clearAuthError: () => undefined,
 });
 
 type AuthProviderProps = {
@@ -49,6 +57,31 @@ const CAPTURE_USER = {
 } as unknown as User;
 
 const AUTH_READY_TIMEOUT_MS = 8000;
+const REGISTER_SYNC_GATE_MS = 4000;
+
+const limitRegisterSyncWait = (operation: Promise<unknown>) =>
+  new Promise<unknown>((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      const error = new Error("Register synchronization timed out") as Error & {
+        status?: number;
+        code?: string;
+      };
+      error.status = 408;
+      error.code = "REGISTER_SYNC_TIMEOUT";
+      reject(error);
+    }, REGISTER_SYNC_GATE_MS);
+
+    operation.then(
+      (value) => {
+        clearTimeout(timeoutId);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeoutId);
+        reject(error);
+      }
+    );
+  });
 
 const isSameFirebaseUser = (first: User | null, second: User | null) => {
   if (!first || !second) {
@@ -70,8 +103,11 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [authStatus, setAuthStatus] = useState<AuthStatus>(
     IS_CAPTURE_MODE ? "authenticated" : auth ? "initializing" : "unauthenticated"
   );
+  const [syncStatus, setSyncStatus] = useState<AuthContextValue["syncStatus"]>("idle");
+  const [authError, setAuthError] = useState<string | null>(null);
   const syncedLoginUidRef = useRef<string | null>(null);
   const registerSyncPromiseRef = useRef<Promise<unknown> | null>(null);
+  const authEventRef = useRef(0);
 
   useEffect(() => {
     if (IS_CAPTURE_MODE) {
@@ -79,6 +115,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       setAuthState("authenticated");
       setCurrentUser(CAPTURE_USER);
       setAuthStatus("authenticated");
+      setSyncStatus("synced");
       setIsAuthReady(true);
       return undefined;
     }
@@ -88,9 +125,12 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       setAuthState("unauthenticated");
       setCurrentUser(null);
       setAuthStatus("unauthenticated");
+      setSyncStatus("idle");
       setIsAuthReady(true);
       return undefined;
     }
+
+    const configuredAuth = auth;
 
     let isMounted = true;
     const syncAbortController = new AbortController();
@@ -110,7 +150,8 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       }
     }, AUTH_READY_TIMEOUT_MS);
 
-    const unsubscribe = onIdTokenChanged(auth, async (nextUser) => {
+    const unsubscribe = onIdTokenChanged(configuredAuth, async (nextUser) => {
+      const authEvent = ++authEventRef.current;
       if (!isMounted) {
         return;
       }
@@ -128,6 +169,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         setAuthState("unauthenticated");
         setCurrentUser((previous) => (previous ? null : previous));
         setAuthStatus("unauthenticated");
+        setSyncStatus("idle");
         setIsAuthReady((previous) => (previous ? previous : true));
         return;
       }
@@ -140,26 +182,74 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         }
 
         setAuthToken(token);
-        setAuthState("authenticated");
+        setAuthState("synchronizing");
         setCurrentUser((previous) =>
           isSameFirebaseUser(previous, nextUser) ? previous : nextUser
         );
-        setAuthStatus("authenticated");
+        setAuthStatus("synchronizing");
+        setSyncStatus("syncing");
+        setAuthError(null);
         setIsAuthReady((previous) => (previous ? previous : true));
 
         if (syncedLoginUidRef.current !== nextUser.uid) {
           syncedLoginUidRef.current = nextUser.uid;
-          const syncPromise = syncRegisterOnce(nextUser, syncAbortController.signal);
+          const syncPromise = limitRegisterSyncWait(
+            syncRegisterOnce(nextUser, syncAbortController.signal)
+          );
           registerSyncPromiseRef.current = syncPromise;
 
           void syncPromise
-            .catch(() => {
+            .then(() => {
+              if (!isMounted || authEventRef.current !== authEvent) {
+                return;
+              }
+
+              setAuthState("authenticated");
+              setAuthStatus("authenticated");
+              setSyncStatus("synced");
+            })
+            .catch((error) => {
               if (!syncAbortController.signal.aborted) {
                 syncedLoginUidRef.current = null;
               }
 
+              if (!isMounted || authEventRef.current !== authEvent || error?.name === "AbortError") {
+                return;
+              }
+
+              const status = Number(error?.status || 0);
+              if (status === 401 || status === 403) {
+                setAuthToken(null);
+                setAuthState("unauthenticated");
+                setAuthStatus("unauthenticated");
+                setSyncStatus("failed");
+                setAuthError(
+                  status === 403
+                    ? "Tu cuenta no tiene autorizacion para acceder a Luxia. Contacta al administrador."
+                    : "Firebase valido tus credenciales, pero el servidor rechazo la sesion. Verifica la configuracion del servidor e intenta nuevamente."
+                );
+                void signOut(configuredAuth).catch(() => undefined);
+                return;
+              }
+
+              // Register synchronization is idempotent and secondary. A
+              // network/5xx failure must not leave an authenticated user in an
+              // endless login loop; every protected API still verifies Firebase.
+              setAuthState("authenticated");
+              setAuthStatus("authenticated");
+              setSyncStatus("warning");
+              setAuthError(
+                status === 0
+                  ? "Iniciaste sesion, pero no pudimos sincronizar tu perfil porque el servidor no esta disponible."
+                  : "Iniciaste sesion, pero la sincronizacion de tu perfil quedo pendiente."
+              );
+
               if (__DEV__ && isMounted) {
-                console.warn("[AuthContext] Sincronizacion de registro pendiente.");
+                console.warn("[AuthContext] Sincronizacion de registro pendiente.", {
+                  stage: "register-sync",
+                  status,
+                  code: typeof error?.code === "string" ? error.code : null,
+                });
               }
             })
             .finally(() => {
@@ -167,6 +257,10 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
                 registerSyncPromiseRef.current = null;
               }
             });
+        } else {
+          setAuthState("authenticated");
+          setAuthStatus("authenticated");
+          setSyncStatus("synced");
         }
       } catch (error) {
         setAuthToken(null);
@@ -175,6 +269,8 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
           isSameFirebaseUser(previous, nextUser) ? previous : nextUser
         );
         setAuthStatus("temporarilyOffline");
+        setSyncStatus("warning");
+        setAuthError("Firebase no pudo renovar la sesion. Revisa tu conexion e intenta nuevamente.");
         setIsAuthReady((previous) => (previous ? previous : true));
 
         if (__DEV__) {
@@ -194,8 +290,15 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   }, []);
 
   const value = useMemo(
-    () => ({ currentUser, isAuthReady, authStatus }),
-    [authStatus, currentUser, isAuthReady]
+    () => ({
+      currentUser,
+      isAuthReady,
+      authStatus,
+      syncStatus,
+      authError,
+      clearAuthError: () => setAuthError(null),
+    }),
+    [authError, authStatus, currentUser, isAuthReady, syncStatus]
   );
 
   return (

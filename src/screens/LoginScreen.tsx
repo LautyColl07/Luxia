@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -10,13 +10,14 @@ import {
   Image,
   ScrollView,
   Platform,
-  Alert,
 } from "react-native";
 import { User, Lock, Eye, EyeOff, HelpCircle } from "lucide-react-native";
 
 import { authClient } from "../services/authClient";
+import { useAuth } from "../context/AuthContext";
 
 export default function LoginScreen({ navigation }: any) {
+  const { authError, clearAuthError } = useAuth();
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -24,12 +25,21 @@ export default function LoginScreen({ navigation }: any) {
   const [emailError, setEmailError] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+
+  useEffect(() => {
+    if (authError) {
+      setSubmitError(authError);
+    }
+  }, [authError]);
 
   const validateForm = () => {
     let isValid = true;
 
     setEmailError("");
     setPasswordError("");
+    setSubmitError("");
+    clearAuthError();
 
     if (!identifier.trim()) {
       setEmailError("Este campo es obligatorio");
@@ -58,11 +68,10 @@ export default function LoginScreen({ navigation }: any) {
         rememberMe,
       });
     } catch (error) {
-      Alert.alert(
-        "No pudimos iniciar sesion",
+      setSubmitError(
         error instanceof Error
           ? error.message
-          : "Verifica tus datos e intenta nuevamente.",
+          : "No pudimos iniciar sesion. Verifica tus datos e intenta nuevamente."
       );
     } finally {
       setIsLoading(false);
@@ -185,6 +194,17 @@ export default function LoginScreen({ navigation }: any) {
 
                 <Text style={styles.rememberText}>Recordarme</Text>
               </TouchableOpacity>
+
+              {submitError ? (
+                <View
+                  accessibilityLiveRegion="assertive"
+                  accessibilityRole="alert"
+                  style={styles.submitError}
+                >
+                  <Text style={styles.submitErrorTitle}>No pudimos completar el acceso</Text>
+                  <Text style={styles.submitErrorText}>{submitError}</Text>
+                </View>
+              ) : null}
 
               <TouchableOpacity
                 style={[
@@ -366,6 +386,25 @@ const styles = StyleSheet.create({
   errorText: {
     color: "#EF4444",
     fontSize: 12,
+  },
+  submitError: {
+    borderWidth: 1,
+    borderColor: "#DC2626",
+    borderRadius: 10,
+    backgroundColor: "#FEF2F2",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 3,
+  },
+  submitErrorTitle: {
+    color: "#991B1B",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  submitErrorText: {
+    color: "#991B1B",
+    fontSize: 13,
+    lineHeight: 18,
   },
   rememberRow: {
     minHeight: 44,

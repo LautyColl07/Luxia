@@ -15,6 +15,45 @@ async function verifyWithFirebaseAdmin(token) {
   return admin.auth().verifyIdToken(token, true);
 }
 
+function getUntrustedTokenAudience(token) {
+  try {
+    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
+    return normalizeOptionalString(payload?.aud);
+  } catch {
+    return null;
+  }
+}
+
+function getPublicAuthError(error) {
+  const code = String(error?.code || '');
+
+  if (code === 'auth/id-token-expired') {
+    return { status: 401, errorCode: 'AUTH_TOKEN_EXPIRED', error: 'La sesion Firebase expiro.' };
+  }
+
+  if (code === 'auth/id-token-revoked') {
+    return { status: 401, errorCode: 'AUTH_TOKEN_REVOKED', error: 'La sesion Firebase fue revocada.' };
+  }
+
+  if (code === 'auth/project-config-mismatch' || code === 'auth/invalid-admin-config') {
+    return {
+      status: 500,
+      errorCode: 'AUTH_SERVER_MISCONFIGURED',
+      error: 'El servidor de autenticacion no esta configurado correctamente.',
+    };
+  }
+
+  if (code.startsWith('app/') || code.startsWith('credential/')) {
+    return {
+      status: 500,
+      errorCode: 'AUTH_SERVER_UNAVAILABLE',
+      error: 'El servidor no pudo validar la sesion.',
+    };
+  }
+
+  return { status: 401, errorCode: 'AUTH_TOKEN_INVALID', error: 'Token Firebase invalido.' };
+}
+
 async function getAuthenticatedUserFromRequest(req) {
   const header = req.headers.authorization || '';
   const bearerMatch = header.match(/^Bearer\s+(.+)$/i);
@@ -44,11 +83,18 @@ async function getAuthenticatedUserFromRequest(req) {
 }
 
 function requireFirebaseAuth(req, res, next) {
+  const header = req.headers.authorization || '';
+  const bearerMatch = header.match(/^Bearer\s+(.+)$/i);
+  const tokenAudience = bearerMatch?.[1]
+    ? getUntrustedTokenAudience(bearerMatch[1].trim())
+    : null;
+
   getAuthenticatedUserFromRequest(req)
     .then((user) => {
       if (!user) {
         return res.status(401).json({
           error: 'Token Firebase ausente o invalido.',
+          errorCode: 'AUTH_TOKEN_MISSING',
         });
       }
 
@@ -56,20 +102,32 @@ function requireFirebaseAuth(req, res, next) {
       return next();
     })
     .catch((error) => {
+      const publicError = getPublicAuthError(error);
+      const admin = (() => {
+        try {
+          return getFirebaseAdmin();
+        } catch {
+          return null;
+        }
+      })();
       console.warn('[AUTH] Token Firebase rechazado.', {
         method: req.method,
         path: req.originalUrl,
         code: error?.code || 'unknown',
         name: error?.name || 'Error',
-        message: error?.message || 'Token invalido.',
+        expectedProjectId: admin?.app()?.options?.projectId || null,
+        tokenAudience,
       });
-      return res.status(401).json({
-        error: 'Token Firebase ausente o invalido.',
+      return res.status(publicError.status).json({
+        error: publicError.error,
+        errorCode: publicError.errorCode,
       });
     });
 }
 
 module.exports = {
   getAuthenticatedUserFromRequest,
+  getPublicAuthError,
+  getUntrustedTokenAudience,
   requireFirebaseAuth,
 };

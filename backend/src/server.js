@@ -3,6 +3,7 @@ require('dotenv').config({ path: path.resolve(__dirname, '../.env'), quiet: true
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env'), override: false, quiet: true });
 
 const app = require('./app');
+const { resolveFirebaseAdminConfig } = require('./lib/firebaseAdmin');
 const { apiRateLimit, authRateLimit } = require('./lib/rateLimit');
 const activityRoutes = require('./routes/activity.routes');
 const authRoutes = require('./routes/auth.routes');
@@ -16,6 +17,12 @@ const transcriptionRoutes = require('./routes/transcription.routes');
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
+const firebaseAdminConfig = resolveFirebaseAdminConfig();
+
+console.info('[AUTH] Firebase Admin configurado.', {
+  projectId: firebaseAdminConfig.projectId || null,
+  credentialSource: firebaseAdminConfig.serviceAccount ? 'service-account' : 'application-default',
+});
 
 app.use('/api/v1', (_req, res, next) => {
   res.set('Cache-Control', 'no-store');

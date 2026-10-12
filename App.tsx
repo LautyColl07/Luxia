@@ -1,7 +1,7 @@
 import "react-native-gesture-handler";
 
 import React, { useMemo, useState } from "react";
-import { ActivityIndicator, Platform, StyleSheet, View } from "react-native";
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { createNavigationContainerRef, NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
@@ -29,7 +29,7 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 const navigationRef = createNavigationContainerRef<any>();
 
 const AppNavigator = () => {
-  const { currentUser, isAuthReady } = useAuth();
+  const { authError, authStatus, clearAuthError, currentUser, isAuthReady } = useAuth();
   const { colors, isDark, navigationTheme } = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [navigationState, setNavigationState] = useState<any>(null);
@@ -44,13 +44,20 @@ const AppNavigator = () => {
         onStateChange={setNavigationState}
         theme={navigationTheme}
       >
-        {!isAuthReady ? (
+        {!isAuthReady || (currentUser && authStatus === "synchronizing") ? (
           <View style={styles.loadingScreen}>
             <ActivityIndicator color={colors.primary} size="large" />
+            <Text style={styles.loadingText}>
+              {authStatus === "synchronizing"
+                ? "Validando tu acceso con Luxia..."
+                : "Restaurando tu sesion..."}
+            </Text>
           </View>
         ) : (
-          currentUser ? (
+          currentUser && authStatus === "authenticated" ? (
             <AuthenticatedApp
+              authWarning={authError}
+              clearAuthWarning={clearAuthError}
               currentUser={currentUser}
               colors={colors}
               navigationState={navigationState}
@@ -89,7 +96,7 @@ const getActiveRouteName = (state: any): string => {
   return route;
 };
 
-const AuthenticatedApp = ({ currentUser, colors, navigationState }: { currentUser: any; colors: ReturnType<typeof import("./src/constants/colors").getColorsForScheme>; navigationState: any }) => {
+const AuthenticatedApp = ({ authWarning, clearAuthWarning, currentUser, colors, navigationState }: { authWarning: string | null; clearAuthWarning: () => void; currentUser: any; colors: ReturnType<typeof import("./src/constants/colors").getColorsForScheme>; navigationState: any }) => {
   const layout = useResponsiveLayout();
   const shellStyles = createStyles(colors);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -105,14 +112,28 @@ const AuthenticatedApp = ({ currentUser, colors, navigationState }: { currentUse
     }
   };
 
-  const stack = <Stack.Navigator
-    screenOptions={{
-      headerShown: false,
-      contentStyle: { backgroundColor: colors.background },
-    }}
-  >
-    <Stack.Screen name="MainApp" component={MainAppScreen} />
-  </Stack.Navigator>;
+  const stack = (
+    <View style={shellStyles.authenticatedContent}>
+      {authWarning ? (
+        <View accessibilityLiveRegion="polite" accessibilityRole="alert" style={shellStyles.authWarning}>
+          <Text style={shellStyles.authWarningText}>{authWarning}</Text>
+          <Pressable accessibilityRole="button" onPress={clearAuthWarning}>
+            <Text style={shellStyles.authWarningAction}>Cerrar</Text>
+          </Pressable>
+        </View>
+      ) : null}
+      <View style={shellStyles.authenticatedNavigator}>
+        <Stack.Navigator
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: colors.background },
+          }}
+        >
+          <Stack.Screen name="MainApp" component={MainAppScreen} />
+        </Stack.Navigator>
+      </View>
+    </View>
+  );
 
   if (!isWebDesktop) {
     return stack;
@@ -193,6 +214,43 @@ const createStyles = (colors: { background: string }) =>
       alignItems: "center",
       justifyContent: "center",
       backgroundColor: colors.background,
+    },
+    loadingText: {
+      marginTop: 14,
+      color: "#5B6776",
+      fontSize: 14,
+    },
+    authenticatedContent: {
+      flex: 1,
+      minHeight: 0,
+    },
+    authenticatedNavigator: {
+      flex: 1,
+      minHeight: 0,
+    },
+    authWarning: {
+      minHeight: 44,
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      backgroundColor: "#FFF7ED",
+      borderBottomWidth: 1,
+      borderBottomColor: "#FDBA74",
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 12,
+    },
+    authWarningText: {
+      flex: 1,
+      color: "#9A3412",
+      fontSize: 13,
+      lineHeight: 18,
+    },
+    authWarningAction: {
+      color: "#9A3412",
+      fontSize: 13,
+      fontWeight: "700",
+      padding: 4,
     },
     webShell: {
       flex: 1,

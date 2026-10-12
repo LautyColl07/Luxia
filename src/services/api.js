@@ -1,6 +1,6 @@
 import { API_BASE_URL as CONFIG_API_BASE_URL, API_ROOT_URL } from '../config/api';
 import { IS_CAPTURE_MODE } from '../config/captureMode';
-import { auth } from '../config/firebase';
+import { auth, firebaseConfig } from '../config/firebase';
 import { signOut } from 'firebase/auth';
 import mockData from '../data/mockData';
 import { normalizeStatusLabel } from '../utils/status';
@@ -21,6 +21,7 @@ const REQUEST_TIMEOUT_MS = 15000;
 const DATA_REQUEST_TIMEOUT_MS = 30000;
 const LUX_REQUEST_TIMEOUT_MS = 120000;
 const AUTH_INITIALIZING_MESSAGE = 'Estamos restaurando tu sesión. Intentá nuevamente en unos instantes.';
+const REGISTER_SYNC_TIMEOUT_MS = 4000;
 const CONNECTION_ERROR_MESSAGE = 'No pudimos conectarnos. Revisá tu conexión e intentá nuevamente.';
 const EXPIRED_SESSION_MESSAGE = 'Tu sesión expiró. Iniciá sesión nuevamente.';
 const PROTECTED_ENDPOINT_PREFIXES = [
@@ -619,6 +620,11 @@ function logApiDiagnostic(level, label, details) {
       method: typeof details?.method === 'string' ? details.method : null,
       status: Number.isFinite(Number(details?.status)) ? Number(details.status) : null,
       hasAuthorization: Boolean(details?.hasAuthorization ?? details?.hasToken),
+      authStage: typeof details?.authStage === 'string' ? details.authStage : null,
+      errorCode: typeof details?.errorCode === 'string' ? details.errorCode : null,
+      firebaseProjectId: typeof details?.firebaseProjectId === 'string'
+        ? details.firebaseProjectId
+        : null,
     };
     console[level](`${label} ${JSON.stringify(safeDetails)}`);
   }
@@ -627,6 +633,7 @@ function logApiDiagnostic(level, label, details) {
 function getAuthDiagnostic(token) {
   return {
     hasAuthorization: Boolean(token),
+    firebaseProjectId: firebaseConfig?.projectId || null,
   };
 }
 
@@ -807,13 +814,19 @@ export async function request(endpoint, options = {}) {
       : REQUEST_TIMEOUT_MS;
   const requestTimeoutMessage =
     options.timeoutMessage || 'La solicitud a ' + endpoint + ' supero el maximo de ' + requestTimeoutMs + ' ms.';
-  const { timeout, timeoutMessage, ...fetchOptions } = options;
+  const {
+    timeout,
+    timeoutMessage,
+    logoutOnUnauthorized = true,
+    ...fetchOptions
+  } = options;
   const path = endpoint.startsWith('/') ? endpoint : '/' + endpoint;
   const url = API_BASE_URL + path;
   const requestHeaders = isProtectedEndpoint(path)
     ? omitAuthorizationHeader(fetchOptions.headers)
     : fetchOptions.headers;
   const method = String(fetchOptions.method || 'GET').toUpperCase();
+  const authStage = path === '/auth/register' ? 'register-sync' : 'resource-request';
   const hasJsonBody =
     fetchOptions.body !== undefined &&
     fetchOptions.body !== null &&
@@ -825,6 +838,7 @@ export async function request(endpoint, options = {}) {
       url,
       method,
       endpoint: path,
+      authStage,
       ...getAuthDiagnostic(authHeaders?.Authorization),
     });
 
@@ -851,6 +865,7 @@ export async function request(endpoint, options = {}) {
         method,
         status: response.status,
         ok: response.ok,
+        authStage,
         ...getAuthDiagnostic(authHeaders?.Authorization),
       });
       return response;
@@ -890,6 +905,7 @@ export async function request(endpoint, options = {}) {
       url,
       method,
       status: error?.status || 0,
+      authStage,
       name: error?.name || 'Error',
       message: error?.message || String(error),
       currentUser: Boolean(auth?.currentUser),
@@ -939,6 +955,7 @@ export async function request(endpoint, options = {}) {
       conversationId: safeOptionalString(fetchOptions.body?.conversationId),
       ...getAuthDiagnostic(authInfo.token),
       status: response.status,
+      authStage,
       errorCode: response.ok ? null : getSafeErrorCode(data),
       responseShape: getResponseShape(data),
     });
@@ -949,6 +966,7 @@ export async function request(endpoint, options = {}) {
       url,
       method,
       status: response.status,
+      authStage,
       errorCode: getSafeErrorCode(data),
       errorMessage: getSafeErrorMessage(data),
       responseShape: getResponseShape(data),
@@ -956,7 +974,12 @@ export async function request(endpoint, options = {}) {
       ...getAuthDiagnostic(authInfo.token),
     });
 
-    if (response.status === 401 && retriedWithFreshToken && authInfo.usesFirebaseToken) {
+    if (
+      response.status === 401 &&
+      retriedWithFreshToken &&
+      authInfo.usesFirebaseToken &&
+      logoutOnUnauthorized
+    ) {
       setAuthToken(null);
       void signOut(auth).catch(() => undefined);
     }
@@ -1162,7 +1185,10 @@ export async function syncRegister(payload, token = null) {
   return request('/auth/register', {
     method: 'POST',
     body: payload,
-    timeout: 20000,
+    timeout: REGISTER_SYNC_TIMEOUT_MS,
+    // AuthContext owns this transition so it can surface the authorization
+    // failure before signing out. Other protected requests retain the default.
+    logoutOnUnauthorized: false,
   });
 }
 

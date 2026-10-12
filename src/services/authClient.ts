@@ -1,12 +1,16 @@
 import { FirebaseError } from "firebase/app";
 import {
+  browserLocalPersistence,
+  browserSessionPersistence,
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
+  setPersistence,
   signInWithEmailAndPassword,
   updateProfile,
   User,
 } from "firebase/auth";
-import { doc, getDoc, getDocFromCache, serverTimestamp, setDoc } from "firebase/firestore";
+import { Platform } from "react-native";
+import { doc, getDocFromCache, serverTimestamp, setDoc } from "firebase/firestore";
 
 import { auth, db, isFirebaseConfigured, missingFirebaseKeys } from "../config/firebase";
 import { setAuthToken, syncRegister } from "./api";
@@ -77,37 +81,22 @@ const mapFirebaseAuthError = (code: string) => {
       return "La contrasena es demasiado debil.";
     case "auth/too-many-requests":
       return "Detectamos demasiados intentos. Espera unos minutos e intenta nuevamente.";
+    case "auth/user-disabled":
+      return "Esta cuenta esta deshabilitada. Contacta al administrador de Luxia.";
+    case "auth/network-request-failed":
+      return "No pudimos conectarnos con Firebase. Revisa tu conexion e intenta nuevamente.";
+    case "auth/internal-error":
+      return "Firebase no pudo procesar el inicio de sesion. Intenta nuevamente mas tarde.";
     default:
       return "No pudimos completar la operacion. Intenta nuevamente.";
   }
 };
-
-const PROFILE_LOAD_MAX_ATTEMPTS = 2;
 
 const createAbortError = () => {
   const error = new Error("Operation aborted");
   error.name = "AbortError";
   return error;
 };
-
-const delay = (ms: number, signal?: AbortSignal) =>
-  new Promise<void>((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(createAbortError());
-      return;
-    }
-
-    const timeoutId = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    const onAbort = () => {
-      clearTimeout(timeoutId);
-      reject(createAbortError());
-    };
-
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
 
 const cleanString = (value: unknown) =>
   typeof value === "string" ? value.trim() : "";
@@ -120,21 +109,6 @@ const splitDisplayName = (displayName: string) => {
   return { firstName, lastName };
 };
 
-const isFirestoreOfflineError = (error: unknown) => {
-  const firebaseError = error as Partial<FirebaseError> | undefined;
-  const code = String(firebaseError?.code || "").toLowerCase();
-  const message = String(firebaseError?.message || "").toLowerCase();
-
-  return (
-    code.includes("unavailable") ||
-    code.includes("offline") ||
-    code.includes("network") ||
-    message.includes("offline") ||
-    message.includes("network") ||
-    message.includes("unavailable")
-  );
-};
-
 async function getStoredUserProfile(
   uid: string,
   signal?: AbortSignal
@@ -143,45 +117,24 @@ async function getStoredUserProfile(
     return {};
   }
 
-  for (let attempt = 0; attempt < PROFILE_LOAD_MAX_ATTEMPTS; attempt += 1) {
-    if (signal?.aborted) {
-      throw createAbortError();
-    }
-
-    try {
-      const snapshot = await getDoc(doc(db, "users", uid));
-
-      if (snapshot.exists()) {
-        return snapshot.data() as StoredUserProfile;
-      }
-    } catch (error) {
-      try {
-        const cachedSnapshot = await getDocFromCache(doc(db, "users", uid));
-        if (cachedSnapshot.exists()) {
-          return cachedSnapshot.data() as StoredUserProfile;
-        }
-      } catch {
-        // No local profile is available.
-      }
-
-      if (isFirestoreOfflineError(error)) {
-        if (__DEV__) {
-          console.warn("[authClient] Perfil de Firestore no disponible; se usara el perfil de Auth.");
-        }
-        return {};
-      }
-
-      if (__DEV__ && attempt === 0) {
-        console.warn("[authClient] No se pudo leer el perfil almacenado; se reintentara una vez.");
-      }
-    }
-
-    if (attempt < PROFILE_LOAD_MAX_ATTEMPTS - 1) {
-      await delay(250 * (attempt + 1), signal);
-    }
+  if (signal?.aborted) {
+    throw createAbortError();
   }
 
-  return {};
+  // Login must not wait on a Firestore network read. The backend contract only
+  // needs the Firebase identity/name, so use the local cache when available and
+  // fall back to Auth metadata. Firestore remains the source for profile screens.
+  try {
+    const cachedSnapshot = await getDocFromCache(doc(db, "users", uid));
+    return cachedSnapshot.exists()
+      ? cachedSnapshot.data() as StoredUserProfile
+      : {};
+  } catch {
+    if (__DEV__) {
+      console.warn("[authClient] Perfil de Firestore no disponible; se usara el perfil de Auth.");
+    }
+    return {};
+  }
 }
 
 function buildBackendRegisterPayload(
@@ -273,6 +226,13 @@ export const authClient = {
       const emailForLogin = normalizeLoginIdentifier(payload.identifier);
       if (!emailForLogin.includes("@")) {
         throw new Error("Ingresa el correo electronico con el que registraste tu cuenta.");
+      }
+
+      if (Platform.OS === "web") {
+        await setPersistence(
+          auth,
+          payload.rememberMe ? browserLocalPersistence : browserSessionPersistence,
+        );
       }
 
       const credential = await signInWithEmailAndPassword(

@@ -1,7 +1,6 @@
 const express = require('express');
 
 const prisma = require('../lib/prisma');
-const { authRateLimit } = require('../lib/rateLimit');
 const { requireFirebaseAuth } = require('../middleware/firebaseAuth');
 
 const router = express.Router();
@@ -113,7 +112,7 @@ function isUniqueConflict(error) {
   return error?.code === 'P2002';
 }
 
-router.post('/register', requireFirebaseAuth, authRateLimit, async (req, res) => {
+router.post('/register', requireFirebaseAuth, async (req, res) => {
   const identity = validateAuthenticatedIdentity(req.authUser);
 
   if (identity.error) {

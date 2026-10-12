@@ -37,7 +37,10 @@ app.use(express.json({ limit: '1mb', strict: true }));
 app.use(express.urlencoded({ extended: false, limit: '64kb', parameterLimit: 100 }));
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true });
+  res.json({
+    ok: true,
+    auth: { scheme: 'firebase-id-token', version: 1 },
+  });
 });
 
 module.exports = app;
