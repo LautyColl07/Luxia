@@ -5,13 +5,14 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useAppTheme } from '../context/ThemeContext';
 import { CARD_LAYOUT, useResponsiveLayout } from '../theme/layout';
 
-export default function QuickActionButton({ title, subtitle, icon, onPress, fullWidth = false }) {
+export default function QuickActionButton({ title, subtitle, icon, onPress, fullWidth = false, compact = false }) {
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
   const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
 
   return (
     <Pressable
+      accessibilityRole="button"
       onPress={onPress}
       style={({ focused, hovered, pressed }) => [
         styles.card,
@@ -19,13 +20,14 @@ export default function QuickActionButton({ title, subtitle, icon, onPress, full
         hovered && styles.cardHovered,
         focused && styles.cardFocused,
         pressed && styles.cardPressed,
+        compact && styles.cardCompact,
       ]}
     >
-      <View style={styles.iconWrapper}>
+      <View style={[styles.iconWrapper, compact && styles.compactIcon]}>
         <MaterialCommunityIcons color={colors.primary} name={icon} size={22} />
       </View>
-      <Text style={styles.title}>{title}</Text>
-      <Text style={styles.subtitle}>{subtitle}</Text>
+      <Text style={[styles.title, compact && styles.compactTitle]}>{title}</Text>
+      {!compact ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
     </Pressable>
   );
 }
@@ -48,6 +50,30 @@ const createStyles = (colors, layout) => StyleSheet.create({
   },
   cardFullWidth: {
     width: layout.isDesktop ? '31.5%' : '100%',
+  },
+  cardCompact: {
+    width: 'auto',
+    flexGrow: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    minHeight: 48,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    shadowOpacity: 0,
+    elevation: 0,
+  },
+  compactIcon: {
+    width: 22,
+    height: 22,
+    marginBottom: 0,
+    backgroundColor: 'transparent',
+  },
+  compactTitle: {
+    fontSize: 12,
+    lineHeight: 17,
   },
   cardPressed: {
     transform: [{ scale: 0.99 }],

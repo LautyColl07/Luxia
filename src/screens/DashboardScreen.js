@@ -1,14 +1,15 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
+import { StatusBar } from 'expo-status-bar';
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import EmptyState from '../components/EmptyState';
+import CaseScopeSelector from '../components/CaseScopeSelector';
 import ErrorState from '../components/ErrorState';
 import HearingTimelineCard from '../components/HearingTimelineCard';
 import LoadingState from '../components/LoadingState';
-import LuxAssistantButton from '../components/LuxAssistantButton';
+import LuxAssistantBanner from '../components/LuxAssistantBanner';
 import LuxAssistantModal from '../components/LuxAssistantModal';
 import MetricCard from '../components/MetricCard';
 import QuickActionButton from '../components/QuickActionButton';
@@ -17,12 +18,14 @@ import { useAuth } from '../context/AuthContext';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { getDashboardBootstrap } from '../services/api';
-import { getMetricCardHeight, useResponsiveLayout } from '../theme/layout';
+import { useResponsiveLayout } from '../theme/layout';
+import { getUserDisplayName, getUserInitials } from '../utils/userDisplay';
 
 export default function DashboardScreen({ navigation }) {
   const { colors, isDark } = useAppTheme();
   const insets = useSafeAreaInsets();
   const layout = useResponsiveLayout();
+  const isFocused = useIsFocused();
   const { authStatus, currentUser, isAuthReady } = useAuth();
   const { activeContextKey } = useStudyContext();
   const styles = useMemo(
@@ -192,7 +195,8 @@ export default function DashboardScreen({ navigation }) {
     tareasPendientes: 0,
   };
   const proximasAudiencias = data?.proximasAudiencias || [];
-  const nombreUsuario = data?.usuario?.nombre || 'Usuario';
+  const nombreUsuario = getUserDisplayName(data?.usuario, currentUser);
+  const userInitials = getUserInitials(data?.usuario, currentUser);
   const luxContext = useMemo(
     () => ({
       screen: 'dashboard',
@@ -205,27 +209,27 @@ export default function DashboardScreen({ navigation }) {
       label: 'Causas activas',
       value: metricas?.causasActivas ?? 0,
       icon: 'briefcase-variant-outline',
-      accentColor: colors.primary,
+      accentColor: colors.info,
       onPress: handleOpenCases,
     },
     {
       label: 'Audiencias de hoy',
       value: metricas?.audienciasHoy ?? 0,
       icon: 'calendar-clock',
-      accentColor: colors.success,
+      accentColor: colors.warning,
       onPress: handleOpenCalendar,
     },
     {
       label: 'Documentos registrados',
       value: metricas?.documentos ?? 0,
       icon: 'file-document-outline',
-      accentColor: colors.warning,
+      accentColor: colors.success,
       onPress: handleOpenDocuments,
     },
     {
       label: 'Tareas pendientes',
       value: metricas?.tareasPendientes ?? 0,
-      icon: 'clipboard-text-clock-outline',
+      icon: 'check-circle-outline',
       accentColor: colors.danger,
       onPress: handleOpenCalendar,
     },
@@ -252,134 +256,140 @@ export default function DashboardScreen({ navigation }) {
 
   return (
     <View style={styles.root}>
+      {isFocused && !layout.isWebDesktop ? <StatusBar style="light" /> : null}
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={
-          <RefreshControl
-            onRefresh={handleRefresh}
-            refreshing={refreshing}
-            tintColor={colors.primary}
-          />
+          <RefreshControl onRefresh={handleRefresh} refreshing={refreshing} tintColor={colors.primary} />
         }
         showsVerticalScrollIndicator={false}
         style={styles.screen}
       >
         <View style={styles.hero}>
-          <View style={styles.heroShapeLarge} />
-          <View style={styles.heroShapeSmall} />
-
           <View style={styles.heroTopRow}>
-            <Text style={styles.brand}>LUXIA</Text>
-
+            <Text accessibilityLabel="LuxIA" style={styles.brand}>
+              LUX<Text style={styles.brandAccent}>IA</Text>
+            </Text>
             <View style={styles.heroActions}>
-
-              <Pressable onPress={handleNotificationsPress} style={styles.notificationButton}>
-                <MaterialCommunityIcons
-                  color={isDark || !layout.isWebDesktop ? colors.textOnPrimary : colors.primary}
-                  name="bell-outline"
-                  size={24}
-                />
+              <Pressable
+                accessibilityLabel={notificationCount > 0 ? `Notificaciones: ${notificationCount} sin leer` : 'Notificaciones'}
+                accessibilityRole="button"
+                onPress={handleNotificationsPress}
+                style={({ focused, pressed }) => [
+                  styles.notificationButton,
+                  focused && styles.heroButtonFocused,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <MaterialCommunityIcons color={colors.textOnPrimary} name="bell-outline" size={24} />
                 {notificationCount > 0 ? (
                   <View style={styles.notificationBadge}>
                     <Text style={styles.notificationBadgeText}>{notificationCount}</Text>
                   </View>
                 ) : null}
               </Pressable>
+              <Pressable
+                accessibilityLabel="Ver mi perfil"
+                accessibilityRole="button"
+                onPress={handleNotificationsPress}
+                style={({ focused, pressed }) => [
+                  styles.avatar,
+                  focused && styles.heroButtonFocused,
+                  pressed && styles.pressed,
+                ]}
+              >
+                {currentUser?.photoURL ? (
+                  <Image source={{ uri: currentUser.photoURL }} style={styles.avatarImage} />
+                ) : <Text style={styles.avatarText}>{userInitials}</Text>}
+              </Pressable>
             </View>
           </View>
-
           <Text style={styles.greeting}>Hola, {nombreUsuario}</Text>
-          <Text style={styles.subtitle}>
-            Gestiona tus causas, audiencias y documentos desde un solo lugar.
-          </Text>
+          <View style={styles.contextSelector}>
+            <CaseScopeSelector />
+          </View>
         </View>
 
-        <View style={styles.metricGrid}>
-          {metricCards.map((item) => (
-            <View key={item.label} style={styles.metricCell}>
-              <MetricCard {...item} />
+        <View style={styles.body}>
+          <View style={styles.metricGrid}>
+            {metricCards.map((item, index) => (
+              <View key={item.label} style={[styles.metricCell, index > 0 && styles.metricDivider]}>
+                <MetricCard {...item} />
+              </View>
+            ))}
+          </View>
+
+          <LuxAssistantBanner isActive={isFocused && !isLuxVisible} onPress={handleOpenLux} />
+
+          <View style={styles.hearingsSection}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Próximas audiencias</Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={handleOpenCalendar}
+                style={({ focused, pressed }) => [styles.calendarLink, focused && styles.focused, pressed && styles.pressed]}
+              >
+                <Text style={styles.sectionLink}>Ver calendario</Text>
+                <MaterialCommunityIcons color={colors.info} name="arrow-right" size={17} />
+              </Pressable>
             </View>
-          ))}
-        </View>
+            {proximasAudiencias.length ? (
+              proximasAudiencias.map((hearing, index) => (
+                <HearingTimelineCard
+                  hearing={hearing}
+                  isLast={index === proximasAudiencias.length - 1}
+                  key={hearing?.id ?? `${hearing?.title}-${index}`}
+                  onPressAction={() => handleOpenHearing(hearing)}
+                />
+              ))
+            ) : (
+              <View style={styles.emptySection}>
+                <Text style={styles.emptyText}>No hay audiencias programadas próximamente</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={handleCreateHearing}
+                  style={({ focused, pressed }) => [styles.emptyAction, focused && styles.focused, pressed && styles.pressed]}
+                >
+                  <MaterialCommunityIcons color={colors.primary} name="calendar-plus" size={17} />
+                  <Text style={styles.emptyActionText}>Programar audiencia</Text>
+                </Pressable>
+              </View>
+            )}
+          </View>
 
-        <Pressable onPress={handleOpenActivityHistory} style={styles.activityShortcut}>
-          <View style={styles.activityShortcutIcon}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={handleOpenActivityHistory}
+            style={({ focused, hovered, pressed }) => [
+              styles.activityShortcut,
+              hovered && styles.hovered,
+              focused && styles.focused,
+              pressed && styles.pressed,
+            ]}
+          >
             <MaterialCommunityIcons color={colors.primary} name="history" size={20} />
-          </View>
-          <View style={styles.activityShortcutCopy}>
             <Text style={styles.activityShortcutTitle}>Historial de actividad</Text>
-            <Text style={styles.activityShortcutDescription}>
-              Revisa movimientos recientes del estudio en una sola vista.
-            </Text>
-          </View>
-          <MaterialCommunityIcons color={colors.textMuted} name="chevron-right" size={22} />
-        </Pressable>
-
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionEyebrow}>PROXIMAS AUDIENCIAS</Text>
-          <Pressable onPress={handleOpenCalendar}>
-            <Text style={styles.sectionLink}>Ver calendario</Text>
+            <MaterialCommunityIcons color={colors.textMuted} name="chevron-right" size={20} />
           </Pressable>
-        </View>
 
-        {proximasAudiencias.length ? (
-          proximasAudiencias.map((hearing, index) => {
-            return (
-              <HearingTimelineCard
-                hearing={hearing}
-                isLast={index === proximasAudiencias.length - 1}
-                key={hearing?.id ?? `${hearing?.title}-${index}`}
-                onPressAction={() => handleOpenHearing(hearing)}
-              />
-            );
-          })
-        ) : (
-          <View style={styles.emptySection}>
-            <EmptyState
-              actionLabel="Programar audiencia"
-              icon="calendar-blank"
-              message="No hay audiencias programadas para los proximos dias."
-              onAction={handleCreateHearing}
-              title="Agenda sin actividad proxima"
-            />
+          <Text style={styles.actionsHeading}>Acciones principales</Text>
+          <View style={styles.quickActionsGrid}>
+            {[
+              { icon: 'plus-box-outline', title: 'Nueva causa', onPress: handleCreateCase },
+              { icon: 'tray-arrow-up', title: 'Subir documento', onPress: handleUploadDocument },
+              { icon: 'calendar-plus', title: 'Registrar audiencia', onPress: handleCreateHearing },
+            ].map((action) => (
+              <QuickActionButton compact key={action.title} {...action} />
+            ))}
           </View>
-        )}
-
-        <View style={[styles.sectionHeader, styles.quickActionsHeader]}>
-          <Text style={styles.sectionEyebrow}>ACCIONES PRINCIPALES</Text>
+          {error ? (
+            <View accessibilityRole="alert" style={styles.inlineAlert}>
+              <MaterialCommunityIcons color={colors.danger} name="alert-outline" size={18} />
+              <Text style={styles.inlineAlertText}>{error}</Text>
+            </View>
+          ) : null}
         </View>
-
-        <View style={styles.quickActionsGrid}>
-          <QuickActionButton
-            icon="plus-box-outline"
-            onPress={handleCreateCase}
-            subtitle="Registra un nuevo expediente con sus datos principales."
-            title="Nueva causa"
-          />
-          <QuickActionButton
-            icon="tray-arrow-up"
-            onPress={handleUploadDocument}
-            subtitle="Incorpora escritos, anexos o prueba documental."
-            title="Subir documento"
-          />
-          <QuickActionButton
-            icon="calendar-plus"
-            fullWidth
-            onPress={handleCreateHearing}
-            subtitle="Agenda una audiencia y vinculala a una causa."
-            title="Registrar audiencia"
-          />
-        </View>
-
-        {error ? (
-          <View style={styles.inlineAlert}>
-            <MaterialCommunityIcons color={colors.danger} name="alert-outline" size={18} />
-            <Text style={styles.inlineAlertText}>{error}</Text>
-          </View>
-        ) : null}
       </ScrollView>
-
-      <LuxAssistantButton onPress={handleOpenLux} />
       <LuxAssistantModal context={luxContext} onClose={handleCloseLux} visible={isLuxVisible} />
     </View>
   );
@@ -388,206 +398,239 @@ export default function DashboardScreen({ navigation }) {
 const createStyles = (colors, layout, topInset, isDark) => StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: colors.background
   },
   screen: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: colors.background
   },
   content: {
     width: '100%',
-    maxWidth: layout.contentMaxWidth,
+    maxWidth: 1080,
     alignSelf: 'center',
-    paddingBottom: 34,
+    paddingBottom: 28
   },
   hero: {
-    backgroundColor: layout.isWebDesktop && !isDark ? colors.cardElevated : colors.primaryDeep,
-    borderBottomLeftRadius: 34,
-    borderBottomRightRadius: 34,
-    paddingTop: Math.max(topInset + 20, layout.topSpacing),
-    paddingHorizontal: layout.gutter,
-    paddingBottom: 28,
-    overflow: 'hidden',
+    backgroundColor: colors.primaryDeep,
+    paddingTop: Math.max(topInset + 16, 24),
+    paddingHorizontal: layout.isPhone ? layout.gutter + 6 : 28,
+    paddingBottom: 18,
+    borderBottomLeftRadius: 16,
+    borderBottomRightRadius: 16,
     ...(layout.isWebDesktop ? {
       marginHorizontal: layout.gutter,
-      marginTop: 12,
+      marginTop: 20,
       borderRadius: 20,
-      paddingTop: 28,
-      paddingHorizontal: 28,
-      paddingBottom: 26,
-    } : {}),
-  },
-  heroShapeLarge: {
-    position: 'absolute',
-    width: 220,
-    height: 220,
-    borderRadius: 110,
-    backgroundColor: isDark || !layout.isWebDesktop ? 'rgba(255,255,255,0.05)' : 'rgba(18,58,103,0.05)',
-    top: -40,
-    right: -70,
-  },
-  heroShapeSmall: {
-    position: 'absolute',
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: isDark || !layout.isWebDesktop ? 'rgba(255,255,255,0.07)' : 'rgba(18,58,103,0.07)',
-    bottom: -20,
-    left: -30,
+      paddingTop: 24,
+      paddingBottom: 24
+    } : {})
   },
   heroTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 12,
+    gap: 12
   },
   brand: {
-    color: isDark || !layout.isWebDesktop ? colors.textOnPrimary : colors.text,
-    fontSize: 28,
+    color: colors.textOnPrimary,
+    fontSize: 32,
     fontWeight: '800',
-    letterSpacing: 1.6,
+    letterSpacing: 1.8
   },
-  notificationButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 18,
-    backgroundColor: isDark || !layout.isWebDesktop ? 'rgba(255,255,255,0.12)' : colors.accentSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
+  brandAccent: {
+    color: colors.gold
   },
   heroActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    flexShrink: 1,
+    gap: 10
+  },
+  notificationButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: isDark ? colors.accentStrong : 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)'
+  },
+  heroButtonFocused: {
+    borderColor: colors.focusRing
   },
   notificationBadge: {
     position: 'absolute',
-    top: 8,
-    right: 8,
-    minWidth: 18,
-    height: 18,
+    top: 1,
+    right: 0,
+    minWidth: 17,
+    height: 17,
     borderRadius: 9,
-    backgroundColor: colors.warning,
+    backgroundColor: colors.gold,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 4,
+    paddingHorizontal: 4
   },
   notificationBadgeText: {
-    color: colors.textOnPrimary,
+    color: colors.primaryDeep,
     fontSize: 10,
-    fontWeight: '700',
+    fontWeight: '700'
+  },
+  avatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 2,
+    borderColor: colors.gold,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.sidebarMark,
+    overflow: 'hidden'
+  },
+  avatarText: {
+    color: colors.textOnPrimary,
+    fontSize: 14,
+    fontWeight: '700'
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%'
   },
   greeting: {
-    color: isDark || !layout.isWebDesktop ? colors.textOnPrimary : colors.text,
-    fontSize: 30,
+    color: colors.textOnPrimary,
+    fontSize: layout.isCompact ? 26 : 29,
     fontWeight: '700',
-    marginTop: 28,
+    letterSpacing: -0.5,
+    marginTop: 20
   },
-  subtitle: {
-    color: isDark || !layout.isWebDesktop ? 'rgba(255,255,255,0.78)' : colors.textSecondary,
-    fontSize: 15,
-    lineHeight: 22,
-    marginTop: 8,
-    maxWidth: layout.copyMaxWidth,
+  contextSelector: {
+    marginTop: layout.isPhone ? 38 : 26
+  },
+  body: {
+    paddingHorizontal: layout.gutter,
+    gap: 14
   },
   metricGrid: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    paddingHorizontal: layout.gutter - 4,
-    // The cells include 6px padding, leaving an 18px visual gap after the hero.
-    marginTop: 12,
+    alignItems: 'stretch',
+    paddingVertical: 18
   },
   metricCell: {
-    width: layout.isDesktop ? '25%' : '50%',
-    padding: 6,
-    height: getMetricCardHeight(layout),
+    flex: 1,
+    minWidth: 0
   },
-  activityShortcut: {
-    marginTop: 8,
-    marginHorizontal: layout.gutter,
-    borderRadius: 24,
+  metricDivider: {
+    borderLeftWidth: 1,
+    borderLeftColor: colors.borderSoft
+  },
+  hearingsSection: {
     backgroundColor: colors.card,
-    borderWidth: 1,
-    borderColor: colors.borderSoft,
-    paddingHorizontal: 18,
-    paddingVertical: 16,
+    borderRadius: 16,
+    paddingHorizontal: layout.isCompact ? 10 : 14,
+    paddingBottom: 6
+  },
+  sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 14,
-    shadowColor: colors.shadow,
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.12,
-    shadowRadius: 18,
-    elevation: 3,
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    columnGap: 6,
+    paddingTop: 5,
+    paddingBottom: 2
   },
-  activityShortcutIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
-    backgroundColor: colors.accentSoft,
+  sectionTitle: {
+    color: colors.text,
+    fontSize: layout.isCompact ? 17 : 19,
+    fontWeight: '700',
+    letterSpacing: -0.4
+  },
+  calendarLink: {
+    flexDirection: 'row',
+    gap: 5,
     alignItems: 'center',
-    justifyContent: 'center',
+    minHeight: 44,
+    borderWidth: 1,
+    borderColor: 'transparent',
+    borderRadius: 8,
+    paddingHorizontal: 2
   },
-  activityShortcutCopy: {
-    flex: 1,
+  sectionLink: {
+    color: colors.info,
+    fontSize: layout.isCompact ? 11 : 12
+  },
+  emptySection: {
+    alignItems: 'flex-start',
+    paddingVertical: 16,
+    gap: 10
+  },
+  emptyText: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 20
+  },
+  emptyAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 44,
+    paddingHorizontal: 12,
+    borderRadius: 22,
+    backgroundColor: colors.accentSoft,
+    borderWidth: 1,
+    borderColor: 'transparent'
+  },
+  emptyActionText: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: '600'
+  },
+  activityShortcut: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minHeight: 48,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    borderRadius: 12
   },
   activityShortcutTitle: {
     color: colors.text,
-    fontSize: 15,
-    fontWeight: '700',
+    fontSize: 13,
+    fontWeight: '600',
+    flex: 1
   },
-  activityShortcutDescription: {
+  actionsHeading: {
     color: colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 19,
-    marginTop: 4,
-  },
-  sectionHeader: {
-    paddingHorizontal: layout.gutter,
-    marginTop: 24,
-    marginBottom: 14,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  sectionEyebrow: {
-    color: colors.text,
-    fontSize: 13,
-    fontWeight: '800',
-    letterSpacing: 1.1,
-  },
-  sectionLink: {
-    color: colors.primary,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  quickActionsHeader: {
-    marginBottom: 12,
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 4
   },
   quickActionsGrid: {
-    paddingHorizontal: layout.gutter - 4,
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
+    gap: 8
   },
-  emptySection: {
-    paddingHorizontal: layout.gutter,
+  hovered: {
+    backgroundColor: colors.accentSoft
+  },
+  focused: {
+    borderColor: colors.focusRing
+  },
+  pressed: {
+    opacity: 0.75
   },
   inlineAlert: {
-    marginTop: 18,
-    marginHorizontal: layout.gutter,
     backgroundColor: colors.dangerSoft,
-    borderRadius: 16,
+    borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 12,
     flexDirection: 'row',
     gap: 8,
-    alignItems: 'center',
+    alignItems: 'center'
   },
   inlineAlertText: {
     color: colors.danger,
     fontSize: 13,
-    flex: 1,
-  },
+    flex: 1
+  }
 });

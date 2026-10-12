@@ -4,8 +4,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useAppTheme } from '../context/ThemeContext';
 import { useResponsiveLayout } from '../theme/layout';
-import { formatDateTime, formatShortDate, formatTime } from '../utils/date';
-import StatusBadge from './StatusBadge';
+import { formatShortDate, formatTime, isSameDay, isToday } from '../utils/date';
 
 export default function HearingTimelineCard({
   hearing,
@@ -16,60 +15,51 @@ export default function HearingTimelineCard({
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
   const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const today = isToday(hearing?.date);
+  const day = isSameDay(hearing?.date, tomorrow) ? 'Mañana' : formatShortDate(hearing?.date);
+  const tags = [hearing?.court, hearing?.location, hearing?.modality].filter(Boolean);
+  const canNavigate = showAction && Boolean(onPressAction);
 
   return (
-    <View style={styles.row}>
+    <Pressable
+      accessibilityLabel={`${day}, ${formatTime(hearing?.date)}. ${hearing?.caseTitle || 'Causa sin referencia'}. ${hearing?.title || 'Audiencia'}`}
+      accessibilityRole={canNavigate ? 'button' : undefined}
+      disabled={!canNavigate}
+      onPress={onPressAction}
+      style={({ focused, hovered, pressed }) => [
+        styles.row,
+        hovered && { backgroundColor: colors.accentSoft },
+        focused && { borderColor: colors.focusRing },
+        pressed && { opacity: 0.75 },
+      ]}
+    >
       <View style={styles.timeline}>
-        <View style={styles.point} />
-        {!isLast && <View style={styles.line} />}
+        {!isLast ? <View style={styles.line} /> : null}
+        <View style={[styles.point, { backgroundColor: today ? colors.info : colors.accentStrong }]} />
       </View>
-
-      <View style={styles.content}>
-        <View style={styles.dateBadge}>
-          <Text style={styles.dateBadgeText}>{formatShortDate(hearing.date)}</Text>
-          <Text style={styles.dateBadgeTime}>{formatTime(hearing.date)}</Text>
-        </View>
-
-        <View style={styles.card}>
-          <View style={styles.headerRow}>
-            <View style={styles.headerCopy}>
-              <Text style={styles.title}>{hearing?.title || 'Audiencia sin titulo'}</Text>
-              <Text style={styles.caseTitle}>{hearing?.caseTitle || 'Causa sin referencia'}</Text>
+      <View style={styles.date}>
+        <Text style={[styles.day, today && { color: colors.info, fontWeight: '700' }]}>{day}</Text>
+        <Text style={[styles.time, today && { color: colors.info }]}>{formatTime(hearing?.date)}</Text>
+      </View>
+      <View style={[styles.details, !isLast && styles.separator]}>
+        <View style={styles.copy}>
+          <Text style={styles.caseTitle}>{hearing?.caseTitle || 'Causa sin referencia'}</Text>
+          <Text style={styles.title}>{hearing?.title || 'Audiencia sin título'}</Text>
+          {tags.length ? (
+            <View style={styles.tags}>
+              {tags.map((tag, index) => (
+                <View key={`${tag}-${index}`} style={styles.tag}>
+                  <Text style={styles.tagText}>{tag}</Text>
+                </View>
+              ))}
             </View>
-            <StatusBadge status={hearing?.status} />
-          </View>
-
-          <View style={styles.metaRow}>
-            <MaterialCommunityIcons color={colors.textSecondary} name="calendar-clock" size={16} />
-            <Text style={styles.metaText}>{formatDateTime(hearing?.date)}</Text>
-          </View>
-
-          {hearing?.court ? (
-            <View style={styles.metaRow}>
-              <MaterialCommunityIcons color={colors.textSecondary} name="scale-balance" size={16} />
-              <Text style={styles.metaText}>{hearing.court}</Text>
-            </View>
-          ) : null}
-
-          {hearing?.modality ? (
-            <View style={styles.metaRow}>
-              <MaterialCommunityIcons color={colors.textSecondary} name="map-marker-outline" size={16} />
-              <Text style={styles.metaText}>
-                {hearing.modality}
-                {hearing?.location ? ` · ${hearing.location}` : ''}
-              </Text>
-            </View>
-          ) : null}
-
-          {showAction ? (
-            <Pressable onPress={onPressAction} style={styles.actionButton}>
-              <Text style={styles.actionText}>Ver detalle de la audiencia</Text>
-              <MaterialCommunityIcons color={colors.textOnPrimary} name="arrow-right" size={18} />
-            </Pressable>
           ) : null}
         </View>
+        {canNavigate ? <MaterialCommunityIcons color={colors.legendText} name="chevron-right" size={22} /> : null}
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -77,109 +67,92 @@ const createStyles = (colors, layout) => StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'stretch',
-    paddingHorizontal: layout.gutter,
+    minHeight: 88,
+    borderWidth: 1,
+    borderColor: 'transparent',
+    borderRadius: 8
   },
   timeline: {
-    width: 26,
-    alignItems: 'center',
+    width: 22,
+    alignItems: 'center'
   },
   point: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: colors.primary,
-    marginTop: 14,
-    zIndex: 2,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    marginTop: 15,
+    zIndex: 1
   },
   line: {
-    flex: 1,
+    position: 'absolute',
     width: 2,
-    backgroundColor: colors.accent,
-    marginTop: 6,
-    marginBottom: -12,
+    top: 22,
+    bottom: -22,
+    backgroundColor: colors.info,
+    opacity: 0.55
   },
-  content: {
-    flex: 1,
-    paddingBottom: 18,
+  date: {
+    width: layout.isCompact ? 63 : layout.isPhone ? 76 : 100,
+    paddingTop: 13,
+    paddingLeft: 8,
+    paddingRight: 8
   },
-  dateBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: colors.accentSoft,
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 10,
-  },
-  dateBadgeText: {
-    color: colors.primary,
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.8,
-  },
-  dateBadgeTime: {
+  day: {
     color: colors.text,
-    fontSize: 16,
-    fontWeight: '700',
-    marginTop: 2,
+    fontSize: layout.isCompact ? 12 : 14
   },
-  card: {
-    backgroundColor: colors.card,
-    borderRadius: 24,
-    padding: 18,
-    shadowColor: colors.shadow,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.18,
-    shadowRadius: 18,
-    elevation: 4,
-    borderWidth: 1,
-    borderColor: colors.borderSoft,
+  time: {
+    color: colors.legendText,
+    fontSize: 11,
+    marginTop: 5
   },
-  headerRow: {
+  details: {
+    flex: 1,
+    minWidth: 0,
     flexDirection: 'row',
-    gap: 12,
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 13
   },
-  headerCopy: {
+  separator: {
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderSoft
+  },
+  copy: {
     flex: 1,
-  },
-  title: {
-    color: colors.text,
-    fontSize: 18,
-    fontWeight: '700',
+    minWidth: 0,
+    borderLeftWidth: 1,
+    borderLeftColor: colors.borderSoft,
+    paddingLeft: layout.isCompact ? 10 : 16
   },
   caseTitle: {
+    color: colors.text,
+    fontSize: layout.isCompact ? 13 : 15,
+    lineHeight: 20,
+    fontWeight: '700'
+  },
+  title: {
+    color: colors.legendText,
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 2
+  },
+  tags: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 5,
+    marginTop: 6
+  },
+  tag: {
+    backgroundColor: colors.accentSoft,
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    maxWidth: '100%'
+  },
+  tagText: {
     color: colors.primary,
-    fontSize: 14,
-    fontWeight: '600',
-    marginTop: 4,
-    marginBottom: 12,
-  },
-  metaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 6,
-  },
-  metaText: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    flex: 1,
-  },
-  actionButton: {
-    minHeight: 46,
-    marginTop: 16,
-    backgroundColor: colors.primary,
-    borderRadius: 16,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  actionText: {
-    color: colors.textOnPrimary,
-    fontSize: 14,
-    fontWeight: '700',
-  },
+    fontSize: 10,
+    lineHeight: 14
+  }
 });
