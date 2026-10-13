@@ -2,7 +2,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { Image, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import CaseScopeSelector from '../components/CaseScopeSelector';
@@ -27,7 +27,7 @@ export default function DashboardScreen({ navigation }) {
   const layout = useResponsiveLayout();
   const isFocused = useIsFocused();
   const { authStatus, currentUser, isAuthReady } = useAuth();
-  const { activeContextKey } = useStudyContext();
+  const { activeContext, activeContextKey, legalStudies, refreshLegalStudies, selectPersonalContext, selectStudyContext, isHydrated } = useStudyContext();
   const styles = useMemo(
     () => createStyles(colors, layout, insets.top, isDark),
     [colors, insets.top, isDark, layout]
@@ -38,12 +38,14 @@ export default function DashboardScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [isLuxVisible, setIsLuxVisible] = useState(false);
+  const [studyPickerVisible, setStudyPickerVisible] = useState(false);
   const activeLoadRef = useRef(null);
+  const activeLoadKeyRef = useRef(null);
   const loadSequenceRef = useRef(0);
   const isFocusedRef = useRef(false);
 
   const loadDashboard = useCallback(async (isRefresh = false) => {
-    if (!isAuthReady || authStatus === 'initializing') {
+    if (!isAuthReady || !isHydrated || authStatus === 'initializing') {
       return;
     }
 
@@ -63,7 +65,7 @@ export default function DashboardScreen({ navigation }) {
       return;
     }
 
-    if (activeLoadRef.current) {
+    if (activeLoadRef.current && activeLoadKeyRef.current === activeContextKey) {
       return activeLoadRef.current;
     }
 
@@ -75,6 +77,7 @@ export default function DashboardScreen({ navigation }) {
         setRefreshing(true);
       } else {
         setLoading(true);
+        setDashboard(null);
       }
 
       setError('');
@@ -91,6 +94,7 @@ export default function DashboardScreen({ navigation }) {
     })();
 
     activeLoadRef.current = loadPromise;
+    activeLoadKeyRef.current = activeContextKey;
 
     try {
       await loadPromise;
@@ -108,6 +112,7 @@ export default function DashboardScreen({ navigation }) {
     } finally {
       if (activeLoadRef.current === loadPromise) {
         activeLoadRef.current = null;
+        activeLoadKeyRef.current = null;
       }
 
       if (isFocusedRef.current && loadSequenceRef.current === loadId) {
@@ -115,11 +120,11 @@ export default function DashboardScreen({ navigation }) {
         setRefreshing(false);
       }
     }
-  }, [activeContextKey, authStatus, currentUser?.uid, isAuthReady]);
+  }, [activeContextKey, authStatus, currentUser?.uid, isAuthReady, isHydrated]);
 
   useFocusEffect(
     useCallback(() => {
-      if (!isAuthReady || authStatus === 'initializing') {
+      if (!isAuthReady || !isHydrated || authStatus === 'initializing') {
         return undefined;
       }
 
@@ -128,12 +133,13 @@ export default function DashboardScreen({ navigation }) {
       return () => {
         isFocusedRef.current = false;
       };
-    }, [authStatus, isAuthReady, loadDashboard])
+    }, [authStatus, isAuthReady, isHydrated, loadDashboard])
   );
 
   const handleRefresh = useCallback(() => {
+    void refreshLegalStudies();
     void loadDashboard(true);
-  }, [loadDashboard]);
+  }, [loadDashboard, refreshLegalStudies]);
 
   const handleNotificationsPress = useCallback(() => {
     navigation.navigate('Mas');
@@ -306,8 +312,23 @@ export default function DashboardScreen({ navigation }) {
           </View>
           <Text style={styles.greeting}>Hola, {nombreUsuario}</Text>
           <View style={styles.contextSelector}>
-            <CaseScopeSelector />
+            <CaseScopeSelector
+              value={activeContext.type}
+              studyAvailable={legalStudies.length > 0}
+              onValueChange={(nextScope) => {
+                if (nextScope === 'personal') selectPersonalContext();
+                else if (legalStudies.length) selectStudyContext(
+                  legalStudies.find((study) => String(study.id) === String(activeContext.legalStudyId)) || legalStudies[0]
+                );
+              }}
+            />
           </View>
+          {activeContext.type === 'study' && legalStudies.length > 1 ? (
+            <Pressable accessibilityRole="button" onPress={() => setStudyPickerVisible(true)} style={styles.studyPickerTrigger}>
+              <Text style={styles.studyPickerTriggerText}>{activeContext.name}{legalStudies.filter((study) => study.name === activeContext.name).length > 1 ? ` · ${String(activeContext.legalStudyId).slice(-6)}` : ''}</Text>
+              <MaterialCommunityIcons color={colors.textOnPrimary} name="chevron-down" size={17} />
+            </Pressable>
+          ) : null}
         </View>
 
         <View style={styles.body}>
@@ -391,6 +412,24 @@ export default function DashboardScreen({ navigation }) {
         </View>
       </ScrollView>
       <LuxAssistantModal context={luxContext} onClose={handleCloseLux} visible={isLuxVisible} />
+      <Modal transparent animationType="fade" visible={studyPickerVisible} onRequestClose={() => setStudyPickerVisible(false)}>
+        <Pressable style={styles.studyPickerBackdrop} onPress={() => setStudyPickerVisible(false)}>
+          <View style={styles.studyPickerPanel}>
+            <Text style={styles.studyPickerTitle}>Elegí un estudio</Text>
+            {legalStudies.map((study) => (
+              <Pressable
+                accessibilityRole="button"
+                key={study.id}
+                onPress={() => { selectStudyContext(study); setStudyPickerVisible(false); }}
+                style={styles.studyPickerOption}
+              >
+                <Text style={styles.studyPickerOptionText}>{study.name}{legalStudies.filter((item) => item.name === study.name).length > 1 ? ` · ${String(study.id).slice(-6)}` : ''}</Text>
+                {String(activeContext.legalStudyId) === String(study.id) ? <MaterialCommunityIcons color={colors.primary} name="check" size={18} /> : null}
+              </Pressable>
+            ))}
+          </View>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -503,8 +542,22 @@ const createStyles = (colors, layout, topInset, isDark) => StyleSheet.create({
     marginTop: 20
   },
   contextSelector: {
-    marginTop: layout.isPhone ? 38 : 26
+    marginTop: layout.isPhone ? 38 : 26,
+    alignItems: 'center'
   },
+  studyPickerTrigger: {
+    alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 4,
+    minHeight: 32, paddingHorizontal: 10, marginTop: 4
+  },
+  studyPickerTriggerText: { color: colors.textOnPrimary, fontSize: 12, fontWeight: '600' },
+  studyPickerBackdrop: {
+    flex: 1, justifyContent: 'center', alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.48)', padding: 24
+  },
+  studyPickerPanel: { width: '100%', maxWidth: 360, borderRadius: 16, backgroundColor: colors.card, padding: 18 },
+  studyPickerTitle: { color: colors.text, fontSize: 18, fontWeight: '700', marginBottom: 8 },
+  studyPickerOption: { minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: colors.borderSoft },
+  studyPickerOptionText: { color: colors.text, fontSize: 14 },
   body: {
     paddingHorizontal: layout.gutter,
     gap: 14

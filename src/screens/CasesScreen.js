@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View, ActivityIndicator, Platform } from 'react-native';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View, ActivityIndicator, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import EmptyState from '../components/EmptyState';
@@ -29,23 +29,19 @@ export default function CasesScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const layout = useResponsiveLayout();
   const { authStatus, currentUser, isAuthReady } = useAuth();
-  const { activeContext, activeContextKey, legalStudies, activeLegalStudy, selectPersonalContext, selectStudyContext } = useStudyContext();
+  const { activeContextKey, isHydrated } = useStudyContext();
   const styles = useMemo(
     () => createStyles(colors, layout, insets.top),
     [colors, insets.top, layout]
   );
   const listColumns = layout.isDesktop ? 2 : 1;
-  const hasStudy = legalStudies.length > 0;
-
-  const [context, setContext] = useState('private');
+  const requestSequenceRef = useRef(0);
+  const pendingPageRef = useRef(null);
   const [cases, setCases] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [fetchingMore, setFetchingMore] = useState(false);
   const [error, setError] = useState('');
-
-  // Animated value for the segmented control indicator
-  const segmentAnim = useRef(new Animated.Value(0)).current;
 
   // Pagination & Filter State
   const [page, setPage] = useState(1);
@@ -59,54 +55,38 @@ export default function CasesScreen({ navigation }) {
     startDate: '',
     endDate: '',
   });
-
-  useEffect(() => {
-    setContext(activeContext?.type === 'study' ? 'studio' : 'private');
-  }, [activeContextKey, activeContext?.type]);
-
-  const handleContextChange = useCallback((nextContext) => {
-    setContext(nextContext);
-    Animated.spring(segmentAnim, {
-      toValue: nextContext === 'private' ? 0 : 1,
-      useNativeDriver: false,
-      friction: 8,
-      tension: 70,
-    }).start();
-
-    // Sync the global API work context so scope/legalStudyId are sent correctly
-    if (nextContext === 'studio') {
-      const study = activeLegalStudy || legalStudies[0];
-      if (study) {
-        selectStudyContext(study);
-      }
-    } else {
-      selectPersonalContext();
-    }
-  }, [segmentAnim, activeLegalStudy, legalStudies, selectStudyContext, selectPersonalContext]);
+  const [appliedFilters, setAppliedFilters] = useState(filters);
 
   const loadCases = useCallback(async (isRefresh = false, fetchPage = 1, currentFilters = filters) => {
-    if (!isAuthReady || authStatus !== 'authenticated' || !currentUser) {
+    if (!isAuthReady || !isHydrated || authStatus !== 'authenticated' || !currentUser) {
       return;
     }
+    const pageKey = `${activeContextKey}:${fetchPage}:${JSON.stringify(currentFilters)}`;
+    if (pendingPageRef.current === pageKey) return;
+    const requestId = ++requestSequenceRef.current;
+    pendingPageRef.current = pageKey;
 
     try {
       if (isRefresh) {
         setRefreshing(true);
       } else if (fetchPage === 1) {
         setLoading(true);
+        setCases([]);
+        setTotalItems(0);
       } else {
         setFetchingMore(true);
       }
 
       setError('');
       
-      const response = await getCases(context, {
+      const response = await getCases(null, {
         ...currentFilters,
         page: fetchPage,
         limit: 20
       });
       
       const newItems = response.items || [];
+      if (requestSequenceRef.current !== requestId) return;
       
       if (fetchPage === 1) {
         setCases(newItems);
@@ -119,6 +99,7 @@ export default function CasesScreen({ navigation }) {
       setTotalPages(response.totalPages || 1);
       
     } catch (loadError) {
+      if (requestSequenceRef.current !== requestId) return;
       console.error('[CasesScreen] No se pudieron cargar las causas.', {
         name: loadError?.name || 'Error',
         message: loadError?.message || String(loadError),
@@ -136,36 +117,39 @@ export default function CasesScreen({ navigation }) {
         );
       }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
-      setFetchingMore(false);
+      if (pendingPageRef.current === pageKey) pendingPageRef.current = null;
+      if (requestSequenceRef.current === requestId) {
+        setLoading(false);
+        setRefreshing(false);
+        setFetchingMore(false);
+      }
     }
-  }, [activeContextKey, authStatus, context, currentUser, isAuthReady]);
+  }, [activeContextKey, authStatus, currentUser?.uid, isAuthReady, isHydrated]);
 
   useFocusEffect(
     useCallback(() => {
-      if (!isAuthReady || authStatus !== 'authenticated' || !currentUser) {
+      if (!isAuthReady || !isHydrated || authStatus !== 'authenticated' || !currentUser) {
         return undefined;
       }
 
-      void loadCases(false, 1, filters);
-      return undefined;
-    }, [authStatus, currentUser, filters, isAuthReady, loadCases])
+      void loadCases(false, 1, appliedFilters);
+      return () => { requestSequenceRef.current += 1; pendingPageRef.current = null; };
+    }, [authStatus, currentUser?.uid, appliedFilters, isAuthReady, isHydrated, loadCases])
   );
 
   const handleApplyFilters = () => {
-    loadCases(false, 1, filters);
+    setAppliedFilters({ ...filters });
   };
 
   const handleClearFilters = () => {
     const clearedFilters = { status: 'all', court: '', startDate: '', endDate: '' };
     setFilters(clearedFilters);
-    loadCases(false, 1, clearedFilters);
+    setAppliedFilters(clearedFilters);
   };
 
   const loadMore = () => {
     if (!loading && !fetchingMore && page < totalPages) {
-      loadCases(false, page + 1, filters);
+      loadCases(false, page + 1, appliedFilters);
     }
   };
 
@@ -296,63 +280,6 @@ export default function CasesScreen({ navigation }) {
             </Text>
           </Pressable>
         </View>
-
-        {/* ── Segmented Context Control ── */}
-        {hasStudy && (
-        <View style={styles.segmentedWrapper}>
-          <View style={styles.segmentedTrack}>
-            <Animated.View
-              style={[
-                styles.segmentedIndicator,
-                {
-                  left: segmentAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: ['0%', '50%'],
-                  }),
-                },
-              ]}
-            />
-            <Pressable
-              onPress={() => handleContextChange('private')}
-              style={styles.segmentedButton}
-            >
-              <MaterialCommunityIcons
-                name="briefcase-outline"
-                size={16}
-                color={context === 'private' ? colors.textOnPrimary : colors.textSecondary}
-                style={{ marginRight: 6 }}
-              />
-              <Text
-                style={[
-                  styles.segmentedLabel,
-                  context === 'private' && styles.segmentedLabelActive,
-                ]}
-              >
-                Mis Causas
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={() => handleContextChange('studio')}
-              style={styles.segmentedButton}
-            >
-              <MaterialCommunityIcons
-                name="office-building-outline"
-                size={16}
-                color={context === 'studio' ? colors.textOnPrimary : colors.textSecondary}
-                style={{ marginRight: 6 }}
-              />
-              <Text
-                style={[
-                  styles.segmentedLabel,
-                  context === 'studio' && styles.segmentedLabelActive,
-                ]}
-              >
-                Causas de mi Estudio
-              </Text>
-            </Pressable>
-          </View>
-        </View>
-        )}
 
         {renderFilterSection()}
         
@@ -605,53 +532,6 @@ const createStyles = (colors, layout, topInset) => StyleSheet.create({
     color: colors.textOnPrimary,
     fontSize: 14,
     fontWeight: '600',
-  },
-  segmentedWrapper: {
-    marginTop: 4,
-  },
-  segmentedTrack: {
-    flexDirection: 'row',
-    backgroundColor: colors.card,
-    borderRadius: 16,
-    padding: 4,
-    borderWidth: 1,
-    borderColor: colors.borderSoft,
-    position: 'relative',
-    overflow: 'hidden',
-  },
-  segmentedIndicator: {
-    position: 'absolute',
-    top: 4,
-    bottom: 4,
-    width: '50%',
-    backgroundColor: colors.primary,
-    borderRadius: 13,
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  segmentedButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 11,
-    paddingHorizontal: 8,
-    borderRadius: 13,
-    zIndex: 1,
-    minHeight: 48,
-  },
-  segmentedLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: colors.textSecondary,
-    textAlign: 'center',
-  },
-  segmentedLabelActive: {
-    color: colors.textOnPrimary,
-    fontWeight: '700',
   },
   resultsSummary: {
     paddingVertical: 8,

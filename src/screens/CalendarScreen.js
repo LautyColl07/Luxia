@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Pressable,
@@ -14,7 +14,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
-import StudyContextSelector from '../components/StudyContextSelector';
 import { useAuth } from '../context/AuthContext';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
@@ -46,7 +45,8 @@ const CATEGORY_OPTIONS = [
 export default function CalendarScreen({ navigation }) {
   const { colors } = useAppTheme();
   const { authStatus, currentUser, isAuthReady } = useAuth();
-  const { activeContextKey } = useStudyContext();
+  const { activeContextKey, isHydrated } = useStudyContext();
+  const requestSequenceRef = useRef(0);
   const insets = useSafeAreaInsets();
   const layout = useResponsiveLayout();
   const styles = useMemo(
@@ -70,12 +70,14 @@ export default function CalendarScreen({ navigation }) {
   const [error, setError] = useState('');
 
   const loadCalendar = useCallback(async () => {
-    if (!isAuthReady || authStatus !== 'authenticated' || !currentUser) {
+    if (!isAuthReady || !isHydrated || authStatus !== 'authenticated' || !currentUser) {
       return;
     }
+    const requestId = ++requestSequenceRef.current;
 
     try {
       setLoading(true);
+      setCalendarData({ hearings: [], cases: [], caseDetails: [] });
       setError('');
 
       const [hearingsResult, casesResult] = await Promise.allSettled([
@@ -84,6 +86,7 @@ export default function CalendarScreen({ navigation }) {
       ]);
       const hearings = hearingsResult.status === 'fulfilled' ? hearingsResult.value : [];
       const cases = casesResult.status === 'fulfilled' ? casesResult.value : [];
+      if (requestSequenceRef.current !== requestId) return;
       const failedResult = [hearingsResult, casesResult].find(
         (result) => result.status === 'rejected'
       );
@@ -112,12 +115,14 @@ export default function CalendarScreen({ navigation }) {
         })
       );
 
+      if (requestSequenceRef.current !== requestId) return;
       setCalendarData({
         hearings: Array.isArray(hearings) ? hearings : [],
         cases,
         caseDetails: detailedCases.filter(Boolean),
       });
     } catch (loadError) {
+      if (requestSequenceRef.current !== requestId) return;
       console.error('[CalendarScreen] No se pudo cargar el calendario.');
       setError(
         loadError instanceof Error
@@ -125,19 +130,19 @@ export default function CalendarScreen({ navigation }) {
           : 'No pudimos cargar la agenda judicial.'
       );
     } finally {
-      setLoading(false);
+      if (requestSequenceRef.current === requestId) setLoading(false);
     }
-  }, [activeContextKey, authStatus, currentUser, isAuthReady]);
+  }, [activeContextKey, authStatus, currentUser?.uid, isAuthReady, isHydrated]);
 
   useFocusEffect(
     useCallback(() => {
-      if (!isAuthReady || authStatus !== 'authenticated' || !currentUser) {
+      if (!isAuthReady || !isHydrated || authStatus !== 'authenticated' || !currentUser) {
         return undefined;
       }
 
       void loadCalendar();
-      return undefined;
-    }, [authStatus, currentUser, isAuthReady, loadCalendar])
+      return () => { requestSequenceRef.current += 1; };
+    }, [authStatus, currentUser?.uid, isAuthReady, isHydrated, loadCalendar])
   );
 
   const allEvents = useMemo(() => buildCalendarEvents(calendarData), [calendarData]);
@@ -258,7 +263,6 @@ export default function CalendarScreen({ navigation }) {
       ) : null}
       <View style={styles.topBar}>
         <Text style={styles.topBarTitle}>Agenda</Text>
-        <StudyContextSelector />
       </View>
 
       <View style={styles.calendarCard}>

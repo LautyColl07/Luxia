@@ -38,6 +38,7 @@ export default function UploadDocumentScreen({ navigation, route }) {
   const submittingRef = useRef(false);
   const allowLeaveRef = useRef(false);
   const abortControllerRef = useRef(null);
+  const requestSequenceRef = useRef(0);
   const [form, setForm] = useState({
     hearingId: '',
     documentType: 'Escrito',
@@ -45,6 +46,7 @@ export default function UploadDocumentScreen({ navigation, route }) {
 
   useEffect(() => {
     void loadHearings();
+    return () => { requestSequenceRef.current += 1; };
   }, [activeContextKey, caseId]);
 
   useEffect(() => {
@@ -79,18 +81,30 @@ export default function UploadDocumentScreen({ navigation, route }) {
   }, [navigation]);
 
   async function loadHearings() {
+    const requestId = ++requestSequenceRef.current;
     try {
       setLoadingHearings(true);
+      setHearings([]);
+      setCaseDetail(null);
       setHearingsError('');
       if (caseId) {
         const currentCase = await getCaseById(caseId);
+        if (requestSequenceRef.current !== requestId) return;
         setCaseDetail(currentCase);
-        setHearings(Array.isArray(currentCase?.hearings) ? currentCase.hearings : []);
+        const nextHearings = Array.isArray(currentCase?.hearings) ? currentCase.hearings : [];
+        setHearings(nextHearings);
+        setForm((current) => current.hearingId && !nextHearings.some((item) => String(item?.id) === current.hearingId)
+          ? { ...current, hearingId: '' } : current);
       } else {
         const items = await getHearings();
-        setHearings(Array.isArray(items) ? items : []);
+        if (requestSequenceRef.current !== requestId) return;
+        const nextHearings = Array.isArray(items) ? items : [];
+        setHearings(nextHearings);
+        setForm((current) => current.hearingId && !nextHearings.some((item) => String(item?.id) === current.hearingId)
+          ? { ...current, hearingId: '' } : current);
       }
     } catch (error) {
+      if (requestSequenceRef.current !== requestId) return;
       console.error('[UploadDocumentScreen] No se pudieron cargar las audiencias.');
       setHearings([]);
       setCaseDetail(null);
@@ -98,7 +112,7 @@ export default function UploadDocumentScreen({ navigation, route }) {
         error instanceof Error ? error.message : 'No pudimos cargar las audiencias disponibles.'
       );
     } finally {
-      setLoadingHearings(false);
+      if (requestSequenceRef.current === requestId) setLoadingHearings(false);
     }
   }
 
@@ -146,7 +160,7 @@ export default function UploadDocumentScreen({ navigation, route }) {
       return;
     }
 
-    if (!form.hearingId || !selectedAsset?.uri) {
+    if (!selectedHearing || !selectedAsset?.uri) {
       Alert.alert(
         'Informacion incompleta',
         'Selecciona una audiencia y un archivo para continuar.'

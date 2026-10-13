@@ -12,7 +12,7 @@ import { auth } from '../config/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
-import { getMe, getNotifications, joinLegalStudy } from '../services/api';
+import { addLegalStudyMember, getMe, getNotifications, joinLegalStudy } from '../services/api';
 import { authClient } from '../services/authClient';
 import { useResponsiveLayout } from '../theme/layout';
 import { buildDisplayUser } from '../utils/userDisplay';
@@ -48,6 +48,11 @@ export default function MoreScreen({ navigation }) {
   const [showStudyModal, setShowStudyModal] = useState(false);
   const [studyInput, setStudyInput] = useState('');
   const [savingStudy, setSavingStudy] = useState(false);
+  const [studyError, setStudyError] = useState('');
+  const [inviteStudy, setInviteStudy] = useState(null);
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteError, setInviteError] = useState('');
+  const [savingInvite, setSavingInvite] = useState(false);
 
   const loadProfile = useCallback(async () => {
     if (!isAuthReady || authStatus !== 'authenticated' || !currentUser) {
@@ -79,8 +84,9 @@ export default function MoreScreen({ navigation }) {
       }
 
       void loadProfile();
+      void refreshLegalStudies();
       return undefined;
-    }, [authStatus, currentUser, isAuthReady, loadProfile])
+    }, [authStatus, currentUser, isAuthReady, loadProfile, refreshLegalStudies])
   );
 
   const displayProfile = useMemo(
@@ -176,23 +182,49 @@ export default function MoreScreen({ navigation }) {
   }, [displayProfile.email]);
 
   const handleSaveStudy = async () => {
+    if (savingStudy) return;
     const name = studyInput.trim();
+    setStudyError('');
     if (!name) {
-      Alert.alert('Informacion incompleta', 'Ingresa el nombre de tu estudio juridico.');
+      setStudyError('Ingresa el nombre de tu estudio juridico.');
       return;
     }
 
     try {
       setSavingStudy(true);
-      await joinLegalStudy(name);
+      const study = await joinLegalStudy(name);
       await refreshLegalStudies();
       setShowStudyModal(false);
-      Alert.alert('Estudio actualizado', `Te vinculaste al estudio ${name} exitosamente.`);
+      const message = `Estudio ${study.name} creado correctamente.`;
+      if (Platform.OS === 'web') {
+        globalThis.alert(message);
+      } else {
+        Alert.alert('Estudio actualizado', message);
+      }
     } catch (err) {
       console.error('[MoreScreen] No se pudo vincular el estudio.');
-      Alert.alert('No pudimos vincularte', 'Ocurrio un error al intentar vincular el estudio. Intenta nuevamente.');
+      setStudyError(err instanceof Error ? err.message : 'No pudimos vincular el estudio. Intenta nuevamente.');
     } finally {
       setSavingStudy(false);
+    }
+  };
+
+  const handleAddMember = async () => {
+    if (!inviteStudy || savingInvite) return;
+    const email = inviteEmail.trim();
+    setInviteError('');
+    if (!email) { setInviteError('Ingresá el correo de la persona.'); return; }
+    try {
+      setSavingInvite(true);
+      await addLegalStudyMember(inviteStudy.id, email);
+      setInviteStudy(null);
+      const message = 'Integrante agregado. Al actualizar su app verá las causas del estudio.';
+      if (Platform.OS === 'web') globalThis.alert(message);
+      else Alert.alert('Integrante agregado', message);
+    } catch (error) {
+      setInviteError(error instanceof Error ? error.message : 'No pudimos agregar al integrante.');
+    } finally {
+      setSavingInvite(false);
     }
   };
 
@@ -272,15 +304,27 @@ export default function MoreScreen({ navigation }) {
         />
         <ActionRow
           colors={colors}
-          description="Escribe el nombre para unirte o crearlo."
+          description="Crear un estudio nuevo. Para unirte a otro, su responsable debe agregarte por correo."
           icon="account-group-outline"
           onPress={() => {
             setStudyInput('');
+            setStudyError('');
             setShowStudyModal(true);
           }}
           styles={styles}
-          title={legalStudies.length > 0 ? 'Cambiar estudio' : 'Vincular estudio'}
+          title={legalStudies.length > 0 ? 'Crear otro estudio' : 'Crear estudio'}
         />
+        {legalStudies.filter((study) => ['OWNER', 'ADMIN'].includes(study.role)).map((study) => (
+          <ActionRow
+            colors={colors}
+            description={`Dar acceso a las causas de ${study.name} a una cuenta existente.`}
+            icon="account-plus-outline"
+            key={study.id}
+            onPress={() => { setInviteStudy(study); setInviteEmail(''); setInviteError(''); }}
+            styles={styles}
+            title={`Agregar integrante a ${study.name}${legalStudies.filter((item) => item.name === study.name).length > 1 ? ` · ${String(study.id).slice(-6)}` : ''}`}
+          />
+        ))}
       </CardSection>
 
       <CardSection
@@ -376,7 +420,7 @@ export default function MoreScreen({ navigation }) {
         <ActionRow
           colors={colors}
           description="Ver, editar o eliminar tus recuerdos guardados."
-          icon="brain-outline"
+          icon="head-lightbulb-outline"
           onPress={() => navigation.navigate('LuxMemory')}
           styles={styles}
           title="Administrar memoria"
@@ -480,7 +524,7 @@ export default function MoreScreen({ navigation }) {
                 <MaterialCommunityIcons name="office-building-outline" size={24} color={colors.primary} />
               </View>
               <Text style={styles.modalTitle}>Estudio Juridico</Text>
-              <Text style={styles.modalSubtitle}>Ingresa el nombre del estudio para vincular tu cuenta a su espacio de trabajo.</Text>
+              <Text style={styles.modalSubtitle}>Crea un estudio nuevo. Si ya existe uno de tu equipo, pedile a su responsable que te agregue por correo.</Text>
             </View>
             <TextInput
               style={styles.modalInput}
@@ -489,7 +533,10 @@ export default function MoreScreen({ navigation }) {
               value={studyInput}
               onChangeText={setStudyInput}
               autoCapitalize="words"
+              maxLength={160}
+              editable={!savingStudy}
             />
+            {studyError ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{studyError}</Text> : null}
             <View style={styles.modalActions}>
               <Pressable
                 style={styles.modalButtonSecondary}
@@ -504,8 +551,35 @@ export default function MoreScreen({ navigation }) {
                 disabled={savingStudy}
               >
                 <Text style={styles.modalButtonPrimaryText}>
-                  {savingStudy ? 'Guardando...' : 'Vincular'}
+                  {savingStudy ? 'Guardando...' : 'Crear estudio'}
                 </Text>
+              </Pressable>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+      <Modal transparent animationType="fade" visible={Boolean(inviteStudy)} onRequestClose={() => setInviteStudy(null)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <Text style={styles.modalTitle}>Agregar integrante</Text>
+            <Text style={styles.modalSubtitle}>{inviteStudy?.name}. La persona debe tener una cuenta de LuxIA.</Text>
+            <TextInput
+              autoCapitalize="none"
+              keyboardType="email-address"
+              editable={!savingInvite}
+              onChangeText={setInviteEmail}
+              placeholder="Correo de la persona"
+              placeholderTextColor={colors.textMuted}
+              style={styles.modalInput}
+              value={inviteEmail}
+            />
+            {inviteError ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{inviteError}</Text> : null}
+            <View style={styles.modalActions}>
+              <Pressable disabled={savingInvite} onPress={() => setInviteStudy(null)} style={styles.modalButtonSecondary}>
+                <Text style={styles.modalButtonSecondaryText}>Cancelar</Text>
+              </Pressable>
+              <Pressable disabled={savingInvite} onPress={handleAddMember} style={[styles.modalButtonPrimary, savingInvite && styles.modalButtonDisabled]}>
+                <Text style={styles.modalButtonPrimaryText}>{savingInvite ? 'Agregando...' : 'Agregar'}</Text>
               </Pressable>
             </View>
           </View>

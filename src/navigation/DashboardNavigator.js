@@ -4,7 +4,6 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useMemo } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import StudyContextSelector from '../components/StudyContextSelector';
 import { useAppTheme } from '../context/ThemeContext';
 import CalendarScreen from '../screens/CalendarScreen';
 import CaseDetailScreen from '../screens/CaseDetailScreen';
@@ -103,7 +102,6 @@ export default function DashboardNavigator() {
         headerStyle: {
           backgroundColor: colors.background,
         },
-        headerRight: layout.isPhone ? undefined : () => <StudyContextSelector />,
         contentStyle: {
           backgroundColor: colors.background,
         },

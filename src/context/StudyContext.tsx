@@ -11,9 +11,9 @@ import {
 } from "react";
 
 import { useAuth } from "./AuthContext";
-import { getMyLegalStudies, setApiWorkContext } from "../services/api";
+import { getMyLegalStudies, resetApiWorkContext, setApiWorkContext } from "../services/api";
 
-const STORAGE_KEY = "luxia.studyContext.v1";
+const STORAGE_KEY = "luxia.studyContext.v2";
 
 export type StudyContextSelection =
   | {
@@ -30,6 +30,7 @@ export type StudyContextSelection =
 type LegalStudyOption = {
   id: string;
   name: string;
+  role?: string;
 };
 
 type StudyContextValue = {
@@ -98,10 +99,14 @@ export function StudyContextProvider({ children }: StudyContextProviderProps) {
     useState<StudyContextSelection>(PERSONAL_CONTEXT);
   const [legalStudies, setLegalStudies] = useState<LegalStudyOption[]>([]);
   const [isHydrated, setIsHydrated] = useState(false);
+  const [hydratedUserKey, setHydratedUserKey] = useState<string | null>(null);
   const [isLoadingStudies, setIsLoadingStudies] = useState(false);
   const [studiesError, setStudiesError] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const legalStudiesRequestRef = useRef<Promise<void> | null>(null);
+  const userKey = currentUser?.uid || null;
+  const userKeyRef = useRef(userKey);
+  userKeyRef.current = userKey;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -112,14 +117,25 @@ export function StudyContextProvider({ children }: StudyContextProviderProps) {
 
   useEffect(() => {
     let mounted = true;
+    setIsHydrated(false);
+    setHydratedUserKey(null);
+    setActiveContext(PERSONAL_CONTEXT);
+    setLegalStudies([]);
+    legalStudiesRequestRef.current = null;
+    resetApiWorkContext();
+    if (!isAuthReady || !userKey) {
+      if (isAuthReady) setIsHydrated(true);
+      return () => { mounted = false; };
+    }
 
-    AsyncStorage.getItem(STORAGE_KEY)
+    AsyncStorage.getItem(`${STORAGE_KEY}.${userKey}`)
       .then((rawValue) => {
         if (!mounted || !rawValue) {
           return;
         }
-
-        setActiveContext(normalizeStoredContext(JSON.parse(rawValue)));
+        const restored = normalizeStoredContext(JSON.parse(rawValue));
+        setApiWorkContext(restored);
+        setActiveContext(restored);
       })
       .catch(() => {
         if (__DEV__) {
@@ -128,6 +144,7 @@ export function StudyContextProvider({ children }: StudyContextProviderProps) {
       })
       .finally(() => {
         if (mounted) {
+          setHydratedUserKey(userKey);
           setIsHydrated(true);
         }
       });
@@ -135,15 +152,16 @@ export function StudyContextProvider({ children }: StudyContextProviderProps) {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [isAuthReady, userKey]);
 
   const persistContext = useCallback((nextContext: StudyContextSelection) => {
-    void AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(nextContext)).catch(() => {
+    if (!userKey) return;
+    void AsyncStorage.setItem(`${STORAGE_KEY}.${userKey}`, JSON.stringify(nextContext)).catch(() => {
       if (__DEV__) {
         console.warn("[StudyContext] No se pudo guardar el contexto seleccionado.");
       }
     });
-  }, []);
+  }, [userKey]);
 
   const refreshLegalStudies = useCallback(async () => {
     if (!isAuthReady || authStatus === "initializing") {
@@ -154,7 +172,6 @@ export function StudyContextProvider({ children }: StudyContextProviderProps) {
       setLegalStudies([]);
       setActiveContext(PERSONAL_CONTEXT);
       setStudiesError(null);
-      persistContext(PERSONAL_CONTEXT);
       return;
     }
 
@@ -174,7 +191,7 @@ export function StudyContextProvider({ children }: StudyContextProviderProps) {
         setStudiesError(null);
         const studies = await getMyLegalStudies();
 
-        if (!mountedRef.current) {
+        if (!mountedRef.current || userKeyRef.current !== userKey) {
           return;
         }
 
@@ -203,7 +220,7 @@ export function StudyContextProvider({ children }: StudyContextProviderProps) {
           return nextContext;
         });
       } catch (error) {
-        if (!mountedRef.current) {
+        if (!mountedRef.current || userKeyRef.current !== userKey) {
           return;
         }
 
@@ -218,7 +235,7 @@ export function StudyContextProvider({ children }: StudyContextProviderProps) {
             : "No pudimos conectarnos. Revisá tu conexión e intentá nuevamente."
         );
       } finally {
-        if (mountedRef.current) {
+        if (mountedRef.current && userKeyRef.current === userKey) {
           setIsLoadingStudies(false);
         }
       }
@@ -232,7 +249,7 @@ export function StudyContextProvider({ children }: StudyContextProviderProps) {
         legalStudiesRequestRef.current = null;
       }
     }
-  }, [authStatus, currentUser, isAuthReady, persistContext]);
+  }, [authStatus, userKey, isAuthReady, persistContext]);
 
   useEffect(() => {
     if (!isHydrated) {
@@ -251,6 +268,7 @@ export function StudyContextProvider({ children }: StudyContextProviderProps) {
   }, [activeContext, isHydrated]);
 
   const selectPersonalContext = useCallback(() => {
+    setApiWorkContext(PERSONAL_CONTEXT);
     setActiveContext(PERSONAL_CONTEXT);
     persistContext(PERSONAL_CONTEXT);
   }, [persistContext]);
@@ -263,27 +281,30 @@ export function StudyContextProvider({ children }: StudyContextProviderProps) {
         name: study.name || "Estudio Juridico",
       };
 
+      if (!legalStudies.some((option) => String(option.id) === nextContext.legalStudyId)) return;
+      setApiWorkContext(nextContext);
       setActiveContext(nextContext);
       persistContext(nextContext);
     },
-    [persistContext]
+    [legalStudies, persistContext]
   );
 
-  const activeContextKey = getContextKey(activeContext);
+  const contextReady = isHydrated && hydratedUserKey === userKey && Boolean(userKey);
+  const activeContextKey = getContextKey(contextReady ? activeContext : PERSONAL_CONTEXT);
   const activeLegalStudy = useMemo(
     () =>
-      activeContext.type === "study"
+      contextReady && activeContext.type === "study"
         ? legalStudies.find((study) => String(study.id) === String(activeContext.legalStudyId)) ||
           { id: activeContext.legalStudyId, name: activeContext.name }
         : null,
-    [activeContext, legalStudies]
+    [activeContext, contextReady, legalStudies]
   );
   const value = useMemo(
     () => ({
-      activeContext,
+      activeContext: contextReady ? activeContext : PERSONAL_CONTEXT,
       activeContextKey,
       activeLegalStudy,
-      isHydrated,
+      isHydrated: contextReady,
       isLoadingStudies,
       studiesError,
       legalStudies,
@@ -293,6 +314,7 @@ export function StudyContextProvider({ children }: StudyContextProviderProps) {
     }),
     [
       activeContext,
+      contextReady,
       activeContextKey,
       activeLegalStudy,
       isHydrated,

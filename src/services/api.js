@@ -45,6 +45,8 @@ const DASHBOARD_BOOTSTRAP_CACHE_MS = 1200;
 let dashboardResumenInFlight = null;
 let notificationsInFlight = null;
 let dashboardBootstrapInFlight = null;
+let workContextEpoch = 0;
+const caseRequestsInFlight = new Map();
 let lastDashboardBootstrap = null;
 let activeWorkContext = { type: 'personal', legalStudyId: null, name: 'Mis Casos' };
 const LUX_CONNECTION_ERROR_MESSAGE = 'No pude conectarme con LUX en este momento.';
@@ -1073,6 +1075,7 @@ export async function getMyLegalStudies() {
     return simulateDelay(toArray(mockStore.legalStudies).map((item) => ({
       id: String(item.id),
       name: safeString(item.name, 'Estudio Juridico'),
+      role: item.role || 'OWNER',
     })));
   }
 
@@ -1082,6 +1085,7 @@ export async function getMyLegalStudies() {
   return toArray(data).map((item) => ({
     id: String(item.id),
     name: safeString(item.name, 'Estudio Juridico'),
+    role: item.role || 'MEMBER',
   }));
 }
 
@@ -1100,10 +1104,23 @@ export async function joinLegalStudy(name) {
     body: { name: name.trim() },
   });
 
+  const study = response?.data || response;
+  if (!study?.id || !study?.name) {
+    throw new Error('El servidor no devolvio el estudio vinculado. Intenta nuevamente.');
+  }
   return {
-    id: String(response?.id || Date.now()),
-    name: safeString(response?.name || name, name),
+    id: String(study.id),
+    name: safeString(study.name, name),
   };
+}
+
+export async function addLegalStudyMember(legalStudyId, email) {
+  if (USE_MOCKS) return simulateDelay({ legalStudyId, email, role: 'MEMBER', status: 'ACTIVE' });
+  const response = await request(`/legal-studies/${encodeURIComponent(String(legalStudyId))}/members`, {
+    method: 'POST',
+    body: { email: email.trim().toLowerCase() },
+  });
+  return response?.data || response;
 }
 
 function getWorkContextKey(context = activeWorkContext) {
@@ -1113,9 +1130,16 @@ function getWorkContextKey(context = activeWorkContext) {
 }
 
 function setScopedCacheDirty() {
+  workContextEpoch += 1;
+  caseRequestsInFlight.clear();
   dashboardResumenInFlight = null;
   dashboardBootstrapInFlight = null;
   lastDashboardBootstrap = null;
+}
+
+export function resetApiWorkContext() {
+  activeWorkContext = { type: 'personal', legalStudyId: null, name: 'Mis Casos' };
+  setScopedCacheDirty();
 }
 
 export function setApiWorkContext(context = {}) {
@@ -1205,19 +1229,20 @@ export async function getDashboardResumen(options = {}) {
     return dashboardResumenInFlight;
   }
 
-  dashboardResumenInFlight = (async () => {
+  const pending = (async () => {
     const endpoint =
-      activeWorkContext?.type === 'study'
-        ? withWorkScope(DASHBOARD_RESUMEN_ENDPOINT)
-        : DASHBOARD_RESUMEN_ENDPOINT;
+      appendQueryParams(DASHBOARD_RESUMEN_ENDPOINT, getActiveWorkContextQuery());
     const data = await request(endpoint);
 
-    return enrichDashboardResumenWithCases(normalizeDashboardResumen(data));
-  })().finally(() => {
-    dashboardResumenInFlight = null;
-  });
+    return normalizeDashboardResumen(data);
+  })();
+  dashboardResumenInFlight = pending;
+  void pending.then(
+    () => { if (dashboardResumenInFlight === pending) dashboardResumenInFlight = null; },
+    () => { if (dashboardResumenInFlight === pending) dashboardResumenInFlight = null; }
+  );
 
-  return dashboardResumenInFlight;
+  return pending;
 }
 
 export async function getCases(context = null, params = {}) {
@@ -1279,18 +1304,23 @@ export async function getCases(context = null, params = {}) {
   if (params.search) queryParams.append('search', params.search);
 
   const queryStr = `?${queryParams.toString()}`;
-
-  const response = await requestWithFallback(
-    `/causas${queryStr}`,
-    `/cases${queryStr}`,
-    { timeout: DATA_REQUEST_TIMEOUT_MS }
+  const requestKey = `${getWorkContextKey()}:${queryStr}`;
+  if (caseRequestsInFlight.has(requestKey)) return caseRequestsInFlight.get(requestKey);
+  const pending = (async () => {
+    const response = await requestWithFallback(
+      `/causas${queryStr}`,
+      `/cases${queryStr}`,
+      { timeout: DATA_REQUEST_TIMEOUT_MS }
+    );
+    const page = normalizePaginatedResponse(response, normalizeCase);
+    return { ...page, items: sortByDateDesc(page.items, 'createdAt') };
+  })();
+  caseRequestsInFlight.set(requestKey, pending);
+  void pending.then(
+    () => { if (caseRequestsInFlight.get(requestKey) === pending) caseRequestsInFlight.delete(requestKey); },
+    () => { if (caseRequestsInFlight.get(requestKey) === pending) caseRequestsInFlight.delete(requestKey); }
   );
-
-  const page = normalizePaginatedResponse(response, normalizeCase);
-  return {
-    ...page,
-    items: sortByDateDesc(page.items, 'createdAt'),
-  };
+  return pending;
 }
 
 export async function getAllCases(params = {}) {
@@ -1400,6 +1430,7 @@ export async function createCase(data) {
         : {}),
   };
   const response = await requestWithFallback(endpoint, withWorkScope('/cases'), { method: 'POST', body: caseData });
+  setScopedCacheDirty();
   return normalizeCase({
     ...response,
     title: response?.title ?? response?.titulo ?? response?.caratula ?? caseData.caratula,
@@ -1407,6 +1438,22 @@ export async function createCase(data) {
     court: response?.court ?? response?.juzgado ?? caseData.juzgado,
     status: response?.status ?? response?.estado ?? caseData.estado,
   });
+}
+
+export async function moveCaseToStudy(caseId, legalStudyId) {
+  if (USE_MOCKS) {
+    const index = mockStore.cases.findIndex((item) => String(item.id) === String(caseId));
+    if (index < 0) throw new Error('Causa no encontrada.');
+    mockStore.cases[index] = { ...mockStore.cases[index], scope: 'LEGAL_STUDY', legalStudyId };
+    setScopedCacheDirty();
+    return simulateDelay(normalizeCase(mockStore.cases[index]));
+  }
+  const data = await request(`/causas/${encodeURIComponent(String(caseId))}/move-to-study`, {
+    method: 'POST',
+    body: { legalStudyId },
+  });
+  setScopedCacheDirty();
+  return normalizeCase(data);
 }
 
 export async function updateCase(id, data) {
@@ -2368,7 +2415,9 @@ export async function getDashboardBootstrap(options = {}) {
     return dashboardBootstrapInFlight;
   }
 
-  dashboardBootstrapInFlight = (async () => {
+  const contextKey = getWorkContextKey();
+  const epoch = workContextEpoch;
+  const pending = (async () => {
     const [resumen, notifications] = await Promise.all([
       getDashboardResumen(options),
       getNotifications(options).catch(() => []),
@@ -2379,17 +2428,17 @@ export async function getDashboardBootstrap(options = {}) {
       notificationCount: notifications.filter((item) => !item.read).length,
     };
 
-    lastDashboardBootstrap = {
-      data,
-      timestamp: Date.now(),
-    };
+    if (getWorkContextKey() === contextKey && workContextEpoch === epoch) lastDashboardBootstrap = { data, timestamp: Date.now() };
 
     return data;
-  })().finally(() => {
-    dashboardBootstrapInFlight = null;
-  });
+  })();
 
-  return dashboardBootstrapInFlight;
+  dashboardBootstrapInFlight = pending;
+  void pending.then(
+    () => { if (dashboardBootstrapInFlight === pending) dashboardBootstrapInFlight = null; },
+    () => { if (dashboardBootstrapInFlight === pending) dashboardBootstrapInFlight = null; }
+  );
+  return pending;
 }
 
 export function preloadDashboardBootstrap() {

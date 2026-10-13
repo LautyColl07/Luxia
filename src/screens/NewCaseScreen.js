@@ -1,5 +1,5 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import ActionFeedbackModal from '../components/ActionFeedbackModal';
@@ -13,20 +13,26 @@ const STATUS_OPTIONS = ['Activa', 'Pendiente', 'En proceso', 'Archivada'];
 
 export default function NewCaseScreen({ navigation }) {
   const { colors } = useAppTheme();
-  const { legalStudies, activeLegalStudy, selectPersonalContext, selectStudyContext } = useStudyContext();
+  const { activeContext, legalStudies, activeLegalStudy } = useStudyContext();
   const layout = useResponsiveLayout();
   const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
   const hasStudy = legalStudies.length > 0;
-  const studyId = activeLegalStudy?.id || legalStudies[0]?.id || null;
+  const [selectedStudyId, setSelectedStudyId] = useState(activeLegalStudy?.id || null);
+  const studyId = selectedStudyId || activeLegalStudy?.id || legalStudies[0]?.id || null;
   const [form, setForm] = useState({
     title: '',
     description: '',
     court: '',
     status: 'Activa',
   });
-  const [scope, setScope] = useState('PRIVATE');
+  const [scope, setScope] = useState(activeContext.type === 'study' ? 'LEGAL_STUDY' : 'PRIVATE');
   const [submitting, setSubmitting] = useState(false);
   const [successFeedback, setSuccessFeedback] = useState(null);
+
+  useEffect(() => {
+    setScope(activeContext.type === 'study' ? 'LEGAL_STUDY' : 'PRIVATE');
+    setSelectedStudyId(activeLegalStudy?.id || null);
+  }, [activeContext.type, activeLegalStudy?.id]);
 
   const updateField = (key, value) => setForm((current) => ({ ...current, [key]: value }));
 
@@ -48,17 +54,6 @@ export default function NewCaseScreen({ navigation }) {
       };
 
       await createCase(payload);
-
-      // Keep the workspace aligned with the scope that the server accepted so
-      // the hearing selector refetches the same authorized tenant on return.
-      if (scope === 'LEGAL_STUDY' && studyId) {
-        const selectedStudy = legalStudies.find((study) => String(study.id) === String(studyId));
-        if (selectedStudy) {
-          selectStudyContext(selectedStudy);
-        }
-      } else {
-        selectPersonalContext();
-      }
 
       setSuccessFeedback({
         title: 'Causa creada',
@@ -214,6 +209,24 @@ export default function NewCaseScreen({ navigation }) {
             )}
           </Pressable>
         </View>
+        {scope === 'LEGAL_STUDY' && legalStudies.length > 1 ? (
+          <View style={styles.scopeStudyChoices}>
+            <Text style={styles.scopeSectionHint}>Estudio donde se guardará</Text>
+            {legalStudies.map((study) => (
+              <Pressable
+                accessibilityRole="radio"
+                accessibilityState={{ checked: String(study.id) === String(studyId) }}
+                key={study.id}
+                onPress={() => setSelectedStudyId(study.id)}
+                style={[styles.optionChip, String(study.id) === String(studyId) && styles.optionChipActive]}
+              >
+                <Text style={[styles.optionChipText, String(study.id) === String(studyId) && styles.optionChipTextActive]}>
+                  {study.name}{legalStudies.filter((item) => item.name === study.name).length > 1 ? ` · ${String(study.id).slice(-6)}` : ''}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
       </View>
 
       <Pressable
@@ -339,6 +352,7 @@ const createStyles = (colors, layout) => StyleSheet.create({
     gap: 12,
     marginTop: 4,
   },
+  scopeStudyChoices: { gap: 8, marginTop: 6 },
   scopeCard: {
     flex: 1,
     backgroundColor: colors.card,

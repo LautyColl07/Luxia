@@ -10,6 +10,7 @@ export type CaseScopeSelectorProps = {
   value?: CaseScope;
   defaultValue?: CaseScope;
   onValueChange?: (value: CaseScope) => void;
+  studyAvailable?: boolean;
 };
 
 const OPTIONS = [
@@ -17,12 +18,12 @@ const OPTIONS = [
   { value: 'study', label: 'Causas del estudio', icon: 'account-group-outline' },
 ] as const;
 
-// Home uses only local state in stage 1. A future owner can supply value and
-// onValueChange. This component never changes study context, requests or storage.
+// Controlled by StudyContext on Home; local state remains available for previews.
 export default function CaseScopeSelector({
   value,
   defaultValue = 'personal',
   onValueChange,
+  studyAvailable = true,
 }: CaseScopeSelectorProps) {
   const { colors } = useAppTheme();
   const [localValue, setLocalValue] = useState(defaultValue);
@@ -103,7 +104,8 @@ export default function CaseScopeSelector({
           <Pressable
             accessibilityLabel={option.label}
             accessibilityRole="radio"
-            accessibilityState={{ checked: selectedValue === option.value }}
+            accessibilityState={{ checked: selectedValue === option.value, disabled: option.value === 'study' && !studyAvailable }}
+            disabled={option.value === 'study' && !studyAvailable}
             key={option.value}
             onBlur={() => setFocusedValue(null)}
             onFocus={() => setFocusedValue(option.value)}
@@ -113,6 +115,7 @@ export default function CaseScopeSelector({
             }}
             style={({ pressed }) => [
               styles.option,
+              option.value === 'study' && !studyAvailable && { opacity: 0.5 },
               focusedValue === option.value && { borderColor: colors.focusRing },
               pressed && { opacity: 0.8 },
             ]}

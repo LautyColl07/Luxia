@@ -1,36 +1,46 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
 import HearingRecordingPanel from '../components/HearingRecordingPanel';
 import LoadingState from '../components/LoadingState';
 import StatusBadge from '../components/StatusBadge';
+import { useAuth } from '../context/AuthContext';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
-import { getCaseById } from '../services/api';
+import { getCaseById, moveCaseToStudy } from '../services/api';
 import { useResponsiveLayout } from '../theme/layout';
 import { formatDate, formatDateTime } from '../utils/date';
 
 export default function CaseDetailScreen({ navigation, route }) {
   const { colors } = useAppTheme();
-  const { activeContextKey } = useStudyContext();
+  const { activeContextKey, legalStudies, selectStudyContext } = useStudyContext();
+  const { currentUser } = useAuth();
   const layout = useResponsiveLayout();
   const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
   const caseId = route?.params?.caseId;
   const [caseDetail, setCaseDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [moveError, setMoveError] = useState('');
+  const [showMoveModal, setShowMoveModal] = useState(false);
+  const [moving, setMoving] = useState(false);
+  const requestSequenceRef = useRef(0);
 
   const loadCase = useCallback(async () => {
+    const requestId = ++requestSequenceRef.current;
     try {
       setLoading(true);
+      setCaseDetail(null);
       setError('');
       const item = await getCaseById(caseId);
+      if (requestSequenceRef.current !== requestId) return;
       setCaseDetail(item);
     } catch (loadError) {
+      if (requestSequenceRef.current !== requestId) return;
       console.error('[CaseDetailScreen] No se pudo cargar la causa.');
       setError(
         loadError instanceof Error
@@ -38,13 +48,14 @@ export default function CaseDetailScreen({ navigation, route }) {
           : 'No pudimos cargar el detalle de la causa.'
       );
     } finally {
-      setLoading(false);
+      if (requestSequenceRef.current === requestId) setLoading(false);
     }
   }, [activeContextKey, caseId]);
 
   useFocusEffect(
     useCallback(() => {
       void loadCase();
+      return () => { requestSequenceRef.current += 1; };
     }, [loadCase])
   );
 
@@ -70,6 +81,41 @@ export default function CaseDetailScreen({ navigation, route }) {
   const hearings = caseDetail?.hearings || [];
   const documents = caseDetail?.documents || [];
   const tasks = caseDetail?.tasks || [];
+  const sourceStudy = legalStudies.find((study) => String(study.id) === String(caseDetail?.legalStudyId));
+  const canMove = caseDetail?.canMoveToStudy ??
+    (caseDetail?.ownerUserId === currentUser?.uid &&
+      (caseDetail?.scope === 'PRIVATE' || ['OWNER', 'ADMIN'].includes(sourceStudy?.role)));
+  const targetStudies = legalStudies.filter((study) =>
+    String(study.id) !== String(caseDetail?.legalStudyId) && ['OWNER', 'ADMIN', 'MEMBER'].includes(study.role)
+  );
+  const confirmMove = (study) => {
+    const proceed = async () => {
+      try {
+        setMoving(true);
+        setMoveError('');
+        await moveCaseToStudy(caseId, study.id);
+        selectStudyContext(study);
+        setShowMoveModal(false);
+        setCaseDetail(null);
+        setLoading(true);
+      } catch (moveFailure) {
+        setMoveError(moveFailure instanceof Error ? moveFailure.message : 'No pudimos mover la causa.');
+      } finally {
+        setMoving(false);
+      }
+    };
+    const message = caseDetail?.scope === 'LEGAL_STUDY'
+      ? `La causa, sus audiencias y documentos pasarán a ${study.name}. Los integrantes del estudio anterior dejarán de verla.`
+      : `La causa, sus audiencias y documentos serán visibles para los integrantes de ${study.name}.`;
+    if (Platform.OS === 'web') {
+      if (globalThis.confirm(message)) void proceed();
+    } else {
+      Alert.alert('Confirmar pertenencia', message, [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Confirmar', onPress: () => void proceed() },
+      ]);
+    }
+  };
 
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} style={styles.screen}>
@@ -101,7 +147,30 @@ export default function CaseDetailScreen({ navigation, route }) {
           <Text style={styles.primaryButtonText}>Registrar audiencia</Text>
           <MaterialCommunityIcons color={colors.textOnPrimary} name="arrow-right" size={18} />
         </Pressable>
+        {canMove && targetStudies.length ? (
+          <Pressable accessibilityRole="button" onPress={() => { setMoveError(''); setShowMoveModal(true); }} style={styles.moveButton}>
+            <MaterialCommunityIcons color={colors.primary} name="account-group-outline" size={18} />
+            <Text style={styles.moveButtonText}>{caseDetail?.scope === 'PRIVATE' ? 'Compartir con un estudio' : 'Mover a otro estudio'}</Text>
+          </Pressable>
+        ) : null}
       </View>
+      <Modal transparent animationType="fade" visible={showMoveModal} onRequestClose={() => setShowMoveModal(false)}>
+        <View style={styles.moveBackdrop}>
+          <View style={styles.movePanel}>
+            <Text style={styles.moveTitle}>Elegí el estudio de destino</Text>
+            {targetStudies.map((study) => (
+              <Pressable disabled={moving} key={study.id} onPress={() => confirmMove(study)} style={styles.moveOption}>
+                <Text style={styles.moveOptionText}>{study.name}{legalStudies.filter((item) => item.name === study.name).length > 1 ? ` · ${String(study.id).slice(-6)}` : ''}</Text>
+                <MaterialCommunityIcons color={colors.primary} name="chevron-right" size={20} />
+              </Pressable>
+            ))}
+            {moveError ? <Text accessibilityRole="alert" style={styles.moveError}>{moveError}</Text> : null}
+            <Pressable disabled={moving} onPress={() => setShowMoveModal(false)} style={styles.moveOption}>
+              <Text style={styles.moveOptionText}>Cancelar</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
 
       <Section colors={colors} styles={styles} title="Audiencias">
         {hearings.length ? (
@@ -294,6 +363,14 @@ const createStyles = (colors, layout) => StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
+  moveButton: { minHeight: 44, marginTop: 10, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  moveButtonText: { color: colors.primary, fontSize: 14, fontWeight: '600' },
+  moveBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 24 },
+  movePanel: { width: '100%', maxWidth: 420, alignSelf: 'center', backgroundColor: colors.card, borderRadius: 18, padding: 18 },
+  moveTitle: { color: colors.text, fontSize: 18, fontWeight: '700', marginBottom: 10 },
+  moveOption: { minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: colors.borderSoft },
+  moveOptionText: { color: colors.text, fontSize: 14, flex: 1 },
+  moveError: { color: colors.danger, fontSize: 13, marginTop: 10 },
   section: {
     gap: 12,
   },

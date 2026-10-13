@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import ActionFeedbackModal from '../components/ActionFeedbackModal';
@@ -30,6 +30,7 @@ export default function NewHearingScreen({ navigation, route }) {
   const [cases, setCases] = useState([]);
   const [loadingCases, setLoadingCases] = useState(true);
   const [casesError, setCasesError] = useState('');
+  const requestSequenceRef = useRef(0);
   const [submitting, setSubmitting] = useState(false);
   const [successFeedback, setSuccessFeedback] = useState(null);
   const [form, setForm] = useState({
@@ -42,25 +43,32 @@ export default function NewHearingScreen({ navigation, route }) {
   });
 
   const loadCases = useCallback(async () => {
+    const requestId = ++requestSequenceRef.current;
     try {
       setLoadingCases(true);
+      setCases([]);
       setCasesError('');
       const items = await getAllCases();
+      if (requestSequenceRef.current !== requestId) return;
       setCases(items);
+      setForm((current) => current.caseId && !items.some((item) => String(item?.id) === current.caseId)
+        ? { ...current, caseId: '' } : current);
     } catch (error) {
+      if (requestSequenceRef.current !== requestId) return;
       console.error('[NewHearingScreen] No se pudieron cargar las causas.');
       setCases([]);
       setCasesError(
         error instanceof Error ? error.message : 'No pudimos cargar las causas disponibles.'
       );
     } finally {
-      setLoadingCases(false);
+      if (requestSequenceRef.current === requestId) setLoadingCases(false);
     }
   }, [activeContextKey]);
 
   useFocusEffect(
     useCallback(() => {
       void loadCases();
+      return () => { requestSequenceRef.current += 1; };
     }, [loadCases])
   );
 

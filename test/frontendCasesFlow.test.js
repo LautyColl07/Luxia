@@ -66,6 +66,31 @@ function loadApi(fetchImplementation) {
   return module.exports;
 }
 
+test('joinLegalStudy usa la ruta autenticada y conserva el ID y nombre devueltos por el backend', async () => {
+  for (const payload of [
+    { success: true, data: { id: 'study-uuid', name: 'Estudio Sur' } },
+    { id: 'study-uuid', name: 'Estudio Sur' },
+  ]) {
+    const api = loadApi(async (url, options) => {
+      assert.equal(url, 'https://api.test/api/v1/legal-studies/join');
+      assert.equal(options.method, 'POST');
+      assert.equal(options.headers.Authorization, 'Bearer test-token');
+      assert.deepEqual(JSON.parse(options.body), { name: 'Estudio   Sur' });
+      return jsonResponse(201, payload);
+    });
+    api.setAuthState('authenticated');
+    const study = await api.joinLegalStudy('  Estudio   Sur  ');
+    assert.equal(study.id, 'study-uuid');
+    assert.equal(study.name, 'Estudio Sur');
+  }
+});
+
+test('joinLegalStudy rechaza respuestas incompletas sin inventar identificadores', async () => {
+  const api = loadApi(async () => jsonResponse(201, { success: true, data: {} }));
+  api.setAuthState('authenticated');
+  await assert.rejects(api.joinLegalStudy('Sur'), /no devolvio el estudio/);
+});
+
 test('el cliente interpreta el contrato paginado y conserva IDs UUID/CUID como strings', () => {
   const { normalizePaginatedResponse } = loadApi(async () => jsonResponse(200, []));
   const page = normalizePaginatedResponse(
@@ -127,7 +152,7 @@ test('dashboard resumen es una ruta protegida y envia el token Firebase', async 
 
   await api.getDashboardResumen();
 
-  assert.equal(captured.url, 'https://api.test/api/v1/dashboard/resumen');
+  assert.equal(captured.url, 'https://api.test/api/v1/dashboard/resumen?scope=personal');
   assert.equal(captured.options.headers.Authorization, 'Bearer test-token');
 });
 
@@ -144,8 +169,8 @@ test('los componentes usan el resultado exitoso, conservan estados de error y re
     hearingSource.indexOf('if (casesError && !cases.length)') < hearingSource.indexOf('if (!cases.length)'),
     'un error debe renderizarse antes que el estado vacio'
   );
-  assert.match(caseSource, /selectStudyContext\(selectedStudy\)/);
-  assert.match(caseSource, /selectPersonalContext\(\)/);
+  assert.match(caseSource, /scope === 'LEGAL_STUDY' && studyId/);
+  assert.doesNotMatch(caseSource, /selectStudyContext|selectPersonalContext/);
   assert.match(calendarSource, /getAllCases\(\)/);
 });
 
@@ -163,4 +188,104 @@ test('la carga de documentos conserva el caso y contempla native, web y reintent
   assert.match(apiSource, /appendFormDataFile/);
   assert.match(apiSource, /caseId\)/);
   assert.match(apiSource, /timeout: 180000/);
+});
+
+test('el contexto global llega a causas, audiencias, documentos y dashboard', async () => {
+  const calls = [];
+  const api = loadApi(async (url) => {
+    calls.push(String(url));
+    if (String(url).includes('/dashboard/resumen')) return jsonResponse(200, {
+      usuario: { nombre: 'Usuario' }, metricas: {}, proximasAudiencias: [],
+    });
+    if (String(url).includes('/causas')) return jsonResponse(200, { items: [], total: 0, page: 1, limit: 20, totalPages: 0 });
+    return jsonResponse(200, []);
+  });
+  api.setAuthState('authenticated');
+  api.setApiWorkContext({ type: 'study', legalStudyId: 'study-a', name: 'Estudio A' });
+  await Promise.all([api.getCases(), api.getHearings(), api.getDocuments(), api.getDashboardResumen()]);
+  assert.equal(calls.length, 4);
+  assert.ok(calls.every((url) => url.includes('scope=study') && url.includes('legalStudyId=study-a')));
+
+  calls.length = 0;
+  api.setApiWorkContext({ type: 'personal' });
+  await Promise.all([api.getCases(), api.getHearings(), api.getDocuments(), api.getDashboardResumen()]);
+  assert.equal(calls.length, 4);
+  assert.ok(calls.every((url) => url.includes('scope=personal') && !url.includes('legalStudyId=')));
+});
+
+test('consultas simultáneas idénticas de causas comparten una solicitud y se separan por contexto', async () => {
+  const calls = [];
+  const api = loadApi(async (url) => {
+    calls.push(String(url));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return jsonResponse(200, { items: [], total: 0, page: 1, limit: 20, totalPages: 0 });
+  });
+  api.setAuthState('authenticated');
+  await Promise.all([api.getCases(null, { page: 1, limit: 20 }), api.getCases(null, { page: 1, limit: 20 })]);
+  assert.equal(calls.length, 1);
+  api.setApiWorkContext({ type: 'study', legalStudyId: 'study-a' });
+  await api.getCases(null, { page: 1, limit: 20 });
+  assert.equal(calls.length, 2);
+  assert.match(calls[1], /scope=study/);
+});
+
+test('al cambiar de cuenta se invalida el resumen personal en caché', async () => {
+  let summaries = 0;
+  const api = loadApi(async (url) => {
+    if (String(url).includes('/dashboard/resumen')) {
+      summaries += 1;
+      return jsonResponse(200, { usuario: { nombre: 'Usuario' }, metricas: { causasActivas: summaries }, proximasAudiencias: [] });
+    }
+    return jsonResponse(200, []);
+  });
+  api.setAuthState('authenticated');
+  await api.getDashboardBootstrap();
+  await api.getDashboardBootstrap();
+  assert.equal(summaries, 1);
+  api.resetApiWorkContext();
+  const next = await api.getDashboardBootstrap();
+  assert.equal(summaries, 2);
+  assert.equal(next.resumen.metricas.causasActivas, 2);
+});
+
+test('Inicio controla el selector; otras pantallas no muestran selectores redundantes', () => {
+  const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
+  const dashboard = read('src/screens/DashboardScreen.js');
+  const cases = read('src/screens/CasesScreen.js');
+  const documents = read('src/screens/DocumentsScreen.js');
+  const calendar = read('src/screens/CalendarScreen.js');
+  const newCase = read('src/screens/NewCaseScreen.js');
+  const navigator = read('src/navigation/DashboardNavigator.js');
+  const provider = read('src/context/StudyContext.tsx');
+  assert.match(dashboard, /value=\{activeContext\.type\}/);
+  assert.match(dashboard, /selectStudyContext/);
+  for (const source of [cases, documents, calendar, navigator]) assert.doesNotMatch(source, /<StudyContextSelector|segmentedWrapper>/);
+  assert.match(newCase, /¿Dónde deseas guardar esta causa\?/);
+  assert.match(provider, /STORAGE_KEY\}\.\$\{userKey\}/);
+  assert.match(read('src/components/CaseScopeSelector.tsx'), /duration: reduceMotion\.current \? 0 : 220/);
+});
+
+test('el responsable agrega un integrante al ID del estudio y puede mover una causa existente', async () => {
+  const calls = [];
+  const api = loadApi(async (url, options) => {
+    calls.push({ url: String(url), method: options.method, body: options.body ? JSON.parse(options.body) : null });
+    if (String(url).includes('/members')) return jsonResponse(200, { data: { legalStudyId: 'study-a', email: 'b@test.test', role: 'MEMBER', status: 'ACTIVE' } });
+    return jsonResponse(200, { id: 12, title: 'Causa', scope: 'LEGAL_STUDY', legalStudyId: 'study-a' });
+  });
+  api.setAuthState('authenticated');
+  await api.addLegalStudyMember('study-a', ' B@Test.Test ');
+  await api.moveCaseToStudy(12, 'study-a');
+  assert.equal(calls[0].url, 'https://api.test/api/v1/legal-studies/study-a/members');
+  assert.equal(calls[0].method, 'POST');
+  assert.deepEqual(calls[0].body, { email: 'b@test.test' });
+  assert.equal(calls[1].url, 'https://api.test/api/v1/causas/12/move-to-study');
+  assert.deepEqual(calls[1].body, { legalStudyId: 'study-a' });
+});
+
+test('Nueva causa propone el contexto activo y conserva la selección manual de pertenencia', () => {
+  const source = fs.readFileSync(path.join(root, 'src/screens/NewCaseScreen.js'), 'utf8');
+  assert.match(source, /activeContext\.type === 'study' \? 'LEGAL_STUDY' : 'PRIVATE'/);
+  assert.match(source, /onPress=\{\(\) => setScope\('PRIVATE'\)\}/);
+  assert.match(source, /onPress=\{\(\) => setScope\('LEGAL_STUDY'\)\}/);
+  assert.match(source, /legalStudyId: studyId/);
 });
