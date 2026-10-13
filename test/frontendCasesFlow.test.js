@@ -213,6 +213,27 @@ test('el contexto global llega a causas, audiencias, documentos y dashboard', as
   assert.ok(calls.every((url) => url.includes('scope=personal') && !url.includes('legalStudyId=')));
 });
 
+test('el contrato documental privado conserva nombre original, MIME, bytes, fecha y URL autorizada', async () => {
+  const api = loadApi(async (url, options) => {
+    assert.equal(String(url), 'https://api.test/api/v1/documentos?scope=personal');
+    assert.equal(options.headers.Authorization, 'Bearer test-token');
+    return jsonResponse(200, [{
+      id: 7, fileName: '1791893716436-Entrevista.pdf', originalName: 'Entrevista.pdf',
+      filename: 'Entrevista.pdf', mimeType: 'application/pdf', sizeBytes: 2048,
+      createdAt: '2026-10-13T12:00:00.000Z', path: null,
+      downloadUrl: '/api/v1/documentos/7/download', caseId: 2, caseTitle: 'Causa personal 1', hearingId: 3,
+    }]);
+  });
+  api.setAuthState('authenticated');
+  const [document] = await api.getDocuments();
+  assert.equal(document.originalName, 'Entrevista.pdf');
+  assert.equal(document.mimeType, 'application/pdf');
+  assert.equal(document.sizeBytes, 2048);
+  assert.equal(document.uploadedAt, '2026-10-13T12:00:00.000Z');
+  assert.equal(document.downloadUrl, '/api/v1/documentos/7/download');
+  assert.equal(document.caseTitle, 'Causa personal 1');
+});
+
 test('consultas simultáneas idénticas de causas comparten una solicitud y se separan por contexto', async () => {
   const calls = [];
   const api = loadApi(async (url) => {

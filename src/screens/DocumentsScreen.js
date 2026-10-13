@@ -5,7 +5,9 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import {
   Alert,
+  Animated,
   FlatList,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -15,15 +17,19 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import EmptyState from '../components/EmptyState';
+import ActionFeedbackModal from '../components/ActionFeedbackModal';
+import DocumentItem from '../components/documents/DocumentItem';
+import DocumentsToolbar, { CreateWritingButton } from '../components/documents/DocumentsToolbar';
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
 import { API_ROOT_URL } from '../config/api';
 import { useAuth } from '../context/AuthContext';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
+import useDocumentViewMode from '../hooks/useDocumentViewMode';
 import { getCurrentIdToken, getDocuments } from '../services/api';
 import { useResponsiveLayout } from '../theme/layout';
-import { formatDate } from '../utils/date';
+import { getDocumentDownloadUrl, getDocumentName } from '../utils/documentPresentation';
 
 export default function DocumentsScreen({ navigation }) {
   const { colors } = useAppTheme();
@@ -32,19 +38,30 @@ export default function DocumentsScreen({ navigation }) {
   const layout = useResponsiveLayout();
   const { activeContext, activeContextKey, isHydrated } = useStudyContext();
   const requestSequenceRef = useRef(0);
+  const downloadInProgress = useRef(false);
   const styles = useMemo(
     () => createStyles(colors, layout, insets.top),
     [colors, insets.top, layout]
   );
-  const listColumns = layout.isDesktop ? 2 : 1;
+  const { viewMode, changeViewMode, opacity } = useDocumentViewMode();
+  const [contentWidth, setContentWidth] = useState(0);
+  const [writingNoticeVisible, setWritingNoticeVisible] = useState(false);
+  const [fileErrorVisible, setFileErrorVisible] = useState(false);
+  const listRef = useRef(null);
+  const scrollOffset = useRef(0);
+  const restoreScroll = useRef(false);
+  const availableWidth = Math.max(0, contentWidth - layout.gutter * 2);
+  const minimumCardWidth = layout.isWebDesktop ? 220 : layout.isTablet ? 200 : 164;
+  const listColumns = viewMode === 'grid' ? Math.max(1, Math.floor((availableWidth + 12) / (minimumCardWidth + 12))) : 1;
+  const cardWidth = Math.max(0, (availableWidth - (listColumns - 1) * 12) / listColumns);
 
   const [documents, setDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [downloadingId, setDownloadingId] = useState(null);
 
-  const [searchOpen, setSearchOpen] = useState(false);
   const [searchText, setSearchText] = useState('');
+  const [searchFocused, setSearchFocused] = useState(false);
 
   const loadDocuments = useCallback(async () => {
     if (!isAuthReady || !isHydrated || authStatus !== 'authenticated' || !currentUser) {
@@ -90,12 +107,14 @@ export default function DocumentsScreen({ navigation }) {
 
     return documents.filter((item) => {
       const fileName = String(item?.fileName || '').toLowerCase();
+      const originalName = String(getDocumentName(item)).toLowerCase();
       const documentType = String(item?.documentType || '').toLowerCase();
       const caseTitle = String(item?.caseTitle || '').toLowerCase();
       const hearingTitle = String(item?.hearingTitle || '').toLowerCase();
 
       return (
         fileName.includes(query) ||
+        originalName.includes(query) ||
         documentType.includes(query) ||
         caseTitle.includes(query) ||
         hearingTitle.includes(query)
@@ -103,56 +122,14 @@ export default function DocumentsScreen({ navigation }) {
     });
   }, [documents, searchText]);
 
-  const getFileUrl = useCallback((document) => {
-    if (!document?.path) {
-      return null;
-    }
-
-    try {
-      const apiRoot = new URL(API_ROOT_URL);
-      const fileUrl = new URL(document.path, apiRoot);
-
-      if (
-        fileUrl.origin !== apiRoot.origin ||
-        !fileUrl.pathname.startsWith('/api/v1/documentos/')
-      ) {
-        return null;
-      }
-
-      if (activeContext?.type === 'study' && activeContext.legalStudyId) {
-        fileUrl.searchParams.set('scope', 'study');
-        fileUrl.searchParams.set('legalStudyId', String(activeContext.legalStudyId));
-      } else {
-        fileUrl.searchParams.set('scope', 'personal');
-      }
-
-      return fileUrl.toString();
-    } catch {
-      return null;
-    }
-  }, [activeContext]);
-
-  const openDocument = useCallback(
-    async (document) => {
-      const fileUrl = getFileUrl(document);
-
-      if (!fileUrl) {
-        Alert.alert(
-          'Archivo no disponible.',
-          'El documento seleccionado no tiene un archivo asociado.'
-        );
-        return;
-      }
-
-      // Opening a URL externally cannot attach Firebase credentials. Use the
-      // authenticated download flow so backend authorization remains enforced.
-      return downloadDocument(document);
-    },
-    [getFileUrl]
+  const getFileUrl = useCallback(
+    (document) => getDocumentDownloadUrl(document, API_ROOT_URL, activeContext),
+    [activeContext]
   );
 
   const downloadDocument = useCallback(
-    async (document) => {
+    async (document, { preview = false } = {}) => {
+      if (downloadInProgress.current) return;
       const fileUrl = getFileUrl(document);
 
       if (!fileUrl) {
@@ -163,17 +140,46 @@ export default function DocumentsScreen({ navigation }) {
         return;
       }
 
+      // Reserve the preview window during the click so browsers do not block it
+      // after the authenticated request. Never navigate to a private URL directly.
+      let previewWindow = null;
+      downloadInProgress.current = true;
       try {
+        if (Platform.OS === 'web' && preview) {
+          previewWindow = window.open('about:blank', '_blank');
+          if (previewWindow) previewWindow.opener = null;
+        }
         setDownloadingId(document?.id ?? null);
 
         const fallbackName = `documento-${document?.id || Date.now()}.pdf`;
-        const safeFileName = String(document?.fileName || fallbackName).replace(
+        const safeFileName = String(document?.originalName || document?.filename || document?.fileName || fallbackName).replace(
           /[\\/:*?"<>|]/g,
           '_'
         );
 
-        const localUri = `${FileSystem.documentDirectory}${safeFileName}`;
         const token = await getCurrentIdToken();
+        if (Platform.OS === 'web') {
+          // Same handler, URL and Bearer credentials as native; FileSystem's
+          // legacy downloader is unavailable in browsers.
+          const response = await fetch(fileUrl, { headers: { Authorization: `Bearer ${token}` } });
+          if (!response.ok) throw new Error('La descarga fue rechazada por el servidor.');
+          const blob = await response.blob();
+          const objectUrl = URL.createObjectURL(blob);
+          setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+          if (previewWindow && (blob.type === 'application/pdf' || blob.type.startsWith('image/'))) {
+            previewWindow.location.replace(objectUrl);
+          } else {
+            previewWindow?.close();
+            const link = window.document.createElement('a');
+            link.href = objectUrl;
+            link.download = safeFileName;
+            window.document.body.appendChild(link);
+            link.click();
+            link.remove();
+          }
+          return;
+        }
+        const localUri = `${FileSystem.documentDirectory}${safeFileName}`;
         const result = await FileSystem.downloadAsync(fileUrl, localUri, {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -192,434 +198,132 @@ export default function DocumentsScreen({ navigation }) {
           'La descarga se completó correctamente.'
         );
       } catch (downloadError) {
-      console.error('[DocumentsScreen] No se pudo descargar el documento.');
-        Alert.alert('No se pudo descargar el documento.', 'Intenta nuevamente.');
+        previewWindow?.close();
+        console.error('[DocumentsScreen] No se pudo descargar el documento.');
+        if (Platform.OS === 'web') {
+          setFileErrorVisible(true);
+        } else {
+          Alert.alert('No se pudo descargar el documento.', 'Intenta nuevamente.');
+        }
       } finally {
+        downloadInProgress.current = false;
         setDownloadingId(null);
       }
     },
     [getFileUrl]
   );
 
-  if (loading && !documents.length) {
-    return (
-      <LoadingState
-        title="Cargando documentos"
-        message="Estamos reuniendo escritos, anexos y prueba documental."
-      />
-    );
-  }
+  const openDocument = useCallback(
+    (document) => downloadDocument(document, { preview: true }),
+    [downloadDocument]
+  );
 
-  if (error && !documents.length) {
-    return (
-      <ErrorState
-        title="No pudimos cargar los documentos"
-        message={error}
-        onRetry={loadDocuments}
-      />
-    );
-  }
+  const handleViewChange = useCallback((nextMode) => {
+    if (nextMode !== viewMode) restoreScroll.current = true;
+    changeViewMode(nextMode);
+  }, [changeViewMode, viewMode]);
 
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
-        <View style={styles.headerTopRow}>
-          <View style={styles.titleContent}>
-            <Text style={styles.title}>Documentos</Text>
-            <Text style={styles.subtitle}>
-              Accede al repositorio documental vinculado a tus causas y audiencias.
-            </Text>
+        <Text accessibilityRole="header" style={styles.title}>Documentos</Text>
+        {layout.isWebDesktop ? <Text style={styles.subtitle}>
+          Accede al repositorio documental vinculado a tus causas y audiencias.
+        </Text> : null}
+        <View style={styles.searchAndActions}>
+          <View style={[styles.searchWrapper, searchFocused && styles.searchFocused]}>
+            <TextInput accessibilityLabel="Buscar documentos" style={styles.searchInput}
+              placeholder="Buscar documentos..." placeholderTextColor={colors.textSecondary}
+              value={searchText} onChangeText={setSearchText}
+              onFocus={() => setSearchFocused(true)} onBlur={() => setSearchFocused(false)}
+              autoCorrect={false} returnKeyType="search" />
+            {searchText ? <Pressable accessibilityRole="button" accessibilityLabel="Limpiar búsqueda"
+              onPress={() => setSearchText('')} style={styles.searchIcon}>
+              <MaterialCommunityIcons color={colors.textSecondary} name="close" size={20} />
+            </Pressable> : <View pointerEvents="none" style={styles.searchIcon}>
+              <MaterialCommunityIcons color={colors.textSecondary} name="magnify" size={23} />
+            </View>}
           </View>
-        </View>
-
-        <View style={styles.headerTools}>
-          <View style={[styles.searchWrapper, !searchOpen && styles.searchWrapperCollapsed]}>
-            {searchOpen && (
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Buscar..."
-                placeholderTextColor={colors.textMuted}
-                value={searchText}
-                onChangeText={setSearchText}
-                autoFocus
-                onBlur={() => {
-                  if (searchText.trim() === '') {
-                    setSearchOpen(false);
-                  }
-                }}
-              />
-            )}
-
-            <Pressable
-              onPress={() => setSearchOpen(true)}
-              style={styles.searchButton}
-            >
-              <MaterialCommunityIcons
-                color={searchOpen ? colors.primary : colors.text}
-                name="magnify"
-                size={26}
-              />
+          <View style={styles.primaryActions}>
+            <Pressable accessibilityRole="button" onPress={() => navigation.navigate('UploadDocument')}
+              style={({ pressed, focused, hovered }) => [styles.primaryButton,
+                hovered && styles.buttonHovered, focused && styles.buttonFocused, pressed && styles.buttonPressed]}>
+              <MaterialCommunityIcons color={colors.textOnPrimary} name="tray-arrow-up" size={18} />
+              <Text style={styles.primaryButtonText}>Subir documento</Text>
             </Pressable>
+            <CreateWritingButton onCreateWriting={() => setWritingNoticeVisible(true)}
+              style={styles.primaryButton} textStyle={styles.primaryButtonText} />
           </View>
         </View>
-
-        <Pressable
-          onPress={() => navigation.navigate('UploadDocument')}
-          style={styles.primaryButton}
-        >
-          <MaterialCommunityIcons
-            color={colors.textOnPrimary}
-            name="tray-arrow-up"
-            size={18}
-          />
-          <Text style={styles.primaryButtonText}>Subir documento</Text>
-        </Pressable>
+        <DocumentsToolbar viewMode={viewMode} onViewModeChange={handleViewChange} />
       </View>
-
-      <FlatList
-        key={`documents-${listColumns}`}
-        numColumns={listColumns}
-        columnWrapperStyle={listColumns > 1 ? styles.columnRow : undefined}
-        contentContainerStyle={styles.listContent}
-        keyboardShouldPersistTaps="handled"
-        data={filteredDocuments}
-        keyExtractor={(item) => String(item?.id)}
-        renderItem={({ item }) => {
-          const hasFile = Boolean(item?.path);
-          const isDownloading = downloadingId === item?.id;
-
-          return (
-            <View style={styles.card}>
-              <View style={styles.cardTopRow}>
-                <View style={styles.iconWrapper}>
-                  <MaterialCommunityIcons
-                    color={colors.primary}
-                    name="file-document-outline"
-                    size={22}
-                  />
-                </View>
-
-                <View style={styles.cardTextContent}>
-                  <Text style={styles.cardTitle}>
-                    {item?.fileName || 'Documento sin nombre'}
-                  </Text>
-                  <Text style={styles.cardSubtitle}>
-                    {item?.documentType || 'Documento'}
-                  </Text>
-                </View>
-              </View>
-
-              <View style={styles.metaRow}>
-                <MaterialCommunityIcons
-                  color={colors.textSecondary}
-                  name="briefcase-outline"
-                  size={16}
-                />
-                <Text style={styles.metaText}>
-                  {item?.caseTitle || 'Causa sin referencia'}
-                </Text>
-              </View>
-
-              <View style={styles.metaRow}>
-                <MaterialCommunityIcons
-                  color={colors.textSecondary}
-                  name="calendar-clock"
-                  size={16}
-                />
-                <Text style={styles.metaText}>
-                  {item?.hearingTitle || 'Audiencia sin referencia'}
-                </Text>
-              </View>
-
-              <View style={styles.metaRow}>
-                <MaterialCommunityIcons
-                  color={colors.textSecondary}
-                  name="clock-outline"
-                  size={16}
-                />
-                <Text style={styles.metaText}>
-                  Fecha de carga: {formatDate(item?.uploadedAt)}
-                </Text>
-              </View>
-
-              {!hasFile && (
-                <Text style={styles.fileUnavailableText}>
-                  Archivo no disponible.
-                </Text>
-              )}
-
-              <View style={styles.actionsRow}>
-                <Pressable
-                  disabled={!hasFile}
-                  onPress={() => void openDocument(item)}
-                  style={[
-                    styles.secondaryActionButton,
-                    !hasFile && styles.actionButtonDisabled,
-                  ]}
-                >
-                  <MaterialCommunityIcons
-                    color={hasFile ? colors.primary : colors.textMuted}
-                    name="eye-outline"
-                    size={18}
-                  />
-                  <Text
-                    style={[
-                      styles.secondaryActionText,
-                      !hasFile && styles.actionTextDisabled,
-                    ]}
-                  >
-                    Ver
-                  </Text>
-                </Pressable>
-
-                <Pressable
-                  disabled={!hasFile || isDownloading}
-                  onPress={() => void downloadDocument(item)}
-                  style={[
-                    styles.primaryActionButton,
-                    (!hasFile || isDownloading) && styles.actionButtonDisabled,
-                  ]}
-                >
-                  <MaterialCommunityIcons
-                    color={colors.textOnPrimary}
-                    name={isDownloading ? 'loading' : 'download-outline'}
-                    size={18}
-                  />
-                  <Text style={styles.primaryActionText}>
-                    {isDownloading ? 'Descargando...' : 'Descargar'}
-                  </Text>
-                </Pressable>
-              </View>
-            </View>
-          );
-        }}
-        ListEmptyComponent={
-          <EmptyState
-            actionLabel="Subir documento"
-            icon="file-remove-outline"
-            message={
-              searchText.trim()
-                ? 'No encontramos documentos con esa búsqueda.'
-                : 'Todavia no se cargaron documentos.'
-            }
-            onAction={() => navigation.navigate('UploadDocument')}
-            title={searchText.trim() ? 'Sin resultados' : 'Sin documentos registrados'}
-          />
-        }
-        showsVerticalScrollIndicator={false}
-      />
+      <Animated.View style={[styles.results, { opacity }]}
+        onLayout={(event) => setContentWidth(event.nativeEvent.layout.width)}>
+        {loading ? <LoadingState title="Cargando documentos" message="Estamos reuniendo tus documentos." />
+          : error ? <ErrorState title="No pudimos cargar los documentos" message={error} onRetry={loadDocuments} />
+          : <FlatList
+            ref={listRef}
+            key={'documents-' + viewMode + '-' + listColumns}
+            numColumns={listColumns}
+            columnWrapperStyle={listColumns > 1 ? styles.columnRow : undefined}
+            contentContainerStyle={[styles.listContent, viewMode === 'grid' && styles.gridContent]}
+            keyboardShouldPersistTaps="handled"
+            data={filteredDocuments}
+            keyExtractor={(item) => String(item?.id)}
+            extraData={downloadingId}
+            onScroll={(event) => { if (!restoreScroll.current) scrollOffset.current = event.nativeEvent.contentOffset.y; }}
+            scrollEventThrottle={32}
+            onContentSizeChange={() => {
+              if (restoreScroll.current) {
+                listRef.current?.scrollToOffset({ offset: scrollOffset.current, animated: false });
+                restoreScroll.current = false;
+              }
+            }}
+            renderItem={({ item }) => <DocumentItem document={item} viewMode={viewMode} width={cardWidth}
+              showDirectActions={layout.isWebDesktop && contentWidth >= 700}
+              hasFile={Boolean(getFileUrl(item))} isDownloading={downloadingId === item?.id} isBusy={downloadingId !== null}
+              onView={() => void openDocument(item)} onDownload={() => void downloadDocument(item)} />}
+            ListEmptyComponent={<EmptyState actionLabel="Subir documento" icon="file-remove-outline"
+              message={searchText.trim() ? 'Probá con otro nombre, causa o audiencia.' : 'Subí un archivo para agregarlo a tus causas.'}
+              onAction={() => navigation.navigate('UploadDocument')}
+              title={searchText.trim() ? 'No se encontraron documentos' : 'Todavía no hay documentos registrados'} />}
+            showsVerticalScrollIndicator={false}
+          />}
+      </Animated.View>
+      <ActionFeedbackModal visible={writingNoticeVisible} title="Próximamente" icon="clock-outline" tone="info"
+        message="La creación de escritos estará disponible en una próxima etapa."
+        actionLabel="Entendido" onClose={() => setWritingNoticeVisible(false)} />
+      <ActionFeedbackModal visible={fileErrorVisible} title="No se pudo descargar el documento" icon="alert-circle-outline" tone="danger"
+        message="Revisá tu conexión e intentá nuevamente." actionLabel="Entendido"
+        onClose={() => setFileErrorVisible(false)} />
     </View>
   );
 }
 
-const createStyles = (colors, layout, topInset) =>
-  StyleSheet.create({
-    screen: {
-      flex: 1,
-      backgroundColor: colors.background,
-    },
-    header: {
-      width: '100%',
-      maxWidth: layout.contentMaxWidth,
-      alignSelf: 'center',
-      paddingTop: layout.isWebDesktop ? 30 : Math.max(topInset + 20, layout.topSpacing),
-      paddingHorizontal: layout.gutter,
-      paddingBottom: 18,
-      gap: 16,
-    },
-    headerTopRow: {
-      flexDirection: 'row',
-      alignItems: 'flex-start',
-      justifyContent: 'space-between',
-      gap: 12,
-    },
-    titleContent: {
-      flex: 1,
-    },
-    headerTools: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      flexWrap: 'wrap',
-      gap: 12,
-    },
-    title: {
-      color: colors.text,
-      fontSize: layout.isWebDesktop ? 30 : 28,
-      fontWeight: '700',
-    },
-    subtitle: {
-      color: colors.textSecondary,
-      fontSize: 14,
-      lineHeight: 20,
-      marginTop: 6,
-      maxWidth: layout.copyMaxWidth,
-    },
-    searchWrapper: {
-      flex: 1,
-      width: '100%',
-      minWidth: layout.isPhone ? '100%' : 240,
-      maxWidth: 320,
-      minHeight: 48,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'flex-end',
-      gap: 10,
-    },
-    searchWrapperCollapsed: {
-      flexGrow: 0,
-      width: 48,
-      minWidth: 48,
-    },
-    searchInput: {
-      flex: 1,
-      minWidth: 0,
-      height: 48,
-      backgroundColor: colors.card,
-      borderRadius: 16,
-      paddingLeft: 16,
-      paddingRight: 14,
-      color: colors.text,
-      borderWidth: 1,
-      borderColor: colors.borderSoft,
-      fontSize: 14,
-    },
-    searchButton: {
-      width: 48,
-      height: 48,
-      borderRadius: 16,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: colors.card,
-      borderWidth: 1,
-      borderColor: colors.borderSoft,
-    },
-    primaryButton: {
-      minHeight: layout.isWebDesktop ? 52 : 48,
-      alignSelf: 'flex-start',
-      backgroundColor: colors.primary,
-      borderRadius: layout.isWebDesktop ? 14 : 16,
-      paddingHorizontal: 16,
-      paddingVertical: 12,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-    },
-    primaryButtonText: {
-      color: colors.textOnPrimary,
-      fontSize: 14,
-      fontWeight: '700',
-    },
-    listContent: {
-      width: '100%',
-      maxWidth: layout.contentMaxWidth,
-      alignSelf: 'center',
-      paddingHorizontal: layout.gutter,
-      paddingBottom: 28,
-      gap: 12,
-    },
-    columnRow: {
-      gap: 12,
-    },
-    card: {
-      flex: 1,
-      backgroundColor: colors.card,
-      borderRadius: layout.isWebDesktop ? 16 : 24,
-      padding: 18,
-      shadowColor: colors.shadow,
-      shadowOffset: { width: 0, height: 10 },
-      shadowOpacity: layout.isWebDesktop ? 0.08 : 0.14,
-      shadowRadius: 18,
-      elevation: 4,
-      borderWidth: 1,
-      borderColor: colors.borderSoft,
-    },
-    cardTopRow: {
-      flexDirection: 'row',
-      gap: 14,
-      alignItems: 'center',
-      marginBottom: 14,
-    },
-    iconWrapper: {
-      width: 48,
-      height: 48,
-      borderRadius: 18,
-      backgroundColor: colors.accentSoft,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    cardTextContent: {
-      flex: 1,
-    },
-    cardTitle: {
-      color: colors.text,
-      fontSize: 16,
-      fontWeight: '700',
-    },
-    cardSubtitle: {
-      color: colors.primary,
-      fontSize: 13,
-      fontWeight: '600',
-      marginTop: 4,
-    },
-    metaRow: {
-      flexDirection: 'row',
-      gap: 8,
-      alignItems: 'center',
-      marginTop: 6,
-    },
-    metaText: {
-      color: colors.textSecondary,
-      fontSize: 13,
-      flex: 1,
-    },
-    fileUnavailableText: {
-      color: colors.danger,
-      fontSize: 13,
-      fontWeight: '600',
-      marginTop: 12,
-    },
-    actionsRow: {
-      flexDirection: layout.isCompact ? 'column' : 'row',
-      gap: 10,
-      marginTop: 16,
-    },
-    secondaryActionButton: {
-      flex: 1,
-      minHeight: layout.isWebDesktop ? 50 : 46,
-      borderRadius: layout.isWebDesktop ? 14 : 16,
-      borderWidth: 1,
-      borderColor: colors.primary,
-      backgroundColor: colors.card,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 8,
-    },
-    primaryActionButton: {
-      flex: 1,
-      minHeight: layout.isWebDesktop ? 50 : 46,
-      borderRadius: layout.isWebDesktop ? 14 : 16,
-      backgroundColor: colors.primary,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 8,
-    },
-    actionButtonDisabled: {
-      opacity: 0.55,
-    },
-    secondaryActionText: {
-      color: colors.primary,
-      fontSize: 14,
-      fontWeight: '700',
-    },
-    primaryActionText: {
-      color: colors.textOnPrimary,
-      fontSize: 14,
-      fontWeight: '700',
-    },
-    actionTextDisabled: {
-      color: colors.textMuted,
-    },
-  });
+const createStyles = (colors, layout, topInset) => StyleSheet.create({
+  screen: { flex: 1, backgroundColor: colors.background, minWidth: 0 },
+  header: { width: '100%', maxWidth: layout.contentMaxWidth, alignSelf: 'center',
+    paddingTop: layout.isWebDesktop ? 26 : Math.max(topInset + 14, 20),
+    paddingHorizontal: layout.gutter, paddingBottom: 16, gap: 14 },
+  title: { color: colors.text, fontSize: layout.isWebDesktop ? 30 : 26, fontWeight: '700', letterSpacing: -0.5 },
+  subtitle: { color: colors.textSecondary, fontSize: 14, lineHeight: 20, marginTop: -8 },
+  searchAndActions: { flexDirection: layout.isWebDesktop ? 'row' : 'column', alignItems: 'stretch', gap: layout.isWebDesktop ? 16 : 20 },
+  searchWrapper: { flex: layout.isWebDesktop ? 1 : undefined, minWidth: 0, flexDirection: 'row', alignItems: 'center',
+    backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSoft, borderRadius: 8, minHeight: 44 },
+  searchFocused: { borderColor: colors.focusRing },
+  searchInput: { flex: 1, minWidth: 0, paddingLeft: 16, paddingVertical: 10, color: colors.text, fontSize: 13,
+    ...(layout.isWebDesktop ? { outlineStyle: 'none' } : {}) },
+  searchIcon: { width: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  primaryActions: { flexDirection: layout.width < 300 ? 'column' : 'row', gap: 12 },
+  primaryButton: { flex: layout.isWebDesktop ? undefined : 1, minHeight: 44, backgroundColor: colors.primary,
+    borderRadius: 12, paddingHorizontal: layout.isCompact ? 8 : 14, paddingVertical: 10,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderWidth: 1, borderColor: 'transparent' },
+  primaryButtonText: { color: colors.textOnPrimary, fontSize: layout.isCompact ? 12 : 13, fontWeight: '700', flexShrink: 1 },
+  buttonHovered: { backgroundColor: colors.primaryHover },
+  buttonFocused: { borderColor: colors.focusRing },
+  buttonPressed: { opacity: 0.78 },
+  results: { flex: 1, width: '100%', maxWidth: layout.contentMaxWidth, alignSelf: 'center', minHeight: 0 },
+  listContent: { paddingHorizontal: layout.gutter, paddingBottom: 24 },
+  gridContent: { gap: 12, paddingTop: 4 },
+  columnRow: { gap: 12 },
+});

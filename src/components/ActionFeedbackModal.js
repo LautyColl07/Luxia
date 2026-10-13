@@ -9,6 +9,8 @@ export default function ActionFeedbackModal({
   message,
   actionLabel = 'Continuar',
   onClose,
+  icon = 'check',
+  tone = 'success',
 }) {
   const { colors } = useAppTheme();
 
@@ -22,8 +24,8 @@ export default function ActionFeedbackModal({
       <View style={styles.overlay}>
         <Pressable onPress={onClose} style={StyleSheet.absoluteFill} />
         <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
-          <View style={[styles.iconWrapper, { backgroundColor: colors.successSoft }]}>
-            <MaterialCommunityIcons color={colors.success} name="check" size={30} />
+          <View style={[styles.iconWrapper, { backgroundColor: tone === 'info' ? colors.accentSoft : tone === 'danger' ? colors.dangerSoft : colors.successSoft }]}>
+            <MaterialCommunityIcons color={tone === 'info' ? colors.primary : tone === 'danger' ? colors.danger : colors.success} name={icon} size={30} />
           </View>
           <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
           <Text style={[styles.message, { color: colors.textSecondary }]}>{message}</Text>
