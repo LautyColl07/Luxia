@@ -6,29 +6,29 @@ import { useAppTheme } from '../../context/ThemeContext';
 import DocumentPopover from './DocumentPopover';
 
 export const DOCUMENT_SORT_OPTIONS = [
-  { value: 'recent', label: 'Más recientes' },
+  { value: 'newest', label: 'Más recientes' },
   { value: 'oldest', label: 'Más antiguos' },
-  { value: 'nameAsc', label: 'Nombre ascendente (A–Z)' },
-  { value: 'nameDesc', label: 'Nombre descendente (Z–A)' },
+  { value: 'name_asc', label: 'Nombre ascendente (A–Z)' },
+  { value: 'name_desc', label: 'Nombre descendente (Z–A)' },
 ];
 export const DOCUMENT_CATEGORY_OPTIONS = [
-  { value: 'demandas', label: 'Demandas' },
-  { value: 'escritos', label: 'Escritos' },
-  { value: 'anexos', label: 'Anexos' },
-  { value: 'pruebas', label: 'Pruebas' },
+  { value: 'demanda', label: 'Demandas' },
+  { value: 'escrito', label: 'Escritos' },
+  { value: 'anexo', label: 'Anexos' },
+  { value: 'prueba', label: 'Pruebas' },
 ];
 
-// Controlled interfaces for stage two. They remain disabled until the caller
-// explicitly connects a working callback and enables the corresponding feature.
+// Values match the document API; the screen owns the selected query.
 export default function DocumentsToolbar({ viewMode, onViewModeChange, sortBy, onSortChange,
   selectedCategories = [], onCategoriesChange, sortingEnabled = false, filtersEnabled = false }) {
   const { colors } = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const canSort = sortingEnabled && Boolean(onSortChange);
   const canFilter = filtersEnabled && Boolean(onCategoriesChange);
+  const sortLabel = DOCUMENT_SORT_OPTIONS.find((option) => option.value === sortBy)?.label;
   return (
     <View style={styles.toolbar}>
-      <DocumentPopover label="Ordenar por" triggerStyle={styles.sort}
+      <DocumentPopover label={canSort && sortLabel ? `Ordenar por: ${sortLabel}` : 'Ordenar por'} triggerStyle={styles.sort}
         message={canSort ? undefined : 'Próximamente. Las opciones todavía no modifican el orden de los documentos.'}
         options={DOCUMENT_SORT_OPTIONS.map((option) => ({ ...option, disabled: !canSort,
           icon: canSort && sortBy === option.value ? 'check' : undefined,
@@ -38,10 +38,14 @@ export default function DocumentsToolbar({ viewMode, onViewModeChange, sortBy, o
       </DocumentPopover>
       <DocumentPopover label="Filtros" icon="filter-variant" textStyle={styles.controlText} triggerStyle={styles.filters}
         message={canFilter ? undefined : 'Próximamente. La clasificación y los filtros por categoría todavía no están disponibles.'}
-        options={DOCUMENT_CATEGORY_OPTIONS.map((option) => ({ ...option, disabled: !canFilter,
+        options={[...DOCUMENT_CATEGORY_OPTIONS.map((option) => ({ ...option, disabled: !canFilter,
           icon: canFilter && selectedCategories.includes(option.value) ? 'checkbox-marked-outline' : 'checkbox-blank-outline',
           onPress: () => onCategoriesChange?.(selectedCategories.includes(option.value)
-            ? selectedCategories.filter((value) => value !== option.value) : [...selectedCategories, option.value]) }))} />
+            ? selectedCategories.filter((value) => value !== option.value) : [...selectedCategories, option.value]) })),
+          ...(canFilter && selectedCategories.length ? [{ value: 'clear', label: 'Limpiar filtros', icon: 'filter-remove-outline',
+            onPress: () => onCategoriesChange([]) }] : [])]}>
+        <Text style={styles.controlText}>{selectedCategories.length ? `Filtros (${selectedCategories.length})` : 'Filtros'}</Text>
+      </DocumentPopover>
       <View style={styles.viewSelector} accessibilityRole="radiogroup" accessibilityLabel="Vista de documentos">
         {[{ value: 'list', label: 'Vista de lista', icon: 'format-list-bulleted' },
           { value: 'grid', label: 'Vista de cuadrícula', icon: 'view-grid-outline' }].map((option) => (

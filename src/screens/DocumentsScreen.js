@@ -62,6 +62,8 @@ export default function DocumentsScreen({ navigation }) {
 
   const [searchText, setSearchText] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
+  const [sortBy, setSortBy] = useState('newest');
+  const [selectedCategories, setSelectedCategories] = useState([]);
 
   const loadDocuments = useCallback(async () => {
     if (!isAuthReady || !isHydrated || authStatus !== 'authenticated' || !currentUser) {
@@ -73,7 +75,10 @@ export default function DocumentsScreen({ navigation }) {
       setLoading(true);
       setDocuments([]);
       setError('');
-      const items = await getDocuments();
+      scrollOffset.current = 0;
+      restoreScroll.current = false;
+      // No pagination here: the existing local search covers the full result set.
+      const items = await getDocuments({ categories: selectedCategories, sortBy });
       if (requestSequenceRef.current !== requestId) return;
       setDocuments(Array.isArray(items) ? items : []);
     } catch (loadError) {
@@ -87,7 +92,7 @@ export default function DocumentsScreen({ navigation }) {
     } finally {
       if (requestSequenceRef.current === requestId) setLoading(false);
     }
-  }, [activeContextKey, authStatus, currentUser?.uid, isAuthReady, isHydrated]);
+  }, [activeContextKey, authStatus, currentUser?.uid, isAuthReady, isHydrated, selectedCategories, sortBy]);
 
   useFocusEffect(
     useCallback(() => {
@@ -255,7 +260,9 @@ export default function DocumentsScreen({ navigation }) {
               style={styles.primaryButton} textStyle={styles.primaryButtonText} />
           </View>
         </View>
-        <DocumentsToolbar viewMode={viewMode} onViewModeChange={handleViewChange} />
+        <DocumentsToolbar viewMode={viewMode} onViewModeChange={handleViewChange}
+          sortBy={sortBy} onSortChange={setSortBy} sortingEnabled
+          selectedCategories={selectedCategories} onCategoriesChange={setSelectedCategories} filtersEnabled />
       </View>
       <Animated.View style={[styles.results, { opacity }]}
         onLayout={(event) => setContentWidth(event.nativeEvent.layout.width)}>
@@ -283,10 +290,11 @@ export default function DocumentsScreen({ navigation }) {
               showDirectActions={layout.isWebDesktop && contentWidth >= 700}
               hasFile={Boolean(getFileUrl(item))} isDownloading={downloadingId === item?.id} isBusy={downloadingId !== null}
               onView={() => void openDocument(item)} onDownload={() => void downloadDocument(item)} />}
-            ListEmptyComponent={<EmptyState actionLabel="Subir documento" icon="file-remove-outline"
-              message={searchText.trim() ? 'Probá con otro nombre, causa o audiencia.' : 'Subí un archivo para agregarlo a tus causas.'}
-              onAction={() => navigation.navigate('UploadDocument')}
-              title={searchText.trim() ? 'No se encontraron documentos' : 'Todavía no hay documentos registrados'} />}
+            ListEmptyComponent={<EmptyState actionLabel={selectedCategories.length ? 'Limpiar filtros' : 'Subir documento'} icon="file-remove-outline"
+              message={selectedCategories.length ? 'Probá con otras categorías o limpiá los filtros.'
+                : searchText.trim() ? 'Probá con otro nombre, causa o audiencia.' : 'Subí un archivo para agregarlo a tus causas.'}
+              onAction={() => selectedCategories.length ? setSelectedCategories([]) : navigation.navigate('UploadDocument')}
+              title={searchText.trim() || selectedCategories.length ? 'No se encontraron documentos' : 'Todavía no hay documentos registrados'} />}
             showsVerticalScrollIndicator={false}
           />}
       </Animated.View>

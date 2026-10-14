@@ -250,6 +250,106 @@ test('consultas simultáneas idénticas de causas comparten una solicitud y se s
   assert.match(calls[1], /scope=study/);
 });
 
+test('documentos envía categorías CSV y orden válidos con Bearer y el contexto de estudio codificado', async () => {
+  const api = loadApi(async (url, options) => {
+    const parsed = new URL(url);
+    assert.equal(parsed.pathname, '/api/v1/documentos');
+    assert.equal(parsed.searchParams.get('scope'), 'study');
+    assert.equal(parsed.searchParams.get('legalStudyId'), 'estudio & sur/á');
+    assert.equal(parsed.searchParams.get('categories'), 'demanda,escrito');
+    assert.equal(parsed.searchParams.getAll('categories').length, 1);
+    assert.equal(parsed.searchParams.has('category'), false);
+    assert.equal(parsed.searchParams.get('sortBy'), 'name_asc');
+    assert.equal(parsed.searchParams.get('search'), 'Contrato %_\\ & Pérez');
+    assert.equal(parsed.searchParams.has('page'), false);
+    assert.equal(parsed.searchParams.has('limit'), false);
+    assert.equal(options.headers.Authorization, 'Bearer test-token');
+    return jsonResponse(200, []);
+  });
+  api.setAuthState('authenticated');
+  api.setApiWorkContext({ type: 'study', legalStudyId: 'estudio & sur/á' });
+  assert.equal((await api.getDocuments({ categories: ['demanda', 'escrito'], sortBy: 'name_asc',
+    search: '  Contrato %_\\ & Pérez  ' })).length, 0);
+});
+
+test('los cuatro órdenes documentales conservan exactamente el orden del servidor y las categorías reales', async () => {
+  for (const sortBy of ['newest', 'oldest', 'name_asc', 'name_desc']) {
+    const api = loadApi(async (url) => {
+      const query = new URL(url).searchParams;
+      assert.equal(query.get('scope'), 'personal');
+      assert.equal(query.get('sortBy'), sortBy);
+      assert.equal(query.has('categories'), false);
+      return jsonResponse(200, [
+        { id: 9, originalName: null, fileName: 'histórico.pdf', category: null, createdAt: '2025-01-01' },
+        { id: 2, originalName: 'Árbol.pdf', category: 'prueba', createdAt: '2026-10-13' },
+        { id: 7, originalName: 'arbol.pdf', category: 'anexo', createdAt: '2026-01-01' },
+      ]);
+    });
+    api.setAuthState('authenticated');
+    const documents = await api.getDocuments({ categories: [], sortBy });
+    assert.equal(JSON.stringify(documents.map((item) => item.id)), '[9,2,7]');
+    assert.equal(documents[0].originalName, null);
+    assert.equal(documents[0].category, null);
+    assert.equal(documents[1].category, 'prueba');
+    assert.equal(documents[2].category, 'anexo');
+  }
+});
+
+test('getDocuments sin paginación conserva el array completo para la búsqueda local', async () => {
+  const api = loadApi(async (url) => {
+    assert.equal(new URL(url).searchParams.has('page'), false);
+    return jsonResponse(200, Array.from({ length: 125 }, (_, index) => ({ id: index + 1 })));
+  });
+  api.setAuthState('authenticated');
+  const documents = await api.getDocuments();
+  assert.equal(documents.length, 125);
+  assert.equal(documents[124].id, 125);
+});
+
+test('getDocuments interpreta el envelope al solicitar page o limit, incluidos cero resultados', async () => {
+  for (const pagination of [{ page: 2 }, { limit: 10 }, { page: 1, limit: 20 }]) {
+    const api = loadApi(async (url) => {
+      const query = new URL(url).searchParams;
+      for (const key of ['page', 'limit']) {
+        assert.equal(query.get(key), pagination[key] === undefined ? null : String(pagination[key]));
+      }
+      return jsonResponse(200, { items: [], page: pagination.page ?? 1, limit: pagination.limit ?? 20,
+        total: 0, totalPages: 0 });
+    });
+    api.setAuthState('authenticated');
+    const result = await api.getDocuments(pagination);
+    assert.equal(result.items.length, 0);
+    assert.equal(result.total, 0);
+    assert.equal(result.totalPages, 0);
+    assert.equal(result.page, pagination.page ?? 1);
+    assert.equal(result.limit, pagination.limit ?? 20);
+  }
+  const api = loadApi(async () => jsonResponse(200, { items: [
+    { id: 3, createdAt: '2025-01-01', category: 'demanda' },
+    { id: 1, createdAt: '2026-01-01', category: 'escrito' },
+  ], page: 2, limit: 2, total: 8, totalPages: 4 }));
+  api.setAuthState('authenticated');
+  const result = await api.getDocuments({ page: 2, limit: 2, sortBy: 'oldest' });
+  assert.equal(JSON.stringify(result.items.map((item) => item.id)), '[3,1]');
+  assert.equal(result.items[0].uploadedAt, '2025-01-01T00:00:00.000Z');
+  assert.equal(result.total, 8);
+  assert.equal(result.totalPages, 4);
+});
+
+test('documentos propaga los errores de filtros y servidor sin volver a un listado sin filtros', async () => {
+  for (const status of [400, 403, 500]) {
+    let calls = 0;
+    const api = loadApi(async () => {
+      calls += 1;
+      return jsonResponse(status, { error: 'No se pudo aplicar el filtro' });
+    });
+    api.setAuthState('authenticated');
+    await assert.rejects(api.getDocuments({ categories: ['demanda'], sortBy: 'newest' }),
+      (error) => error.status === status && (status === 500 || /No se pudo aplicar el filtro/.test(error.message)));
+    assert.equal(calls, 1);
+  }
+});
+
 test('al cambiar de cuenta se invalida el resumen personal en caché', async () => {
   let summaries = 0;
   const api = loadApi(async (url) => {

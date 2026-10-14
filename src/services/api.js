@@ -96,7 +96,7 @@ export function normalizePaginatedResponse(response, normalizer) {
     total: Number.isSafeInteger(total) && total >= 0 ? total : items.length,
     page: Number.isSafeInteger(page) && page > 0 ? page : 1,
     limit: Number.isSafeInteger(limit) && limit > 0 ? limit : Math.max(items.length, 1),
-    totalPages: Number.isSafeInteger(totalPages) && totalPages > 0 ? totalPages : 1,
+    totalPages: Number.isSafeInteger(totalPages) && totalPages >= 0 ? totalPages : 1,
   };
 }
 
@@ -1596,11 +1596,12 @@ export async function createHearing(data) {
   });
 }
 
-export async function getDocuments() {
+export async function getDocuments({ categories = [], sortBy, search, page, limit } = {}) {
+  const paginated = page !== undefined || limit !== undefined;
   if (USE_MOCKS) {
     const caseMap = getCaseMap();
     const hearingMap = getHearingMap();
-    const items = sortByDateDesc(mockStore.documents, 'uploadedAt').map((item) =>
+    let items = mockStore.documents.map((item) =>
       normalizeDocument({
         ...item,
         caseTitle: caseMap[item.caseId]?.title || 'Causa sin referencia',
@@ -1608,11 +1609,39 @@ export async function getDocuments() {
       })
     );
 
+    if (categories.length) items = items.filter((item) => categories.includes(item.category));
+    const query = search?.trim().toLowerCase();
+    if (query) items = items.filter((item) => [item.originalName, item.fileName, item.caseTitle, item.hearingTitle]
+      .some((value) => String(value || '').toLowerCase().includes(query)));
+    if (sortBy === 'name_asc' || sortBy === 'name_desc') {
+      items.sort((first, second) => {
+        const nameOrder = String(first.originalName || '').localeCompare(String(second.originalName || ''), 'es');
+        const order = nameOrder || Number(first.id) - Number(second.id);
+        return sortBy === 'name_desc' ? -order : order;
+      });
+    } else {
+      items = sortBy === 'oldest' ? sortByDateAsc(items, 'uploadedAt') : sortByDateDesc(items, 'uploadedAt');
+    }
+    if (paginated) {
+      const currentPage = page ?? 1;
+      const pageLimit = limit ?? 20;
+      return simulateDelay({ items: items.slice((currentPage - 1) * pageLimit, currentPage * pageLimit),
+        page: currentPage, limit: pageLimit, total: items.length, totalPages: Math.ceil(items.length / pageLimit) });
+    }
     return simulateDelay(items);
   }
 
-  const data = await request(withWorkScope('/documentos'), { timeout: DATA_REQUEST_TIMEOUT_MS });
-  return sortByDateDesc(toArray(data).map((item) => normalizeDocument(item)), 'uploadedAt');
+  const queryParams = new URLSearchParams(getActiveWorkContextQuery());
+  if (categories.length) queryParams.set('categories', categories.join(','));
+  if (sortBy) queryParams.set('sortBy', sortBy);
+  if (search?.trim()) queryParams.set('search', search.trim());
+  if (page !== undefined) queryParams.set('page', String(page));
+  if (limit !== undefined) queryParams.set('limit', String(limit));
+  const data = await request(`/documentos?${queryParams.toString()}`, { timeout: DATA_REQUEST_TIMEOUT_MS });
+  // Preserve the database order, including originalName NULLs and ID tie breaks.
+  return paginated
+    ? normalizePaginatedResponse(data, normalizeDocument)
+    : toArray(data).map((item) => normalizeDocument(item));
 }
 
 function normalizeDocumentPayload(data = {}) {
