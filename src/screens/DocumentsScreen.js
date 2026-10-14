@@ -7,6 +7,7 @@ import {
   Alert,
   Animated,
   FlatList,
+  Modal,
   Platform,
   Pressable,
   StyleSheet,
@@ -27,7 +28,7 @@ import { useAuth } from '../context/AuthContext';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
 import useDocumentViewMode from '../hooks/useDocumentViewMode';
-import { getCurrentIdToken, getDocuments } from '../services/api';
+import { deleteDocument, getCurrentIdToken, getDocuments } from '../services/api';
 import { useResponsiveLayout } from '../theme/layout';
 import { getDocumentDownloadUrl, getDocumentName } from '../utils/documentPresentation';
 
@@ -39,6 +40,10 @@ export default function DocumentsScreen({ navigation }) {
   const { activeContext, activeContextKey, isHydrated } = useStudyContext();
   const requestSequenceRef = useRef(0);
   const downloadInProgress = useRef(false);
+  const deleteInProgress = useRef(false);
+  const currentContextKey = useRef(activeContextKey);
+  currentContextKey.current = activeContextKey;
+  const reloadDocuments = useRef(null);
   const styles = useMemo(
     () => createStyles(colors, layout, insets.top),
     [colors, insets.top, layout]
@@ -59,6 +64,9 @@ export default function DocumentsScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [downloadingId, setDownloadingId] = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [deleteError, setDeleteError] = useState('');
 
   const [searchText, setSearchText] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
@@ -93,6 +101,7 @@ export default function DocumentsScreen({ navigation }) {
       if (requestSequenceRef.current === requestId) setLoading(false);
     }
   }, [activeContextKey, authStatus, currentUser?.uid, isAuthReady, isHydrated, selectedCategories, sortBy]);
+  reloadDocuments.current = loadDocuments;
 
   useFocusEffect(
     useCallback(() => {
@@ -134,7 +143,7 @@ export default function DocumentsScreen({ navigation }) {
 
   const downloadDocument = useCallback(
     async (document, { preview = false } = {}) => {
-      if (downloadInProgress.current) return;
+      if (downloadInProgress.current || deleteInProgress.current) return;
       const fileUrl = getFileUrl(document);
 
       if (!fileUrl) {
@@ -228,6 +237,29 @@ export default function DocumentsScreen({ navigation }) {
     changeViewMode(nextMode);
   }, [changeViewMode, viewMode]);
 
+  const confirmDelete = async () => {
+    if (!pendingDelete || pendingDelete.contextKey !== activeContextKey || deleteInProgress.current || downloadInProgress.current) return;
+    const { document, contextKey } = pendingDelete;
+    deleteInProgress.current = true;
+    setDeletingId(document.id);
+    setPendingDelete(null);
+    setDeleteError('');
+    try {
+      await deleteDocument(document.id);
+      if (currentContextKey.current !== contextKey) return;
+      setDocuments((items) => items.filter((item) => String(item.id) !== String(document.id)));
+      // Refresh with the current filters and invalidate any older list request.
+      await reloadDocuments.current();
+    } catch (failure) {
+      if (currentContextKey.current === contextKey) {
+        setDeleteError(failure instanceof Error ? failure.message : 'No pudimos eliminar el documento. Intentá nuevamente.');
+      }
+    } finally {
+      deleteInProgress.current = false;
+      setDeletingId(null);
+    }
+  };
+
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
@@ -277,7 +309,7 @@ export default function DocumentsScreen({ navigation }) {
             keyboardShouldPersistTaps="handled"
             data={filteredDocuments}
             keyExtractor={(item) => String(item?.id)}
-            extraData={downloadingId}
+            extraData={`${downloadingId}:${deletingId}`}
             onScroll={(event) => { if (!restoreScroll.current) scrollOffset.current = event.nativeEvent.contentOffset.y; }}
             scrollEventThrottle={32}
             onContentSizeChange={() => {
@@ -288,8 +320,10 @@ export default function DocumentsScreen({ navigation }) {
             }}
             renderItem={({ item }) => <DocumentItem document={item} viewMode={viewMode} width={cardWidth}
               showDirectActions={layout.isWebDesktop && contentWidth >= 700}
-              hasFile={Boolean(getFileUrl(item))} isDownloading={downloadingId === item?.id} isBusy={downloadingId !== null}
-              onView={() => void openDocument(item)} onDownload={() => void downloadDocument(item)} />}
+              hasFile={Boolean(getFileUrl(item))} isDownloading={downloadingId === item?.id}
+              isDeleting={deletingId === item?.id} isBusy={downloadingId !== null || deletingId !== null}
+              onView={() => void openDocument(item)} onDownload={() => void downloadDocument(item)}
+              onDelete={() => setPendingDelete({ document: item, contextKey: activeContextKey })} />}
             ListEmptyComponent={<EmptyState actionLabel={selectedCategories.length ? 'Limpiar filtros' : 'Subir documento'} icon="file-remove-outline"
               message={selectedCategories.length ? 'Probá con otras categorías o limpiá los filtros.'
                 : searchText.trim() ? 'Probá con otro nombre, causa o audiencia.' : 'Subí un archivo para agregarlo a tus causas.'}
@@ -298,6 +332,27 @@ export default function DocumentsScreen({ navigation }) {
             showsVerticalScrollIndicator={false}
           />}
       </Animated.View>
+      <Modal transparent animationType="fade" visible={Boolean(pendingDelete && pendingDelete.contextKey === activeContextKey)}
+        onRequestClose={() => setPendingDelete(null)}>
+        <View style={styles.dialogOverlay}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Cancelar eliminación"
+            onPress={() => setPendingDelete(null)} style={StyleSheet.absoluteFill} />
+          <View accessibilityViewIsModal style={styles.dialog}>
+            <Text accessibilityRole="header" style={styles.dialogTitle}>Eliminar documento</Text>
+            <Text style={styles.dialogMessage}>¿Querés eliminar «{getDocumentName(pendingDelete?.document)}»? Esta acción no se puede deshacer.</Text>
+            <View style={styles.dialogActions}>
+              <Pressable accessibilityRole="button" onPress={() => setPendingDelete(null)} style={styles.cancelButton}>
+                <Text style={styles.cancelButtonText}>Cancelar</Text>
+              </Pressable>
+              <Pressable accessibilityRole="button" onPress={() => void confirmDelete()} style={styles.deleteButton}>
+                <Text style={styles.primaryButtonText}>Eliminar</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+      <ActionFeedbackModal visible={Boolean(deleteError)} title="No se pudo eliminar el documento" icon="alert-circle-outline" tone="danger"
+        message={deleteError} actionLabel="Entendido" onClose={() => setDeleteError('')} />
       <ActionFeedbackModal visible={writingNoticeVisible} title="Próximamente" icon="clock-outline" tone="info"
         message="La creación de escritos estará disponible en una próxima etapa."
         actionLabel="Entendido" onClose={() => setWritingNoticeVisible(false)} />
@@ -334,4 +389,12 @@ const createStyles = (colors, layout, topInset) => StyleSheet.create({
   listContent: { paddingHorizontal: layout.gutter, paddingBottom: 24 },
   gridContent: { gap: 12, paddingTop: 4 },
   columnRow: { gap: 12 },
+  dialogOverlay: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(7, 21, 37, 0.48)', padding: 24 },
+  dialog: { width: '100%', maxWidth: 420, padding: 24, borderRadius: 20, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.borderSoft },
+  dialogTitle: { color: colors.text, fontSize: 20, fontWeight: '700' },
+  dialogMessage: { color: colors.textSecondary, fontSize: 14, lineHeight: 21, marginTop: 12 },
+  dialogActions: { flexDirection: 'row', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 12, marginTop: 24 },
+  cancelButton: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 10, borderWidth: 1, borderColor: colors.border },
+  cancelButtonText: { color: colors.text, fontSize: 14, fontWeight: '600' },
+  deleteButton: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 10, backgroundColor: colors.danger },
 });

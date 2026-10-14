@@ -9,6 +9,7 @@ import { getUserDisplayName, getUserEmail, getUserRole } from '../utils/userDisp
 export const USE_MOCKS = IS_CAPTURE_MODE;
 
 const DASHBOARD_RESUMEN_ENDPOINT = '/dashboard/resumen';
+const DOCUMENT_CATEGORY_LABELS = { demanda: 'Demanda', escrito: 'Escrito', prueba: 'Prueba', anexo: 'Anexo' };
 
 export const API_BASE_URL = CONFIG_API_BASE_URL;
 
@@ -372,7 +373,7 @@ function normalizeDocument(document, context = {}) {
   const caseRef = hearingRef.case || hearingRef.causa || source.case || source.causa || defaultCase;
   const fileName = safeString(source.fileName ?? source.nombreArchivo ?? source.name, 'documento');
   const uploadedAt = normalizeDateValue(source.uploadedAt ?? source.createdAt ?? source.fechaCarga);
-  const documentType = safeString(source.documentType ?? source.tipo ?? context.documentType, 'Documento');
+  const documentType = safeString(source.documentType ?? source.tipo ?? DOCUMENT_CATEGORY_LABELS[source.category] ?? context.documentType, 'Documento');
   const hearingTitle = safeString(source.hearingTitle ?? hearingRef.title ?? hearingRef.titulo, 'Audiencia sin referencia');
   const caseTitle = safeString(
     source.caseTitle ?? caseRef?.title ?? caseRef?.titulo,
@@ -1644,6 +1645,18 @@ export async function getDocuments({ categories = [], sortBy, search, page, limi
     : toArray(data).map((item) => normalizeDocument(item));
 }
 
+export async function deleteDocument(documentId) {
+  const id = Number(documentId);
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('ID de documento inválido.');
+  if (USE_MOCKS) {
+    const exists = mockStore.documents.some((item) => String(item.id) === String(id));
+    if (!exists) throw new Error('Recurso no encontrado');
+    mockStore.documents = mockStore.documents.filter((item) => String(item.id) !== String(id));
+    return simulateDelay({ success: true, data: { id } });
+  }
+  return request(withWorkScope(`/documentos/${id}`), { method: 'DELETE' });
+}
+
 function normalizeDocumentPayload(data = {}) {
   const fileName = safeString(data.fileName ?? data.nombreArchivo, '').trim();
   const hearingId = safeOptionalString(data.hearingId ?? data.audienciaId);
@@ -1708,7 +1721,19 @@ async function appendFormDataFile(formData, fieldName, file = {}) {
   });
 }
 
+function getUploadDocumentCategory(data) {
+  // Older callers pass the selector label as documentType/tipo.
+  const category = data?.category !== undefined
+    ? data.category
+    : safeString(data?.documentType ?? data?.tipo, '').trim().toLowerCase() || undefined;
+  if (category !== undefined && !Object.prototype.hasOwnProperty.call(DOCUMENT_CATEGORY_LABELS, category)) {
+    throw createRequestError('Categoría documental inválida. Seleccioná Demanda, Escrito, Prueba o Anexo.', 400);
+  }
+  return category;
+}
+
 export async function uploadDocument(data) {
+  const category = getUploadDocumentCategory(data);
   if (USE_MOCKS) {
     const nextId = Math.max(0, ...mockStore.documents.map((item) => item.id)) + 1;
     const hearing = mockStore.hearings.find((item) => item.id === Number(data.hearingId));
@@ -1724,6 +1749,7 @@ export async function uploadDocument(data) {
       caseId: hearing?.caseId || null,
       fileName: mockFileName,
       documentType: data.documentType ?? data.tipo ?? 'Documento',
+      category: category ?? null,
       uploadedAt: new Date().toISOString(),
       path: data.path ?? `/uploads/${safeString(mockFileName, 'documento-simulado.pdf')}`,
     });
@@ -1735,7 +1761,7 @@ export async function uploadDocument(data) {
   const asset = data?.asset || null;
   const hearingId = safeString(data?.hearingId ?? data?.audienciaId, '').trim();
   const caseId = safeString(data?.caseId ?? data?.causaId, '').trim();
-  const documentType = safeString(data?.documentType ?? data?.tipo, '').trim();
+  const documentType = DOCUMENT_CATEGORY_LABELS[category] || safeString(data?.documentType ?? data?.tipo, '').trim();
   const baseName = safeString(data?.baseName ?? data?.nombreBase, '').trim();
 
   if (!asset?.uri || !hearingId) {
@@ -1747,8 +1773,8 @@ export async function uploadDocument(data) {
   if (caseId) {
     formData.append('caseId', caseId);
   }
-  if (documentType) {
-    formData.append('documentType', documentType);
+  if (category !== undefined) {
+    formData.append('category', category);
   }
   if (baseName) {
     formData.append('baseName', baseName);

@@ -84,8 +84,8 @@ export default function DocumentPopover({ label, icon, children, triggerStyle, t
                     styles.option, option.disabled && styles.disabled,
                     hovered && styles.hovered, focused && styles.focused, pressed && styles.pressed,
                   ]}>
-                  {option.icon ? <MaterialCommunityIcons name={option.icon} size={18} color={colors.textSecondary} /> : null}
-                  <Text style={styles.optionText}>{option.label}</Text>
+                  {option.icon ? <MaterialCommunityIcons name={option.icon} size={18} color={option.destructive ? colors.danger : colors.textSecondary} /> : null}
+                  <Text style={[styles.optionText, option.destructive && { color: colors.danger }]}>{option.label}</Text>
                 </Pressable>
               ))}
             </ScrollView>

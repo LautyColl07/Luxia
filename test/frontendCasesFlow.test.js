@@ -66,6 +66,34 @@ function loadApi(fetchImplementation) {
   return module.exports;
 }
 
+test('deleteDocument envía DELETE autenticado en el contexto seleccionado', async () => {
+  const api = loadApi(async (url, options) => {
+    assert.equal(url, 'https://api.test/api/v1/documentos/9?scope=study&legalStudyId=study-a');
+    assert.equal(options.method, 'DELETE');
+    assert.equal(options.headers.Authorization, 'Bearer test-token');
+    assert.equal(options.body, undefined);
+    return jsonResponse(200, { success: true, data: { id: 9 } });
+  });
+  api.setAuthState('authenticated');
+  api.setApiWorkContext({ type: 'study', legalStudyId: 'study-a' });
+  assert.equal((await api.deleteDocument('9')).data.id, 9);
+});
+
+test('deleteDocument rechaza IDs inválidos sin enviar solicitudes', async () => {
+  const api = loadApi(async () => { throw new Error('No debe enviar una solicitud'); });
+  for (const id of [null, '', 0, -1, 1.5, 'invalid']) {
+    await assert.rejects(api.deleteDocument(id), /ID de documento inválido/);
+  }
+});
+
+test('deleteDocument conserva los errores de permiso y procesamiento del backend', async () => {
+  for (const [status, error] of [[404, 'Recurso no encontrado'], [409, 'El documento está siendo procesado']]) {
+    const api = loadApi(async () => jsonResponse(status, { error }));
+    api.setAuthState('authenticated');
+    await assert.rejects(api.deleteDocument(9), (failure) => failure.status === status && failure.message === error);
+  }
+});
+
 test('joinLegalStudy usa la ruta autenticada y conserva el ID y nombre devueltos por el backend', async () => {
   for (const payload of [
     { success: true, data: { id: 'study-uuid', name: 'Estudio Sur' } },

@@ -178,6 +178,7 @@ export default function UploadDocumentScreen({ navigation, route }) {
         caseId: caseId || selectedHearing?.caseId,
         hearingId: form.hearingId,
         documentType: form.documentType,
+        category: form.documentType.toLowerCase(),
         asset: selectedAsset,
         signal: abortControllerRef.current.signal,
       });
@@ -284,6 +285,7 @@ export default function UploadDocumentScreen({ navigation, route }) {
             return (
               <Pressable
                 key={item?.id}
+                disabled={submitting}
                 onPress={() => updateField('hearingId', String(item?.id))}
                 style={[styles.selectorCard, selected && styles.selectorCardActive]}
               >
@@ -304,6 +306,9 @@ export default function UploadDocumentScreen({ navigation, route }) {
           {DOCUMENT_TYPES.map((option) => (
             <Pressable
               key={option}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: form.documentType === option, disabled: submitting }}
+              disabled={submitting}
               onPress={() => updateField('documentType', option)}
               style={[styles.optionChip, form.documentType === option && styles.optionChipActive]}
             >
@@ -328,6 +333,7 @@ export default function UploadDocumentScreen({ navigation, route }) {
       {selectedHearing ? (
         <View style={styles.summaryCard}>
           <Text style={styles.summaryTitle}>Resumen del documento</Text>
+          <Text style={styles.summaryText}>Tipo: {form.documentType}</Text>
           <Text style={styles.summaryText}>Audiencia: {selectedHearing?.title}</Text>
           <Text style={styles.summaryText}>Causa: {selectedHearing?.caseTitle}</Text>
           <Text style={styles.summaryText}>

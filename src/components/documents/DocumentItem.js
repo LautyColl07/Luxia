@@ -9,7 +9,7 @@ import DocumentPopover from './DocumentPopover';
 
 const FILE_ICONS = { pdf: 'file-pdf-box', doc: 'file-word-outline', docx: 'file-word-outline', image: 'file-image-outline', txt: 'file-document-outline', other: 'file-outline' };
 
-export default function DocumentItem({ document, viewMode, width, showDirectActions, hasFile, isDownloading, isBusy, onView, onDownload }) {
+export default function DocumentItem({ document, viewMode, width, showDirectActions, hasFile, isDownloading, isDeleting, isBusy, onView, onDownload, onDelete }) {
   const { colors } = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const isGrid = viewMode === 'grid';
@@ -26,6 +26,7 @@ export default function DocumentItem({ document, viewMode, width, showDirectActi
       options={[
         { value: 'view', label: 'Ver', icon: 'eye-outline', disabled, onPress: onView },
         { value: 'download', label: isDownloading ? 'Descargando…' : 'Descargar', icon: 'download-outline', disabled, onPress: onDownload },
+        { value: 'delete', label: isDeleting ? 'Eliminando…' : 'Eliminar', icon: 'trash-can-outline', destructive: true, disabled: isBusy || isDeleting, onPress: onDelete },
       ]} />
   );
   return (

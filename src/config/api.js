@@ -1,5 +1,5 @@
-//export const SERVER_IP = "172.16.5.168"; //Cole
-export const SERVER_IP = "100.99.154.65"; //Tailscale
+export const SERVER_IP = "172.16.5.168"; //Cole
+//export const SERVER_IP = "100.99.154.65"; //Tailscale
 export const SERVER_PORT = 3000;
 export const API_PORT = SERVER_PORT;
 export const AI_PORT = 5000;
