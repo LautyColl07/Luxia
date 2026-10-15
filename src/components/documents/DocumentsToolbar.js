@@ -7,9 +7,9 @@ import DocumentPopover from './DocumentPopover';
 
 export const DOCUMENT_SORT_OPTIONS = [
   { value: 'newest', label: 'Más recientes' },
-  { value: 'oldest', label: 'Más antiguos' },
-  { value: 'name_asc', label: 'Nombre ascendente (A–Z)' },
-  { value: 'name_desc', label: 'Nombre descendente (Z–A)' },
+  { value: 'oldest', label: 'Más antiguas' },
+  { value: 'name_asc', label: 'Nombre Ascendente' },
+  { value: 'name_desc', label: 'Nombre descendente' },
 ];
 export const DOCUMENT_CATEGORY_OPTIONS = [
   { value: 'demanda', label: 'Demandas' },
