@@ -5,18 +5,22 @@ import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, Text
 import ActionFeedbackModal from '../components/ActionFeedbackModal';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
-import { createCase } from '../services/api';
+import { createCase, getCaseById, updateCase } from '../services/api';
 import { useResponsiveLayout } from '../theme/layout';
 import { normalizeStatusLabel } from '../utils/status';
+import { CASE_COURT_TYPES } from '../constants/caseCourtTypes';
 
 const STATUS_OPTIONS = ['Activa', 'Pendiente', 'En proceso', 'Archivada'];
 
-export default function NewCaseScreen({ navigation }) {
+export default function NewCaseScreen({ navigation, route }) {
   const { colors } = useAppTheme();
   const { activeContext, legalStudies, activeLegalStudy } = useStudyContext();
   const layout = useResponsiveLayout();
   const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
   const hasStudy = legalStudies.length > 0;
+  const caseId = route?.params?.caseId;
+  const isEditing = Boolean(caseId);
+  const [loadingCase, setLoadingCase] = useState(isEditing);
   const [selectedStudyId, setSelectedStudyId] = useState(activeLegalStudy?.id || null);
   const studyId = selectedStudyId || activeLegalStudy?.id || legalStudies[0]?.id || null;
   const [form, setForm] = useState({
@@ -24,6 +28,7 @@ export default function NewCaseScreen({ navigation }) {
     description: '',
     court: '',
     status: 'Activa',
+    courtType: null,
   });
   const [scope, setScope] = useState(activeContext.type === 'study' ? 'LEGAL_STUDY' : 'PRIVATE');
   const [submitting, setSubmitting] = useState(false);
@@ -33,6 +38,21 @@ export default function NewCaseScreen({ navigation }) {
     setScope(activeContext.type === 'study' ? 'LEGAL_STUDY' : 'PRIVATE');
     setSelectedStudyId(activeLegalStudy?.id || null);
   }, [activeContext.type, activeLegalStudy?.id]);
+
+  useEffect(() => {
+    if (!caseId) return undefined;
+    let active = true;
+    getCaseById(caseId).then((item) => {
+      if (!active) return;
+      setForm({ title: item.title || '', description: item.description || '', court: item.court || '', status: item.status || 'Activa', courtType: item.courtType || null });
+      setLoadingCase(false);
+    }).catch((error) => {
+      if (!active) return;
+      setLoadingCase(false);
+      Alert.alert('No pudimos cargar la causa', error instanceof Error ? error.message : 'Intenta nuevamente.');
+    });
+    return () => { active = false; };
+  }, [caseId]);
 
   const updateField = (key, value) => setForm((current) => ({ ...current, [key]: value }));
 
@@ -49,18 +69,20 @@ export default function NewCaseScreen({ navigation }) {
         description: form.description.trim(),
         court: form.court.trim(),
         status: form.status,
+        courtType: form.courtType,
         scope,
         ...(scope === 'LEGAL_STUDY' && studyId ? { legalStudyId: studyId } : {}),
       };
 
-      await createCase(payload);
+      if (isEditing) await updateCase(caseId, payload);
+      else await createCase(payload);
 
       setSuccessFeedback({
-        title: 'Causa creada',
+        title: isEditing ? 'Causa actualizada' : 'Causa creada',
         message: `La causa “${form.title.trim()}” se guardó correctamente.`,
       });
     } catch (error) {
-      console.error('[NewCaseScreen] No se pudo crear la causa.');
+      console.error('[NewCaseScreen] No se pudo guardar la causa.');
       Alert.alert(
         'No pudimos registrar la causa',
         error instanceof Error ? error.message : 'Intenta nuevamente.'
@@ -75,6 +97,8 @@ export default function NewCaseScreen({ navigation }) {
     navigation.goBack();
   };
 
+  if (loadingCase) return <View style={[styles.screen, { alignItems: 'center', justifyContent: 'center' }]}><ActivityIndicator color={colors.primary} /></View>;
+
   return (
     <ScrollView
       contentContainerStyle={styles.content}
@@ -82,7 +106,7 @@ export default function NewCaseScreen({ navigation }) {
       showsVerticalScrollIndicator={false}
       style={styles.screen}
     >
-      <Text style={styles.title}>Nueva causa</Text>
+      <Text style={styles.title}>{isEditing ? 'Editar causa' : 'Nueva causa'}</Text>
       <Text style={styles.subtitle}>
         Registra un expediente con su caratula, descripcion, juzgado y estado inicial.
       </Text>
@@ -118,6 +142,20 @@ export default function NewCaseScreen({ navigation }) {
           style={styles.input}
           value={form.court}
         />
+      </Field>
+
+      <Field label="Fuero o tipo de causa" styles={styles}>
+        <View style={styles.courtTypeList}>
+          {CASE_COURT_TYPES.map((option) => {
+            const selected = form.courtType === option.value;
+            return <Pressable accessibilityRole="radio" accessibilityState={{ checked: selected }} key={option.value} onPress={() => updateField('courtType', option.value)} style={[styles.courtTypeOption, selected && styles.courtTypeOptionActive]}>
+              <MaterialCommunityIcons color={option.color} name={option.icon} size={20} />
+              <Text style={[styles.courtTypeText, selected && styles.courtTypeTextActive]}>{option.label}</Text>
+              {selected ? <MaterialCommunityIcons color={colors.primary} name="check-circle" size={18} /> : null}
+            </Pressable>;
+          })}
+          {form.courtType ? <Pressable onPress={() => updateField('courtType', null)} style={styles.clearCourtType}><Text style={styles.clearCourtTypeText}>Quitar fuero</Text></Pressable> : null}
+        </View>
       </Field>
 
       <Field label="Estado inicial" styles={styles}>
@@ -235,7 +273,7 @@ export default function NewCaseScreen({ navigation }) {
         style={[styles.submitButton, submitting && styles.submitButtonDisabled]}
       >
         {submitting ? <ActivityIndicator color={colors.textOnPrimary} size="small" /> : null}
-        <Text style={styles.submitButtonText}>{submitting ? 'Guardando cambios...' : 'Guardar causa'}</Text>
+        <Text style={styles.submitButtonText}>{submitting ? 'Guardando cambios...' : isEditing ? 'Guardar cambios' : 'Guardar causa'}</Text>
       </Pressable>
 
       <ActionFeedbackModal
@@ -308,6 +346,13 @@ const createStyles = (colors, layout) => StyleSheet.create({
   textArea: {
     minHeight: 116,
   },
+  courtTypeList: { gap: 7 },
+  courtTypeOption: { minHeight: 48, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1, borderColor: colors.borderSoft, backgroundColor: colors.card, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  courtTypeOptionActive: { borderColor: colors.primary, backgroundColor: colors.accentSoft },
+  courtTypeText: { flex: 1, color: colors.textSecondary, fontSize: 13, fontWeight: '600' },
+  courtTypeTextActive: { color: colors.text, fontWeight: '700' },
+  clearCourtType: { alignSelf: 'flex-start', paddingVertical: 5 },
+  clearCourtTypeText: { color: colors.textMuted, fontSize: 12 },
   optionRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',

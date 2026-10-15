@@ -439,6 +439,8 @@ function normalizeCase(caseItem) {
     descripcion: description,
     status,
     estado: status,
+    courtType: safeOptionalString(source.courtType ?? source.fuero),
+    fuero: safeOptionalString(source.courtType ?? source.fuero),
     court,
     juzgado: court,
     createdAt,
@@ -1257,6 +1259,10 @@ export async function getCases(context = null, params = {}) {
     if (params.court) {
       cases = cases.filter(c => c.court?.toLowerCase().includes(params.court.toLowerCase()));
     }
+    if (params.search) {
+      const query = String(params.search).trim().toLocaleLowerCase('es');
+      cases = cases.filter((c) => [c.title, c.description, c.court].some((value) => String(value || '').toLocaleLowerCase('es').includes(query)));
+    }
     if (params.startDate) {
       const start = new Date(params.startDate);
       cases = cases.filter(c => new Date(c.createdAt) >= start);
@@ -1266,6 +1272,9 @@ export async function getCases(context = null, params = {}) {
       end.setHours(23, 59, 59, 999);
       cases = cases.filter(c => new Date(c.createdAt) <= end);
     }
+    if (params.sortBy === 'oldest') cases.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt) || Number(b.id) - Number(a.id));
+    else if (params.sortBy === 'name_asc') cases.sort((a, b) => a.title.localeCompare(b.title, 'es') || Number(b.id) - Number(a.id));
+    else if (params.sortBy === 'name_desc') cases.sort((a, b) => b.title.localeCompare(a.title, 'es') || Number(b.id) - Number(a.id));
     
     const page = params.page || 1;
     const limit = params.limit || 20;
@@ -1303,6 +1312,7 @@ export async function getCases(context = null, params = {}) {
   if (params.startDate) queryParams.append('startDate', params.startDate);
   if (params.endDate) queryParams.append('endDate', params.endDate);
   if (params.search) queryParams.append('search', params.search);
+  if (params.sortBy) queryParams.append('sortBy', params.sortBy);
 
   const queryStr = `?${queryParams.toString()}`;
   const requestKey = `${getWorkContextKey()}:${queryStr}`;
@@ -1314,7 +1324,7 @@ export async function getCases(context = null, params = {}) {
       { timeout: DATA_REQUEST_TIMEOUT_MS }
     );
     const page = normalizePaginatedResponse(response, normalizeCase);
-    return { ...page, items: sortByDateDesc(page.items, 'createdAt') };
+    return page;
   })();
   caseRequestsInFlight.set(requestKey, pending);
   void pending.then(
@@ -1398,6 +1408,7 @@ function normalizeCasePayload(data = {}) {
     descripcion: description,
     juzgado: court,
     estado: status,
+    courtType: data.courtType ?? data.fuero ?? null,
   };
 }
 
@@ -1410,6 +1421,7 @@ export async function createCase(data) {
       description: data.description ?? data.descripcion,
       court: data.court ?? data.juzgado,
       status: data.status ?? data.estado,
+      courtType: data.courtType ?? data.fuero ?? null,
       createdAt: new Date().toISOString(),
     });
 
@@ -1438,6 +1450,7 @@ export async function createCase(data) {
     description: response?.description ?? response?.descripcion ?? caseData.descripcion,
     court: response?.court ?? response?.juzgado ?? caseData.juzgado,
     status: response?.status ?? response?.estado ?? caseData.estado,
+    courtType: response?.courtType ?? caseData.courtType,
   });
 }
 
@@ -1472,6 +1485,7 @@ export async function updateCase(id, data) {
       description: data.description ?? data.descripcion ?? currentCase.description,
       court: data.court ?? data.juzgado ?? currentCase.court,
       status: data.status ?? data.estado ?? currentCase.status,
+      courtType: data.courtType ?? data.fuero ?? currentCase.courtType ?? null,
     });
 
     mockStore.cases = mockStore.cases.map((item) => (item.id === Number(id) ? updatedCase : item));
@@ -1484,6 +1498,7 @@ export async function updateCase(id, data) {
     withWorkScope(`/cases/${id}`),
     { method: 'PUT', body: payload }
   );
+  setScopedCacheDirty();
   return normalizeCase({
     ...response,
     id,
@@ -1491,6 +1506,7 @@ export async function updateCase(id, data) {
     description: response?.description ?? response?.descripcion ?? payload.descripcion,
     court: response?.court ?? response?.juzgado ?? payload.juzgado,
     status: response?.status ?? response?.estado ?? payload.estado,
+    courtType: response?.courtType ?? payload.courtType,
   });
 }
 

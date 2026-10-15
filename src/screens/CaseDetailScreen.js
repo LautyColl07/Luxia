@@ -8,6 +8,7 @@ import ErrorState from '../components/ErrorState';
 import HearingRecordingPanel from '../components/HearingRecordingPanel';
 import LoadingState from '../components/LoadingState';
 import StatusBadge from '../components/StatusBadge';
+import { getCaseCourtType } from '../constants/caseCourtTypes';
 import { useAuth } from '../context/AuthContext';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
@@ -88,6 +89,7 @@ export default function CaseDetailScreen({ navigation, route }) {
   const targetStudies = legalStudies.filter((study) =>
     String(study.id) !== String(caseDetail?.legalStudyId) && ['OWNER', 'ADMIN', 'MEMBER'].includes(study.role)
   );
+  const courtType = getCaseCourtType(caseDetail?.courtType);
   const confirmMove = (study) => {
     const proceed = async () => {
       try {
@@ -135,6 +137,11 @@ export default function CaseDetailScreen({ navigation, route }) {
           <Text style={styles.metaText}>{caseDetail?.court || 'Juzgado a confirmar'}</Text>
         </View>
 
+        {caseDetail?.courtType ? <View style={styles.metaRow}>
+          <MaterialCommunityIcons color={courtType.color} name={courtType.icon} size={17} />
+          <Text style={styles.metaText}>{courtType.label}</Text>
+        </View> : null}
+
         <View style={styles.metaRow}>
           <MaterialCommunityIcons color={colors.textSecondary} name="calendar-outline" size={16} />
           <Text style={styles.metaText}>Fecha de alta: {formatDate(caseDetail?.createdAt)}</Text>
@@ -146,6 +153,10 @@ export default function CaseDetailScreen({ navigation, route }) {
         >
           <Text style={styles.primaryButtonText}>Registrar audiencia</Text>
           <MaterialCommunityIcons color={colors.textOnPrimary} name="arrow-right" size={18} />
+        </Pressable>
+        <Pressable accessibilityRole="button" onPress={() => navigation.navigate('NewCase', { caseId: caseDetail?.id })} style={styles.editCaseButton}>
+          <MaterialCommunityIcons color={colors.primary} name="pencil-outline" size={18} />
+          <Text style={styles.editCaseButtonText}>Editar causa</Text>
         </Pressable>
         {canMove && targetStudies.length ? (
           <Pressable accessibilityRole="button" onPress={() => { setMoveError(''); setShowMoveModal(true); }} style={styles.moveButton}>
@@ -363,6 +374,8 @@ const createStyles = (colors, layout) => StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
+  editCaseButton: { minHeight: 44, marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  editCaseButtonText: { color: colors.primary, fontSize: 14, fontWeight: '600' },
   moveButton: { minHeight: 44, marginTop: 10, flexDirection: 'row', alignItems: 'center', gap: 8 },
   moveButtonText: { color: colors.primary, fontSize: 14, fontWeight: '600' },
   moveBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 24 },
