@@ -6,11 +6,6 @@
     "orientation": "default",
     "icon": "./assets/luxia-logo.png",
     "userInterfaceStyle": "automatic",
-    "splash": {
-      "image": "./assets/luxia-logo.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#FFFFFF"
-    },
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
@@ -38,6 +33,15 @@
       "favicon": "./assets/luxia-logo.png"
     },
     "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/luxia-logo.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#FFFFFF"
+        }
+      ],
       "expo-audio",
       "expo-font",
       "expo-asset",

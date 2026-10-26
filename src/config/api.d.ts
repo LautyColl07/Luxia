@@ -6,7 +6,7 @@ export const API_ROOT_URL: string;
 export const API_BASE_URL: string;
 export const AI_BASE_URL: string;
 export const SOCKET_URL: string;
-export function buildServerUrls(serverIp?: string): {
+export function buildServerUrls(serverIp?: string, serverPort?: number): {
   API_ROOT_URL: string;
   API_BASE_URL: string;
   AI_BASE_URL: string;
