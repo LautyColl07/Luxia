@@ -10,7 +10,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useAppTheme } from '../context/ThemeContext';
-import { request } from '../services/api';
+import {
+  finishLiveTranscription,
+  startLiveTranscription,
+  uploadLiveTranscriptionChunk,
+} from '../services/api';
 import { useResponsiveLayout } from '../theme/layout';
 import {
   exportTranscriptionAsPdf,
@@ -94,48 +98,42 @@ export default function TranscriptionTestScreen() {
     setIsTranscribing(true);
     setStatus('Transcribiendo en tiempo real...');
 
-    const formData = new FormData();
-    formData.append('audio', {
-      uri: audio.uri,
-      name: audio.fileName || `audiencia-${Date.now()}.m4a`,
-      type: audio.mimeType || DEFAULT_AUDIO_MIME_TYPE,
-    });
-    formData.append('chunkIndex', '0');
-    formData.append('startTime', '0');
-    formData.append('endTime', String(Math.max(0, Number(audio.durationMillis) || 0) / 1000));
-
-    const started = await request('/transcriptions/start', {
-      method: 'POST',
-      body: {
+    let sessionId = null;
+    let isFinished = false;
+    try {
+      sessionId = await startLiveTranscription({
         title: 'Transcripcion de prueba',
-      },
-    });
-    const sessionId = started?.sessionId;
+      });
 
-    if (!sessionId) {
-      throw new Error('No se pudo iniciar la sesion de transcripcion.');
+      if (!sessionId) {
+        throw new Error('No se pudo iniciar la sesion de transcripcion.');
+      }
+
+      const payload = await uploadLiveTranscriptionChunk({
+        sessionId,
+        audioUri: audio.uri,
+        audioMimeType: audio.mimeType || DEFAULT_AUDIO_MIME_TYPE,
+        audioName: audio.fileName || `audiencia-${Date.now()}.m4a`,
+        chunkIndex: 0,
+        startTime: 0,
+        endTime: Math.max(0, Number(audio.durationMillis) || 0) / 1000,
+      });
+
+      const finished = await finishLiveTranscription(sessionId);
+      isFinished = true;
+
+      const text = String(finished?.fullText || getTranscriptText(payload) || '').trim();
+
+      if (!text) {
+        throw new Error('El backend respondio, pero no devolvio texto transcripto.');
+      }
+
+      setTranscriptText((current) => [current.trim(), text].filter(Boolean).join('\n\n'));
+      setStatus('Transcripcion lista.');
+      return text;
+    } finally {
+      if (sessionId && !isFinished) await finishLiveTranscription(sessionId).catch(() => null);
     }
-
-    const payload = await request(`/transcriptions/${encodeURIComponent(sessionId)}/chunk`, {
-      body: formData,
-      method: 'POST',
-      timeout: 120000,
-      timeoutMessage: 'La transcripcion tardo demasiado. Intentá nuevamente.',
-    });
-
-    await request(`/transcriptions/${encodeURIComponent(sessionId)}/finish`, {
-      method: 'POST',
-    });
-
-    const text = String(getTranscriptText(payload) || '').trim();
-
-    if (!text) {
-      throw new Error('El backend respondio, pero no devolvio texto transcripto.');
-    }
-
-    setTranscriptText((current) => [current.trim(), text].filter(Boolean).join('\n\n'));
-    setStatus('Transcripcion lista.');
-    return text;
   }, []);
 
   const handleStart = useCallback(async () => {

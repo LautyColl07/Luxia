@@ -23,10 +23,20 @@ import {
   uploadPdfDocumentFromHearing,
 } from '../services/api';
 import { buildTranscriptionHtml } from '../utils/exportTranscription';
+import { createTranscriptionChunkQueue } from '../utils/transcriptionChunkQueue';
+import { prepareAndStartRecorder, stopRecorderChunk } from '../utils/recorderLifecycle';
 
 const CHUNK_SECONDS = 5;
 const CHUNK_MILLIS = CHUNK_SECONDS * 1000;
+const MAX_PENDING_CHUNKS = 3;
 const PDF_MIME_TYPE = 'application/pdf';
+
+function releaseRecordingUri(uri) {
+  if (typeof uri !== 'string' || !uri.startsWith('blob:')) return;
+  if (typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+    URL.revokeObjectURL(uri);
+  }
+}
 
 function getErrorMessage(error, fallback) {
   return (
@@ -49,6 +59,8 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
   const [isStarting, setIsStarting] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isFinishing, setIsFinishing] = useState(false);
+  const [pendingChunkCount, setPendingChunkCount] = useState(0);
+  const [isQueueBlocked, setIsQueueBlocked] = useState(false);
   const [isUploadingAudio, setIsUploadingAudio] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
@@ -56,13 +68,63 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
   const [selectedAudio, setSelectedAudio] = useState(null);
   const [actionFeedback, setActionFeedback] = useState(null);
   const recordingRef = useRef(false);
+  const startingRef = useRef(false);
+  const finishingRef = useRef(false);
+  const startCancelledRef = useRef(false);
+  const mountedRef = useRef(true);
+  const recorderActiveRef = useRef(false);
   const sessionIdRef = useRef(null);
   const chunkIndexRef = useRef(0);
+  const currentChunkRef = useRef(null);
+  const elapsedSecondsRef = useRef(0);
+  const transcriptChunksRef = useRef(new Map());
   const loopPromiseRef = useRef(null);
   const stopChunkRef = useRef(null);
+  const retryQueueRef = useRef(null);
+  const chunkQueueRef = useRef(null);
+
+  if (!chunkQueueRef.current) {
+    chunkQueueRef.current = createTranscriptionChunkQueue({
+      limit: MAX_PENDING_CHUNKS,
+      onSizeChange: (size) => {
+        if (mountedRef.current) setPendingChunkCount(size);
+      },
+      processTask: async (task) => {
+        if (mountedRef.current) {
+          setIsTranscribing(true);
+          setStatusText(`Transcribiendo bloque ${task.chunkIndex + 1}...`);
+        }
+        try {
+          const response = await uploadHearingLiveTranscriptionChunk(task);
+          transcriptChunksRef.current.set(task.chunkIndex, response?.text || '');
+          const nextText = [...transcriptChunksRef.current.entries()]
+            .sort(([first], [second]) => first - second)
+            .map(([, text]) => text)
+            .filter(Boolean)
+            .join('\n');
+
+          if (mountedRef.current) {
+            setTranscriptText(nextText);
+            setTranscriptInfo((current) => ({
+              ...(current || {}),
+              audioAvailable: true,
+              fullText: nextText,
+              status: 'recording',
+              text: nextText,
+            }));
+            setStatusText(`Bloque ${task.chunkIndex + 1} guardado.`);
+          }
+          releaseRecordingUri(task.audioUri);
+        } finally {
+          if (mountedRef.current) setIsTranscribing(false);
+        }
+      },
+    });
+  }
 
   const hearingId = hearing?.id ?? hearing?.audienciaId ?? hearing?.hearingId;
   const hasTranscript = Boolean(transcriptText.trim());
+  const hasActiveSession = transcriptInfo?.status === 'recording' && Boolean(transcriptInfo?.sessionId);
   const showProgress = isStarting || isFinishing || isUploadingAudio || isTranscribing || isGeneratingPdf;
   const canDownloadPdf = Boolean(transcriptInfo?.pdfAvailable);
 
@@ -75,6 +137,12 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
       setLoadingTranscript(true);
       const result = await getHearingTranscription(hearingId);
       const nextText = result?.text || '';
+      sessionIdRef.current = result?.status === 'recording' && result?.sessionId
+        ? String(result.sessionId)
+        : null;
+      transcriptChunksRef.current = new Map(
+        (result?.chunks || []).map((chunk) => [Number(chunk.chunkIndex), chunk.text || ''])
+      );
       setTranscriptInfo(result);
       setTranscriptText(nextText);
       if (nextText) {
@@ -107,88 +175,131 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
   const waitForChunkEnd = useCallback(
     () =>
       new Promise((resolve) => {
-        const timeoutId = setTimeout(resolve, CHUNK_MILLIS);
+        const timeoutId = setTimeout(() => {
+          stopChunkRef.current = null;
+          resolve();
+        }, CHUNK_MILLIS);
         stopChunkRef.current = () => {
           clearTimeout(timeoutId);
+          stopChunkRef.current = null;
           resolve();
         };
       }),
     []
   );
 
-  const recordLoop = useCallback(async () => {
-    while (recordingRef.current) {
-      const chunkIndex = chunkIndexRef.current;
-      const startTime = chunkIndex * CHUNK_SECONDS;
-      const endTime = startTime + CHUNK_SECONDS;
+  const drainChunkQueue = useCallback(async () => {
+    const result = await chunkQueueRef.current.drain();
+    if (!result.ok) {
+      recordingRef.current = false;
+      stopChunkRef.current?.();
+      if (mountedRef.current) {
+        setIsRecording(false);
+        setIsQueueBlocked(true);
+        setStatusText(
+          `No se guardó el bloque ${result.task.chunkIndex + 1}. La captura se detuvo; ` +
+            `${result.remaining} bloque(s) siguen pendientes. Reintentá el envío.`
+        );
+      }
+      return false;
+    }
 
-      try {
-        setStatusText(`Grabando bloque ${chunkIndex + 1}...`);
-        await recorder.prepareToRecordAsync();
-        recorder.record();
+    if (mountedRef.current) setIsQueueBlocked(false);
+    return true;
+  }, []);
+
+  retryQueueRef.current = drainChunkQueue;
+
+  const recordLoop = useCallback(async () => {
+    try {
+      while (recordingRef.current) {
+        const chunk = currentChunkRef.current;
+        if (!chunk || !recorderActiveRef.current) break;
+        if (mountedRef.current) setStatusText(`Grabando bloque ${chunk.index + 1}...`);
         await waitForChunkEnd();
 
-        setStatusText('Transcribiendo audiencia...');
-        setIsTranscribing(true);
-        await recorder.stop();
+        const { audioUri, durationSeconds } = await stopRecorderChunk(recorder, CHUNK_SECONDS);
+        recorderActiveRef.current = false;
+        currentChunkRef.current = null;
 
-        const recorderSnapshot = recorder.getStatus();
-        const audioUri = recorder.uri || recorderSnapshot?.url || recorderState.url;
-        stopChunkRef.current = null;
-
-        if (!audioUri) {
-          throw new Error('No se encontró el archivo temporal de audio.');
+        if (durationSeconds >= 0.1) {
+          const task = {
+            audioUri,
+            chunkIndex: chunk.index,
+            endTime: chunk.startTime + durationSeconds,
+            hearingId,
+            sessionId: sessionIdRef.current,
+            startTime: chunk.startTime,
+          };
+          if (!chunkQueueRef.current.enqueue(task)) {
+            throw new Error('La cola se llenó antes de conservar el bloque de audio.');
+          }
+          elapsedSecondsRef.current = task.endTime;
+          chunkIndexRef.current = chunk.index + 1;
+          void drainChunkQueue();
+        } else {
+          releaseRecordingUri(audioUri);
+          chunkIndexRef.current = chunk.index + 1;
         }
 
-        const sessionId = sessionIdRef.current;
-
-        if (!sessionId) {
-          throw new Error('No hay una sesion activa para enviar el bloque.');
+        if (chunkQueueRef.current.size() >= MAX_PENDING_CHUNKS) {
+          recordingRef.current = false;
+          if (mountedRef.current) {
+            setIsRecording(false);
+            setStatusText('Cola de transcripción completa. La captura se detuvo con los bloques pendientes conservados.');
+          }
         }
+        if (!recordingRef.current) break;
 
-        const response = await uploadHearingLiveTranscriptionChunk({
-          audioUri,
-          chunkIndex,
-          endTime,
-          hearingId,
-          sessionId,
-          startTime,
-        });
-        const nextText = response?.fullText || [transcriptText.trim(), response?.text].filter(Boolean).join('\n');
-
-        if (nextText) {
-          setTranscriptText(nextText);
-        }
-
-        setTranscriptInfo((current) => ({
-          ...(current || {}),
-          audioAvailable: true,
-          status: response?.status || 'transcribing',
-          text: nextText,
-        }));
-      } catch (error) {
-        console.error('[HearingRecordingPanel] No se pudo procesar el bloque de audio.');
-        setStatusText(getErrorMessage(error, 'No se pudo transcribir un bloque de audio.'));
-      } finally {
-        setIsTranscribing(false);
-        chunkIndexRef.current = chunkIndex + 1;
+        const recorderStarted = await prepareAndStartRecorder(
+          recorder,
+          () => recordingRef.current && mountedRef.current
+        );
+        if (!recorderStarted) break;
+        const nextChunk = {
+          index: chunkIndexRef.current,
+          startTime: elapsedSecondsRef.current,
+        };
+        currentChunkRef.current = nextChunk;
+        recorderActiveRef.current = true;
       }
+    } catch (error) {
+      console.error('[HearingRecordingPanel] Falló la captura de un bloque de audio.');
+      recordingRef.current = false;
+      stopChunkRef.current?.();
+      if (recorderActiveRef.current) {
+        await recorder.stop().catch(() => null);
+      }
+      recorderActiveRef.current = false;
+      currentChunkRef.current = null;
+      if (mountedRef.current) {
+        setIsRecording(false);
+        setStatusText(getErrorMessage(error, 'Se detuvo la captura por un error de audio.'));
+      }
+    } finally {
+      recorderActiveRef.current = false;
+      if (mountedRef.current) setIsRecording(false);
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => null);
     }
-  }, [hearingId, recorder, recorderState.url, transcriptText, waitForChunkEnd]);
+  }, [drainChunkQueue, hearingId, recorder, waitForChunkEnd]);
 
   const handleStartRecording = useCallback(async () => {
-    if (recordingRef.current || isStarting || !hearingId) {
+    if (recordingRef.current || startingRef.current || sessionIdRef.current || !hearingId) {
       return;
     }
 
+    startingRef.current = true;
+    startCancelledRef.current = false;
+    let createdSessionId = null;
     try {
       setIsStarting(true);
+      setStatusText('Solicitando acceso al micrófono...');
       const permission = await requestRecordingPermissionsAsync();
 
       if (!permission.granted) {
-        Alert.alert('Permiso requerido', 'Necesitamos acceso al micrófono para grabar la audiencia.');
-        return;
+        throw new Error('Necesitamos acceso al micrófono para grabar la audiencia.');
       }
+      if (startCancelledRef.current || !mountedRef.current) return;
 
       await setAudioModeAsync({
         allowsRecording: true,
@@ -198,65 +309,115 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
         shouldRouteThroughEarpiece: false,
       });
 
+      if (startCancelledRef.current || !mountedRef.current) return;
       const started = await startHearingLiveTranscription({ caseDetail, hearing });
-      sessionIdRef.current = started?.sessionId || null;
-      setTranscriptInfo(started);
+      createdSessionId = started?.sessionId || null;
+      if (!createdSessionId) throw new Error('El servidor no creó una sesión de transcripción.');
+      sessionIdRef.current = createdSessionId;
+
+      if (startCancelledRef.current || !mountedRef.current) {
+        await finishHearingLiveTranscription({ hearingId, sessionId: createdSessionId }).catch(() => null);
+        sessionIdRef.current = null;
+        return;
+      }
+
+      const recorderStarted = await prepareAndStartRecorder(
+        recorder,
+        () => !startCancelledRef.current && mountedRef.current
+      );
+      if (!recorderStarted) {
+        await finishHearingLiveTranscription({ hearingId, sessionId: createdSessionId }).catch(() => null);
+        sessionIdRef.current = null;
+        return;
+      }
+
+      setTranscriptInfo({ ...started, hearingId, sessionId: createdSessionId });
       setTranscriptText('');
-      setStatusText('Grabando audiencia...');
+      transcriptChunksRef.current = new Map();
+      chunkQueueRef.current.clear((task) => releaseRecordingUri(task.audioUri));
+      setPendingChunkCount(0);
+      setIsQueueBlocked(false);
+      elapsedSecondsRef.current = 0;
       chunkIndexRef.current = 0;
+      currentChunkRef.current = { index: 0, startTime: 0 };
+      recorderActiveRef.current = true;
       recordingRef.current = true;
       setIsRecording(true);
+      setStatusText('Grabando audiencia...');
       loopPromiseRef.current = recordLoop();
     } catch (error) {
       const message = getErrorMessage(error, 'No se pudo iniciar la grabacion.');
       console.error('[HearingRecordingPanel] No se pudo iniciar la grabacion.');
-      Alert.alert('No se pudo iniciar la grabación', message);
       recordingRef.current = false;
+      if (recorderActiveRef.current) await recorder.stop().catch(() => null);
+      recorderActiveRef.current = false;
+      if (createdSessionId) {
+        await finishHearingLiveTranscription({ hearingId, sessionId: createdSessionId }).catch(() => null);
+      }
       sessionIdRef.current = null;
-      setIsRecording(false);
+      if (mountedRef.current) {
+        setIsRecording(false);
+        setStatusText(startCancelledRef.current ? 'Inicio cancelado.' : message);
+      }
+      if (!startCancelledRef.current) Alert.alert('No se pudo iniciar la grabación', message);
       await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => null);
     } finally {
-      setIsStarting(false);
+      startingRef.current = false;
+      if (mountedRef.current) setIsStarting(false);
     }
-  }, [caseDetail, hearing, hearingId, isStarting, recordLoop]);
+  }, [caseDetail, hearing, hearingId, recordLoop, recorder]);
 
   const handleStopRecording = useCallback(async () => {
     const sessionId = sessionIdRef.current;
 
-    if (!recordingRef.current || isFinishing || !hearingId || !sessionId) {
+    if (startingRef.current) {
+      startCancelledRef.current = true;
+      setStatusText('Cancelando inicio...');
       return;
     }
 
+    if (finishingRef.current || !hearingId || !sessionId) {
+      return;
+    }
+
+    finishingRef.current = true;
+    recordingRef.current = false;
     try {
       setIsFinishing(true);
       setStatusText('Transcribiendo audiencia...');
-      recordingRef.current = false;
       stopChunkRef.current?.();
 
       if (loopPromiseRef.current) {
         await loopPromiseRef.current;
       }
 
+      const queueSaved = await drainChunkQueue();
+      if (!queueSaved) throw new Error('Hay bloques pendientes. Reintentá el envío antes de finalizar.');
+
       const finished = await finishHearingLiveTranscription({ hearingId, sessionId });
       setTranscriptInfo(finished);
 
-      if (finished?.text) {
-        setTranscriptText(finished.text);
+      if (finished?.fullText || finished?.text) {
+        setTranscriptText(finished.fullText || finished.text);
       }
 
       setStatusText('Transcripción guardada.');
+      sessionIdRef.current = null;
       await onDocumentsChanged?.();
     } catch (error) {
       const message = getErrorMessage(error, 'No se pudo detener la grabación.');
       console.error('[HearingRecordingPanel] No se pudo detener la grabacion.');
+      if (mountedRef.current) setStatusText(message);
       Alert.alert('No se pudo detener la grabación', message);
     } finally {
-      setIsRecording(false);
-      setIsFinishing(false);
-      sessionIdRef.current = null;
+      finishingRef.current = false;
+      if (mountedRef.current) {
+        setIsRecording(false);
+        setIsFinishing(false);
+      }
       await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => null);
     }
-  }, [hearingId, isFinishing, onDocumentsChanged]);
+  }, [drainChunkQueue, hearingId, onDocumentsChanged]);
 
   const handleUploadAudio = useCallback(async () => {
     if (!hearingId || isRecording) {
@@ -423,13 +584,36 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
   }, [canDownloadPdf, hasTranscript, transcriptText]);
 
   useEffect(
-    () => () => {
-      recordingRef.current = false;
-      sessionIdRef.current = null;
-      stopChunkRef.current?.();
-      void setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => null);
+    () => {
+      mountedRef.current = true;
+      return () => {
+        mountedRef.current = false;
+        startCancelledRef.current = true;
+        recordingRef.current = false;
+        stopChunkRef.current?.();
+
+        void (async () => {
+          if (loopPromiseRef.current) await loopPromiseRef.current.catch(() => null);
+          if (recorderActiveRef.current) await recorder.stop().catch(() => null);
+          recorderActiveRef.current = false;
+
+          const sessionId = sessionIdRef.current;
+          if (sessionId) {
+            const result = await chunkQueueRef.current.drain();
+            if (result.ok) {
+              await finishHearingLiveTranscription({ hearingId, sessionId }).catch(() => null);
+            } else {
+              chunkQueueRef.current.clear((task) => releaseRecordingUri(task.audioUri));
+            }
+          } else {
+            chunkQueueRef.current.clear((task) => releaseRecordingUri(task.audioUri));
+          }
+
+          await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => null);
+        })();
+      };
     },
-    []
+    [hearingId, recorder]
   );
 
   return (
@@ -446,15 +630,23 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
 
       <View style={styles.buttonGrid}>
         <ActionButton
-          disabled={isRecording || isStarting || isFinishing}
+          disabled={isRecording || isStarting || isFinishing || hasActiveSession || pendingChunkCount > 0}
           label={isStarting ? 'Iniciando...' : 'Iniciar grabación'}
           onPress={() => void handleStartRecording()}
           styles={styles}
           variant="primary"
         />
         <ActionButton
-          disabled={!isRecording || isFinishing}
-          label={isFinishing ? 'Deteniendo...' : 'Detener grabación'}
+          disabled={(!isRecording && !isStarting && !hasActiveSession) || isFinishing}
+          label={
+            isStarting
+              ? 'Cancelar inicio'
+              : isFinishing
+                ? 'Deteniendo...'
+                : isRecording
+                  ? 'Detener grabación'
+                  : 'Finalizar y guardar'
+          }
           onPress={() => void handleStopRecording()}
           styles={styles}
           variant="secondary"
@@ -468,6 +660,18 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
         />
       </View>
 
+      {isQueueBlocked && pendingChunkCount > 0 ? (
+        <View style={styles.buttonGrid}>
+          <ActionButton
+            disabled={isTranscribing || isFinishing}
+            label={`Reintentar envío (${pendingChunkCount})`}
+            onPress={() => void retryQueueRef.current?.()}
+            styles={styles}
+            variant="secondary"
+          />
+        </View>
+      ) : null}
+
       {showProgress ? (
         <View style={styles.progressBlock}>
           <Text style={styles.progressText}>{statusText}</Text>
@@ -480,6 +684,12 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
           {loadingTranscript ? 'Cargando transcripción...' : statusText}
         </Text>
       )}
+
+      {pendingChunkCount > 0 ? (
+        <Text style={styles.panelStatus}>
+          {pendingChunkCount} bloque(s) en cola de transcripción.
+        </Text>
+      ) : null}
 
       {selectedAudio ? (
         <View style={styles.selectedAudio}>

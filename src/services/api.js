@@ -1705,12 +1705,34 @@ function isBrowserRuntime() {
 }
 
 async function appendFormDataFile(formData, fieldName, file = {}) {
-  const name = file.name || `documento-${Date.now()}`;
-  const type = file.type || 'application/octet-stream';
+  const requestedName = file.name || `documento-${Date.now()}`;
+  const requestedType = file.type || 'application/octet-stream';
+
+  const getExtensionForType = (type) => {
+    const normalizedType = safeString(type, '').toLowerCase().split(';')[0];
+    if (normalizedType.includes('webm')) return 'webm';
+    if (normalizedType.includes('ogg')) return 'ogg';
+    if (normalizedType.includes('wav')) return 'wav';
+    if (normalizedType.includes('mpeg')) return 'mp3';
+    if (normalizedType.includes('mp4') || normalizedType.includes('m4a')) return 'm4a';
+    return null;
+  };
+
+  const alignFileName = (name, type) => {
+    const extension = getExtensionForType(type);
+    if (!extension) return name;
+    const baseName = name.replace(/\.[^.]+$/, '');
+    return `${baseName}.${extension}`;
+  };
 
   if (isBlobLike(file.file)) {
+    const type = file.file.type || requestedType;
+    if (file.file.size <= 0) {
+      throw createRequestError('El bloque de audio está vacío.', 400);
+    }
+    const name = alignFileName(requestedName, type);
     formData.append(fieldName, file.file, name);
-    return;
+    return { name, type, size: file.file.size };
   }
 
   if (isBrowserRuntime()) {
@@ -1726,15 +1748,25 @@ async function appendFormDataFile(formData, fieldName, file = {}) {
     }
 
     const blob = await response.blob();
+    if (!blob.size) {
+      throw createRequestError('El bloque de audio está vacío.', 400);
+    }
+    const type = blob.type || requestedType;
+    const name = alignFileName(requestedName, type);
     formData.append(fieldName, blob, name);
-    return;
+    return { name, type, size: blob.size };
   }
 
+  if (!file.uri) {
+    throw createRequestError('No se encontró el archivo para enviar.', 400);
+  }
+  const name = alignFileName(requestedName, requestedType);
   formData.append(fieldName, {
     uri: file.uri,
     name,
-    type,
+    type: requestedType,
   });
+  return { name, type: requestedType, size: file.size ?? null };
 }
 
 function getUploadDocumentCategory(data) {
@@ -1995,21 +2027,17 @@ export async function startHearingLiveTranscription({ caseDetail, hearing } = {}
   }
 
   const hearingCaseId = safeOptionalString(hearing?.caseId ?? hearing?.causaId ?? caseDetail?.id);
-  const payload = await request(`/audiencias/${hearingId}/transcripcion/live/start`, {
-    method: 'POST',
-    body: {
-      ...buildHearingTranscriptionPayload({ caseDetail, hearing }),
-      caseId: hearingCaseId,
-      ...(activeWorkContext?.type === 'study' && activeWorkContext?.legalStudyId
-        ? { legalStudyId: activeWorkContext.legalStudyId }
-        : {}),
-    },
+  const sessionId = await startLiveTranscription({
+    caseId: hearingCaseId,
+    hearingId,
+    title: buildHearingTranscriptionPayload({ caseDetail, hearing }).title,
   });
 
   return {
-    ...normalizeHearingTranscription(payload || {}, hearingId),
-    // This contract is keyed by hearingId, not by a transcript sessionId.
-    sessionId: hearingId,
+    hearingId,
+    sessionId,
+    status: 'recording',
+    text: '',
   };
 }
 
@@ -2020,54 +2048,43 @@ export async function uploadHearingLiveTranscriptionChunk({
   hearingId,
   sessionId,
   startTime,
+  audioFile,
+  audioMimeType,
 } = {}) {
-  const activeHearingId = safeString(hearingId || sessionId, '').trim();
+  const activeSessionId = safeString(sessionId, '').trim();
 
-  if (!activeHearingId || !audioUri) {
-    throw createRequestError('No hay una audiencia o bloque de audio valido.', 400);
+  if (!activeSessionId || (!audioUri && !audioFile)) {
+    throw createRequestError('No hay una sesión o bloque de audio válido.', 400);
   }
 
-  const formData = new FormData();
-  formData.append('audio', {
-    uri: audioUri,
-    name: `audiencia-${hearingId || activeSessionId}-chunk-${chunkIndex}.m4a`,
-    type: 'audio/m4a',
+  return uploadLiveTranscriptionChunk({
+    sessionId: activeSessionId,
+    audioUri,
+    audioFile,
+    audioMimeType,
+    chunkIndex,
+    startTime,
+    endTime,
   });
-  formData.append('chunkIndex', String(chunkIndex));
-  formData.append('startTime', String(startTime));
-  formData.append('endTime', String(endTime));
-
-  const payload = await request(`/audiencias/${activeHearingId}/transcripcion/live/chunk`, {
-    method: 'POST',
-    timeout: 150000,
-    timeoutMessage: 'La transcripcion del bloque tardo demasiado. El siguiente bloque puede continuar.',
-    body: formData,
-  });
-
-  return {
-    ...payload,
-    chunkIndex: payload?.chunkIndex ?? chunkIndex,
-    endTime: payload?.endTime ?? endTime,
-    fullText: safeString(payload?.fullText ?? payload?.full_text, ''),
-    startTime: payload?.startTime ?? startTime,
-    text: getTranscriptTextFromResponse(payload),
-  };
 }
 
 export async function finishHearingLiveTranscription({ hearingId, sessionId } = {}) {
-  const activeHearingId = safeString(hearingId || sessionId, '').trim();
+  const activeSessionId = safeString(sessionId, '').trim();
 
-  if (!activeHearingId) {
-    throw createRequestError('No hay una audiencia activa para finalizar.', 400);
+  if (!activeSessionId) {
+    throw createRequestError('No hay una sesión activa para finalizar.', 400);
   }
 
-  const payload = await request(`/audiencias/${activeHearingId}/transcripcion/live/finish`, {
-    method: 'POST',
-    timeout: 150000,
-    timeoutMessage: 'No pudimos finalizar la transcripcion dentro del tiempo esperado.',
-  });
+  const payload = await finishLiveTranscription(activeSessionId);
+  const text = payload?.fullText || payload?.text || '';
 
-  return normalizeHearingTranscription(payload || {}, hearingId);
+  return {
+    ...normalizeHearingTranscription({ ...payload, text }, hearingId),
+    sessionId: activeSessionId,
+    hearingId,
+    chunks: payload?.chunks || payload?.session?.chunks || [],
+    fullText: text,
+  };
 }
 
 export async function generateHearingTranscriptionPdf({ hearingId } = {}) {
@@ -2101,7 +2118,8 @@ function getTranscriptTextFromResponse(data) {
 }
 
 function normalizeLiveTranscriptionSession(data = {}) {
-  const chunks = toArray(data?.chunks ?? data?.items).map((chunk) => ({
+  const session = data?.session ?? data?.data?.session ?? data;
+  const chunks = toArray(data?.chunks ?? data?.session?.chunks ?? data?.data?.chunks ?? data?.items).map((chunk) => ({
     ...chunk,
     chunkIndex: toNumber(chunk?.chunkIndex ?? chunk?.index) ?? 0,
     startTime: toNumber(chunk?.startTime) ?? 0,
@@ -2109,7 +2127,7 @@ function normalizeLiveTranscriptionSession(data = {}) {
     text: getTranscriptTextFromResponse(chunk),
   }));
   const fullText =
-    safeString(data?.fullText ?? data?.full_text ?? data?.transcript ?? data?.text, '') ||
+    safeString(data?.fullText ?? data?.full_text ?? data?.transcript ?? data?.text ?? session?.fullText ?? session?.text, '') ||
     chunks
       .sort((first, second) => first.chunkIndex - second.chunkIndex)
       .map((chunk) => chunk.text)
@@ -2118,8 +2136,11 @@ function normalizeLiveTranscriptionSession(data = {}) {
 
   return {
     ...data,
+    session,
+    sessionId: getTranscriptionSessionId(data) || safeOptionalString(session?.id),
     chunks,
     fullText,
+    text: safeString(data?.text, fullText),
   };
 }
 
@@ -2150,19 +2171,24 @@ export async function startLiveTranscription({ title, caseId, hearingId } = {}) 
 export async function uploadLiveTranscriptionChunk({
   sessionId,
   audioUri,
+  audioFile,
+  audioMimeType,
+  audioName,
   chunkIndex,
   startTime,
   endTime,
 } = {}) {
-  if (!sessionId || !audioUri) {
+  if (!sessionId || (!audioUri && !audioFile)) {
     throw createRequestError('No hay una sesion o archivo de audio valido para enviar.', 400);
   }
 
   const formData = new FormData();
-  formData.append('audio', {
+  await appendFormDataFile(formData, 'audio', {
+    file: audioFile,
     uri: audioUri,
-    name: `chunk-${chunkIndex}.m4a`,
-    type: 'audio/m4a',
+    size: audioFile?.size,
+    type: audioMimeType || audioFile?.type || 'audio/mp4',
+    name: audioName || `chunk-${chunkIndex}.m4a`,
   });
   formData.append('chunkIndex', String(chunkIndex));
   formData.append('startTime', String(startTime));
@@ -2219,6 +2245,9 @@ export async function uploadTranscriptionChunk(sessionId, data = {}) {
   return uploadLiveTranscriptionChunk({
     sessionId,
     audioUri: data?.audio?.uri,
+    audioFile: data?.audio?.file,
+    audioMimeType: data?.audio?.mimeType ?? data?.audio?.type,
+    audioName: data?.audio?.name ?? data?.audio?.fileName,
     chunkIndex: data?.chunkIndex,
     startTime: data?.startTime,
     endTime: data?.endTime,
