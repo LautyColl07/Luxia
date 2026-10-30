@@ -8,6 +8,7 @@ export default function ActionFeedbackModal({
   title,
   message,
   actionLabel = 'Continuar',
+  onAction,
   onClose,
   icon = 'check',
   tone = 'success',
@@ -31,7 +32,7 @@ export default function ActionFeedbackModal({
           <Text style={[styles.message, { color: colors.textSecondary }]}>{message}</Text>
           <Pressable
             accessibilityRole="button"
-            onPress={onClose}
+            onPress={onAction || onClose}
             style={({ pressed }) => [
               styles.button,
               { backgroundColor: colors.primary },

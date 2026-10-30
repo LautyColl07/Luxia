@@ -203,6 +203,7 @@ export default function CaseDetailScreen({ navigation, route }) {
                 documents={documents}
                 hearing={hearing}
                 onDocumentsChanged={loadCase}
+                onViewDocuments={() => navigation.navigate('MainTabs', { screen: 'Documentos' })}
               />
             </View>
           ))

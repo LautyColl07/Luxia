@@ -227,6 +227,70 @@ test('la audiencia normaliza la sesión más reciente que devuelve el backend', 
   assert.equal(result.hasTranscript, true);
 });
 
+test('finalizar conserva el id y el estado finished para habilitar el PDF persistido', async () => {
+  const api = loadApi(async () => jsonResponse(200, {
+    success: true,
+    session: { id: 73, status: 'finished' },
+    fullText: 'texto final',
+  }));
+  api.setAuthState('authenticated');
+
+  const result = await api.finishHearingLiveTranscription({ hearingId: 19, sessionId: 73 });
+
+  assert.equal(result.sessionId, '73');
+  assert.equal(result.status, 'finished');
+  assert.equal(result.fullText, 'texto final');
+});
+
+test('la audiencia conserva el documento PDF guardado y no inventa una URL de impresión', async () => {
+  const api = loadApi(async () => jsonResponse(200, {
+    success: true,
+    sessionId: 73,
+    status: 'finished',
+    text: 'transcripción',
+    pdfAvailable: true,
+    pdfDocument: {
+      documentId: 91,
+      filename: 'Transcripción-Causa-Audiencia-2026-10-27-S73.pdf',
+      downloadUrl: '/api/v1/documentos/91/download',
+      previewUrl: '/api/v1/documentos/91/preview',
+    },
+  }));
+  api.setAuthState('authenticated');
+
+  const result = await api.getHearingTranscription(19);
+
+  assert.equal(result.documentId, 91);
+  assert.equal(result.filename, 'Transcripción-Causa-Audiencia-2026-10-27-S73.pdf');
+  assert.equal(result.downloadUrl, '/api/v1/documentos/91/download');
+  assert.equal(result.previewUrl, '/api/v1/documentos/91/preview');
+});
+
+test('guardar PDF envía el ID de la sesión finalizada y devuelve el documento persistido', async () => {
+  let captured;
+  const api = loadApi(async (url, options) => {
+    captured = { url: String(url), options };
+    return jsonResponse(201, {
+      success: true,
+      documentId: 91,
+      sessionId: 73,
+      hearingId: 19,
+      filename: 'Transcripción-Causa-Audiencia-2026-10-27-S73.pdf',
+      pdfAvailable: true,
+      downloadUrl: '/api/v1/documentos/91/download',
+      previewUrl: '/api/v1/documentos/91/preview',
+    });
+  });
+  api.setAuthState('authenticated');
+
+  const result = await api.generateHearingTranscriptionPdf({ hearingId: 19, sessionId: 73 });
+
+  assert.equal(captured.url, 'https://api.test/api/v1/audiencias/19/transcripcion/pdf');
+  assert.deepEqual(JSON.parse(captured.options.body), { sessionId: '73' });
+  assert.equal(result.documentId, 91);
+  assert.equal(result.downloadUrl, '/api/v1/documentos/91/download');
+});
+
 test('rechaza un archivo web vacío sin enviar la petición', async () => {
   let requests = 0;
   const api = loadApi(async () => {

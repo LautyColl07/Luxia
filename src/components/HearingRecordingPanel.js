@@ -1,6 +1,5 @@
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
-import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import {
   RecordingPresets,
@@ -10,19 +9,20 @@ import {
   useAudioRecorderState,
 } from 'expo-audio';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import ActionFeedbackModal from './ActionFeedbackModal';
+import { API_ROOT_URL } from '../config/api';
 import { useAppTheme } from '../context/ThemeContext';
 import {
   finishHearingLiveTranscription,
+  generateHearingTranscriptionPdf,
+  getCurrentIdToken,
   getHearingTranscription,
   startHearingLiveTranscription,
   uploadHearingAudio,
   uploadHearingLiveTranscriptionChunk,
-  uploadPdfDocumentFromHearing,
 } from '../services/api';
-import { buildTranscriptionHtml } from '../utils/exportTranscription';
 import { createTranscriptionChunkQueue } from '../utils/transcriptionChunkQueue';
 import { prepareAndStartRecorder, stopRecorderChunk } from '../utils/recorderLifecycle';
 
@@ -47,7 +47,7 @@ function getErrorMessage(error, fallback) {
   );
 }
 
-export default function HearingRecordingPanel({ caseDetail, hearing, onDocumentsChanged }) {
+export default function HearingRecordingPanel({ caseDetail, hearing, onDocumentsChanged, onViewDocuments }) {
   const { colors } = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
@@ -70,6 +70,7 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
   const recordingRef = useRef(false);
   const startingRef = useRef(false);
   const finishingRef = useRef(false);
+  const pdfGenerationRef = useRef(false);
   const startCancelledRef = useRef(false);
   const mountedRef = useRef(true);
   const recorderActiveRef = useRef(false);
@@ -126,7 +127,11 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
   const hasTranscript = Boolean(transcriptText.trim());
   const hasActiveSession = transcriptInfo?.status === 'recording' && Boolean(transcriptInfo?.sessionId);
   const showProgress = isStarting || isFinishing || isUploadingAudio || isTranscribing || isGeneratingPdf;
-  const canDownloadPdf = Boolean(transcriptInfo?.pdfAvailable);
+  const canDownloadPdf = Boolean(transcriptInfo?.pdfAvailable && transcriptInfo?.downloadUrl);
+  const canGeneratePdf = Boolean(
+    hasTranscript && transcriptInfo?.status === 'finished' && transcriptInfo?.sessionId &&
+      !isRecording && !isFinishing && pendingChunkCount === 0 && !isQueueBlocked
+  );
 
   const refreshTranscript = useCallback(async ({ preserveEmptyStatus = false, throwOnError = false } = {}) => {
     if (!hearingId) {
@@ -395,7 +400,12 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
       if (!queueSaved) throw new Error('Hay bloques pendientes. Reintentá el envío antes de finalizar.');
 
       const finished = await finishHearingLiveTranscription({ hearingId, sessionId });
-      setTranscriptInfo(finished);
+      setTranscriptInfo({
+        ...(finished || {}),
+        sessionId: finished?.sessionId || sessionId,
+        hearingId,
+        status: finished?.status || 'finished',
+      });
 
       if (finished?.fullText || finished?.text) {
         setTranscriptText(finished.fullText || finished.text);
@@ -494,6 +504,7 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
   }, [caseDetail, hearing, hearingId, isRecording, onDocumentsChanged, refreshTranscript]);
 
   const handleGeneratePdf = useCallback(async () => {
+    if (pdfGenerationRef.current) return;
     if (!hasTranscript) {
       Alert.alert('No hay transcripción para guardar.');
       return;
@@ -504,70 +515,92 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
       return;
     }
 
-    const fileName = `transcripcion-audiencia-${hearingId}.pdf`;
+    const sessionId = transcriptInfo?.sessionId;
+    if (!canGeneratePdf || !sessionId) {
+      Alert.alert('Transcripción no finalizada', 'Finalizá y guardá la transcripción antes de generar el PDF.');
+      return;
+    }
 
+    pdfGenerationRef.current = true;
     try {
       setIsGeneratingPdf(true);
-      setStatusText('Generando PDF...');
-      const htmlContent = buildTranscriptionHtml(transcriptText);
-      const pdf = await Print.printToFileAsync({
-        html: htmlContent,
-      });
-      const pdfUri = pdf.uri;
-
-      const info = await FileSystem.getInfoAsync(pdfUri);
-
-      if (!info.exists || !info.size || info.size <= 0) {
-        throw new Error('El PDF generado está vacío o no existe');
+      setStatusText('Guardando PDF...');
+      const generatedPdf = await generateHearingTranscriptionPdf({ hearingId, sessionId });
+      if (!generatedPdf?.documentId || !generatedPdf?.downloadUrl) {
+        throw new Error('El servidor no confirmó el documento PDF guardado.');
       }
 
-      setStatusText('Guardando PDF en Documentos...');
-
+      setTranscriptInfo((current) => ({
+        ...(current || {}),
+        ...(generatedPdf || {}),
+        hearingId,
+        sessionId,
+        status: 'finished',
+        pdfAvailable: true,
+      }));
+      setStatusText('PDF guardado en Documentos.');
+      setActionFeedback({
+        title: 'Transcripción guardada',
+        message: 'La transcripción se guardó correctamente en Documentos.',
+        actionLabel: 'Ver Documentos',
+        onAction: () => {
+          setActionFeedback(null);
+          onViewDocuments?.();
+        },
+      });
       try {
-        await uploadPdfDocumentFromHearing({
-          fileUri: pdfUri,
-          hearingId,
-          fileName,
-        });
-
-        setTranscriptInfo((current) => ({
-          ...(current || {}),
-          pdfAvailable: true,
-        }));
-        setStatusText('PDF guardado en Documentos.');
-        Alert.alert('Listo', 'El PDF se guardó correctamente en Documentos.');
         await onDocumentsChanged?.();
-      } catch (uploadError) {
-        setStatusText('PDF generado, pero no se pudo guardar en Documentos.');
-        console.error('[HearingRecordingPanel] No se pudo subir el PDF a documentos.');
-        Alert.alert(
-          'PDF generado',
-          'El PDF se generó, pero no se pudo guardar en Documentos.'
-        );
+      } catch {
+        console.info('[HearingRecordingPanel] PDF guardado; no se pudo actualizar la lista de documentos.');
       }
     } catch (error) {
       const message = getErrorMessage(error, 'No se pudo generar el PDF.');
       console.error('[HearingRecordingPanel] No se pudo generar el PDF.');
       Alert.alert('No se pudo guardar el PDF', message);
     } finally {
+      pdfGenerationRef.current = false;
       setIsGeneratingPdf(false);
     }
-  }, [hasTranscript, hearingId, onDocumentsChanged, transcriptText]);
+  }, [canGeneratePdf, hearingId, onDocumentsChanged, onViewDocuments, transcriptInfo?.sessionId]);
 
   const handleDownloadPdf = useCallback(async () => {
-    if (!canDownloadPdf || !hasTranscript) {
+    if (!canDownloadPdf || !transcriptInfo?.downloadUrl) {
       Alert.alert('No hay PDF disponible para descargar.');
       return;
     }
 
     try {
       setIsDownloadingPdf(true);
-      const htmlContent = buildTranscriptionHtml(transcriptText);
-      const result = await Print.printToFileAsync({
-        html: htmlContent,
-      });
+      const url = new URL(transcriptInfo.downloadUrl, API_ROOT_URL);
+      const apiRoot = new URL(API_ROOT_URL);
+      if (url.origin !== apiRoot.origin || !/^\/api\/v1\/documentos\/\d+\/download$/.test(url.pathname)) {
+        throw new Error('La dirección de descarga del documento no es válida.');
+      }
+      const token = await getCurrentIdToken();
+      const fileName = String(transcriptInfo.filename || `transcripcion-audiencia-${hearingId}.pdf`)
+        .replace(/[\\/:*?"<>|]/g, '_');
 
-      if (await Sharing.isAvailableAsync()) {
+      if (Platform.OS === 'web') {
+        const response = await fetch(url.toString(), { headers: { Authorization: `Bearer ${token}` } });
+        if (!response.ok) throw new Error('El servidor no pudo descargar el documento.');
+        const blob = await response.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        const link = window.document.createElement('a');
+        link.href = objectUrl;
+        link.download = fileName;
+        window.document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+      } else {
+        const destination = `${FileSystem.cacheDirectory || FileSystem.documentDirectory}${fileName}`;
+        const result = await FileSystem.downloadAsync(url.toString(), destination, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (result.status < 200 || result.status >= 300) {
+          throw new Error('El servidor no pudo descargar el documento.');
+        }
+        if (!(await Sharing.isAvailableAsync())) throw new Error('No se puede compartir el archivo en este dispositivo.');
         await Sharing.shareAsync(result.uri, {
           dialogTitle: 'Descargar transcripción',
           mimeType: PDF_MIME_TYPE,
@@ -581,7 +614,7 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
     } finally {
       setIsDownloadingPdf(false);
     }
-  }, [canDownloadPdf, hasTranscript, transcriptText]);
+  }, [canDownloadPdf, hearingId, transcriptInfo?.downloadUrl, transcriptInfo?.filename]);
 
   useEffect(
     () => {
@@ -717,7 +750,7 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
       {hasTranscript ? (
         <View style={styles.pdfActions}>
           <ActionButton
-            disabled={isGeneratingPdf}
+            disabled={isGeneratingPdf || !canGeneratePdf}
             label={isGeneratingPdf ? 'Guardando PDF...' : 'Guardar transcripción en PDF'}
             onPress={() => void handleGeneratePdf()}
             styles={styles}
@@ -736,8 +769,9 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
       ) : null}
 
       <ActionFeedbackModal
-        actionLabel="Continuar"
+        actionLabel={actionFeedback?.actionLabel || 'Continuar'}
         message={actionFeedback?.message}
+        onAction={actionFeedback?.onAction}
         onClose={() => setActionFeedback(null)}
         title={actionFeedback?.title}
         visible={Boolean(actionFeedback)}

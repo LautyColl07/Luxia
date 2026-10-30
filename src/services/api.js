@@ -1910,11 +1910,7 @@ function buildHearingTranscriptionPayload({ caseDetail, hearing } = {}) {
 function normalizeHearingTranscription(data = {}, hearingId = null) {
   const text = getTranscriptTextFromResponse(data);
   const audioAvailable = Boolean(data?.audioAvailable ?? data?.audio_disponible ?? data?.hasAudio);
-  const downloadUrl =
-    safeOptionalString(data?.downloadUrl ?? data?.download_url) ||
-    (Boolean(data?.pdfAvailable ?? data?.pdf_disponible ?? data?.hasPdf) && hearingId
-      ? `/api/v1/audiencias/${hearingId}/transcripcion/pdf`
-      : null);
+  const downloadUrl = safeOptionalString(data?.downloadUrl ?? data?.download_url ?? data?.pdfDocument?.downloadUrl);
   const pdfAvailable = Boolean(data?.pdfAvailable ?? data?.pdf_disponible ?? data?.hasPdf ?? downloadUrl);
 
   return {
@@ -1924,6 +1920,10 @@ function normalizeHearingTranscription(data = {}, hearingId = null) {
     hasPdf: Boolean(data?.hasPdf ?? data?.pdfAvailable ?? data?.pdf_disponible ?? downloadUrl),
     hasTranscript: Boolean(data?.hasTranscript ?? text),
     pdfAvailable,
+    pdfDocument: data?.pdfDocument || null,
+    previewUrl: safeOptionalString(data?.previewUrl ?? data?.pdfDocument?.previewUrl),
+    documentId: data?.documentId ?? data?.pdfDocument?.documentId ?? null,
+    filename: safeOptionalString(data?.filename ?? data?.pdfDocument?.filename),
     status: safeString(data?.status ?? data?.estado, text ? 'completed' : 'empty'),
     text,
     transcriptId: data?.transcriptId ?? data?.id ?? null,
@@ -2082,18 +2082,20 @@ export async function finishHearingLiveTranscription({ hearingId, sessionId } = 
     ...normalizeHearingTranscription({ ...payload, text }, hearingId),
     sessionId: activeSessionId,
     hearingId,
+    status: safeString(payload?.session?.status ?? payload?.status, 'finished'),
     chunks: payload?.chunks || payload?.session?.chunks || [],
     fullText: text,
   };
 }
 
-export async function generateHearingTranscriptionPdf({ hearingId } = {}) {
-  if (!hearingId) {
-    throw createRequestError('No hay una audiencia valida para generar PDF.', 400);
+export async function generateHearingTranscriptionPdf({ hearingId, sessionId } = {}) {
+  if (!hearingId || !sessionId) {
+    throw createRequestError('No hay una audiencia o transcripción finalizada para generar PDF.', 400);
   }
 
   const payload = await request(`/audiencias/${hearingId}/transcripcion/pdf`, {
     method: 'POST',
+    body: { sessionId: String(sessionId) },
     timeout: 120000,
     timeoutMessage: 'La generacion del PDF tardo demasiado.',
   });
