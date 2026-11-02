@@ -25,6 +25,14 @@ export default function ActionFeedbackModal({
       <View style={styles.overlay}>
         <Pressable onPress={onClose} style={StyleSheet.absoluteFill} />
         <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
+          <Pressable
+            accessibilityLabel="Cerrar"
+            accessibilityRole="button"
+            onPress={onClose}
+            style={({ pressed }) => [styles.closeButton, pressed && styles.buttonPressed]}
+          >
+            <MaterialCommunityIcons color={colors.textSecondary} name="close" size={22} />
+          </Pressable>
           <View style={[styles.iconWrapper, { backgroundColor: tone === 'info' ? colors.accentSoft : tone === 'danger' ? colors.dangerSoft : colors.successSoft }]}>
             <MaterialCommunityIcons color={tone === 'info' ? colors.primary : tone === 'danger' ? colors.danger : colors.success} name={icon} size={30} />
           </View>
@@ -56,6 +64,7 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   card: {
+    position: 'relative',
     width: '100%',
     maxWidth: 420,
     alignItems: 'center',
@@ -67,6 +76,16 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.22,
     shadowRadius: 28,
     elevation: 10,
+  },
+  closeButton: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1,
   },
   iconWrapper: {
     width: 64,

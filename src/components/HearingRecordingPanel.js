@@ -9,7 +9,7 @@ import {
   useAudioRecorderState,
 } from 'expo-audio';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
 import ActionFeedbackModal from './ActionFeedbackModal';
 import { API_ROOT_URL } from '../config/api';
@@ -20,6 +20,7 @@ import {
   getCurrentIdToken,
   getHearingTranscription,
   startHearingLiveTranscription,
+  transcribeHearingAudio,
   uploadHearingAudio,
   uploadHearingLiveTranscriptionChunk,
 } from '../services/api';
@@ -49,6 +50,8 @@ function getErrorMessage(error, fallback) {
 
 export default function HearingRecordingPanel({ caseDetail, hearing, onDocumentsChanged, onViewDocuments }) {
   const { colors } = useAppTheme();
+  const { width: viewportWidth } = useWindowDimensions();
+  const compactLayout = viewportWidth < 640;
   const styles = useMemo(() => createStyles(colors), [colors]);
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder, 250);
@@ -150,6 +153,7 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
       );
       setTranscriptInfo(result);
       setTranscriptText(nextText);
+      if (result?.audio) setSelectedAudio(result.audio);
       if (nextText) {
         setStatusText('Transcripción cargada.');
       } else if (!preserveEmptyStatus) {
@@ -172,6 +176,25 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
       setLoadingTranscript(false);
     }
   }, [hearingId]);
+
+  const handleTranscribeUploadedAudio = useCallback(async () => {
+    if (!hearingId || isTranscribing) return;
+    try {
+      setIsTranscribing(true);
+      setStatusText('Transcribiendo audio...');
+      const result = await transcribeHearingAudio({ hearingId });
+      setTranscriptInfo((current) => ({ ...(current || {}), ...(result || {}), status: 'finished' }));
+      setSelectedAudio((current) => current ? { ...current, status: 'transcribed' } : current);
+      setTranscriptText(result?.text || result?.fullText || '');
+      setStatusText('Transcripción completada.');
+    } catch (error) {
+      const message = getErrorMessage(error, 'No se pudo transcribir el audio.');
+      setStatusText(message);
+      Alert.alert('No se pudo transcribir el audio', message);
+    } finally {
+      setIsTranscribing(false);
+    }
+  }, [hearingId, isTranscribing]);
 
   useEffect(() => {
     void refreshTranscript();
@@ -453,11 +476,6 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
         return;
       }
 
-      setSelectedAudio({
-        name: asset.name || 'Audio de audiencia',
-        size: asset.size,
-        mimeType: asset.mimeType || 'audio/m4a',
-      });
       setIsUploadingAudio(true);
       setStatusText('Subiendo audio...');
       const uploadResponse = await uploadHearingAudio({ asset, caseDetail, hearing });
@@ -472,6 +490,7 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
         audioAvailable: true,
         status: uploadResponse?.status || 'uploaded',
       }));
+      if (uploadResponse?.audio) setSelectedAudio(uploadResponse.audio);
       setStatusText('Audio subido correctamente.');
       setActionFeedback({
         title: 'Audio subido',
@@ -496,8 +515,9 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
       }
     } catch (error) {
       const message = getErrorMessage(error, 'No se pudo subir el audio.');
+      setStatusText(message);
+      setActionFeedback({ title: 'No se pudo subir el audio', message, tone: 'danger', icon: 'alert-circle-outline' });
       console.error('[HearingRecordingPanel] No se pudo subir el audio.');
-      Alert.alert('No se pudo subir el audio', message);
     } finally {
       setIsUploadingAudio(false);
     }
@@ -725,7 +745,7 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
       ) : null}
 
       {selectedAudio ? (
-        <View style={styles.selectedAudio}>
+        <View style={[styles.selectedAudio, compactLayout && styles.selectedAudioCompact]}>
           <View style={styles.selectedAudioIcon}>
             <Text style={styles.selectedAudioIconText}>♫</Text>
           </View>
@@ -734,6 +754,15 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
             <Text style={styles.selectedAudioMeta}>
               {selectedAudio.mimeType} · {selectedAudio.size ? `${Math.ceil(selectedAudio.size / 1024 / 1024)} MB` : 'archivo seleccionado'}
             </Text>
+          </View>
+          <View style={[styles.transcribeButtonWrap, compactLayout && styles.transcribeButtonWrapCompact]}>
+            <ActionButton
+              disabled={isTranscribing || isUploadingAudio || selectedAudio.status === 'transcribed'}
+              label={isTranscribing ? 'Transcribiendo...' : 'Transcribir'}
+              onPress={() => void handleTranscribeUploadedAudio()}
+              styles={styles}
+              variant="primary"
+            />
           </View>
         </View>
       ) : null}
@@ -769,6 +798,8 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
       ) : null}
 
       <ActionFeedbackModal
+        tone={actionFeedback?.tone}
+        icon={actionFeedback?.icon}
         actionLabel={actionFeedback?.actionLabel || 'Continuar'}
         message={actionFeedback?.message}
         onAction={actionFeedback?.onAction}
@@ -850,6 +881,9 @@ const createStyles = (colors) => StyleSheet.create({
     backgroundColor: colors.backgroundAlt,
     padding: 12,
   },
+  selectedAudioCompact: { flexWrap: 'wrap' },
+  transcribeButtonWrap: { minWidth: 132 },
+  transcribeButtonWrapCompact: { width: '100%' },
   selectedAudioIcon: {
     width: 38,
     height: 38,

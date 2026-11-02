@@ -31,11 +31,11 @@ export default function CaseDetailScreen({ navigation, route }) {
   const [moving, setMoving] = useState(false);
   const requestSequenceRef = useRef(0);
 
-  const loadCase = useCallback(async () => {
+  const loadCase = useCallback(async ({ preserveExisting = false } = {}) => {
     const requestId = ++requestSequenceRef.current;
     try {
       setLoading(true);
-      setCaseDetail(null);
+      if (!preserveExisting) setCaseDetail(null);
       setError('');
       const item = await getCaseById(caseId);
       if (requestSequenceRef.current !== requestId) return;
@@ -52,6 +52,8 @@ export default function CaseDetailScreen({ navigation, route }) {
       if (requestSequenceRef.current === requestId) setLoading(false);
     }
   }, [activeContextKey, caseId]);
+
+  const refreshCase = useCallback(() => loadCase({ preserveExisting: true }), [loadCase]);
 
   useFocusEffect(
     useCallback(() => {
@@ -202,7 +204,7 @@ export default function CaseDetailScreen({ navigation, route }) {
                 caseDetail={caseDetail}
                 documents={documents}
                 hearing={hearing}
-                onDocumentsChanged={loadCase}
+                onDocumentsChanged={refreshCase}
                 onViewDocuments={() => navigation.navigate('MainTabs', { screen: 'Documentos' })}
               />
             </View>
