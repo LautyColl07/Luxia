@@ -18,6 +18,7 @@ export const FILE_BASE_URL = API_ROOT_URL;
 let authToken = null;
 let authState = 'initializing';
 let mockStore = JSON.parse(JSON.stringify(mockData));
+let mockStudyInvitations = [];
 const REQUEST_TIMEOUT_MS = 15000;
 const DATA_REQUEST_TIMEOUT_MS = 30000;
 const LUX_REQUEST_TIMEOUT_MS = 120000;
@@ -1061,7 +1062,7 @@ export async function getMe() {
 
   try {
     const data = await request('/auth/me');
-    return normalizeUser(data);
+    return normalizeUser(data?.user || data?.data?.user || data?.data || data);
   } catch (error) {
     const resumen = await getDashboardResumen().catch(() => null);
 
@@ -1078,7 +1079,7 @@ export async function getMyLegalStudies() {
     return simulateDelay(toArray(mockStore.legalStudies).map((item) => ({
       id: String(item.id),
       name: safeString(item.name, 'Estudio Juridico'),
-      role: item.role || 'OWNER',
+      role: normalizeStudyRoleForClient(item.role),
     })));
   }
 
@@ -1088,28 +1089,37 @@ export async function getMyLegalStudies() {
   return toArray(data).map((item) => ({
     id: String(item.id),
     name: safeString(item.name, 'Estudio Juridico'),
-    role: item.role || 'MEMBER',
+    role: normalizeStudyRoleForClient(item.role),
+    capabilities: item.capabilities || {},
   }));
 }
 
-export async function joinLegalStudy(name) {
+function normalizeStudyRoleForClient(role) {
+  if (['OWNER', 'ADMIN'].includes(role)) return 'ADMIN';
+  if (['VIEWER', 'COLLABORATOR'].includes(role)) return 'COLLABORATOR';
+  return 'LAWYER';
+}
+
+export async function createLegalStudy(name) {
   if (USE_MOCKS) {
     const newStudy = {
       id: String(Date.now()),
       name: name.trim(),
+      role: 'ADMIN',
+      capabilities: { canManageStudy: true, canCreateStudyCase: true },
     };
     mockStore.legalStudies = [newStudy, ...mockStore.legalStudies];
     return simulateDelay(newStudy);
   }
 
-  const response = await request('/legal-studies/join', {
+  const response = await request('/legal-studies', {
     method: 'POST',
     body: { name: name.trim() },
   });
 
   const study = response?.data || response;
   if (!study?.id || !study?.name) {
-    throw new Error('El servidor no devolvio el estudio vinculado. Intenta nuevamente.');
+    throw new Error('No se pudo crear el estudio. Verificá tus permisos e intentá nuevamente.');
   }
   return {
     id: String(study.id),
@@ -1117,12 +1127,80 @@ export async function joinLegalStudy(name) {
   };
 }
 
-export async function addLegalStudyMember(legalStudyId, email) {
-  if (USE_MOCKS) return simulateDelay({ legalStudyId, email, role: 'MEMBER', status: 'ACTIVE' });
-  const response = await request(`/legal-studies/${encodeURIComponent(String(legalStudyId))}/members`, {
+export async function getStudySummary(legalStudyId) {
+  if (USE_MOCKS) return simulateDelay({ id: String(legalStudyId), name: '', metrics: { members: 0, lawyers: 0, pendingInvitations: 0, cases: 0 } });
+  const response = await request(`/legal-studies/${encodeURIComponent(String(legalStudyId))}`);
+  return response?.data || response;
+}
+
+export async function getStudyMembers(legalStudyId) {
+  if (USE_MOCKS) return simulateDelay([]);
+  const response = await request(`/legal-studies/${encodeURIComponent(String(legalStudyId))}/members`);
+  return Array.isArray(response?.data) ? response.data : [];
+}
+
+export async function getStudyInvitations(legalStudyId) {
+  if (USE_MOCKS) return simulateDelay(mockStudyInvitations.filter((item) => String(item.studyId) === String(legalStudyId)));
+  const response = await request(`/legal-studies/${encodeURIComponent(String(legalStudyId))}/invitations`);
+  return Array.isArray(response?.data) ? response.data : [];
+}
+
+export async function createStudyInvitation(legalStudyId, email, role) {
+  if (USE_MOCKS) {
+    const item = { id: String(Date.now()), studyId: String(legalStudyId), email: email.trim().toLowerCase(), role, status: 'PENDING', deliveryStatus: 'WAITING_CONFIGURATION', expiresAt: new Date(Date.now() + 7 * 86400000).toISOString() };
+    mockStudyInvitations = [item, ...mockStudyInvitations];
+    return simulateDelay(item);
+  }
+  const response = await request(`/legal-studies/${encodeURIComponent(String(legalStudyId))}/invitations`, {
     method: 'POST',
-    body: { email: email.trim().toLowerCase() },
+    body: { email: email.trim().toLowerCase(), role },
   });
+  return response?.data || response;
+}
+
+export async function updateStudyMemberRole(legalStudyId, memberId, role) {
+  const response = await request(`/legal-studies/${encodeURIComponent(String(legalStudyId))}/members/${encodeURIComponent(String(memberId))}/role`, { method: 'PATCH', body: { role } });
+  return response?.data || response;
+}
+
+export async function removeStudyMember(legalStudyId, memberId) {
+  return request(`/legal-studies/${encodeURIComponent(String(legalStudyId))}/members/${encodeURIComponent(String(memberId))}`, { method: 'DELETE' });
+}
+
+export async function resendStudyInvitation(legalStudyId, invitationId) {
+  const response = await request(`/legal-studies/${encodeURIComponent(String(legalStudyId))}/invitations/${encodeURIComponent(String(invitationId))}/resend`, { method: 'POST' });
+  return response?.data || response;
+}
+
+export async function revokeStudyInvitation(legalStudyId, invitationId) {
+  const response = await request(`/legal-studies/${encodeURIComponent(String(legalStudyId))}/invitations/${encodeURIComponent(String(invitationId))}/revoke`, { method: 'POST' });
+  return response?.data || response;
+}
+
+export async function getMyStudyInvitations() {
+  if (USE_MOCKS) return simulateDelay([]);
+  const response = await request('/legal-studies/invitations/my');
+  return Array.isArray(response?.data) ? response.data : [];
+}
+
+export async function resolveStudyInvitation(token) {
+  const response = await request('/legal-studies/invitations/resolve', { method: 'POST', body: { token } });
+  return response?.data || response;
+}
+
+export async function respondToStudyInvitation(invitationId, decision, token) {
+  const action = decision === 'ACCEPTED' ? 'accept' : 'decline';
+  const response = await request(`/legal-studies/invitations/${encodeURIComponent(String(invitationId))}/${action}`, { method: 'POST', body: token ? { token } : {} });
+  return response?.data || response;
+}
+
+export async function getStudyCaseAssignments(legalStudyId, caseId) {
+  const response = await request(`/legal-studies/${encodeURIComponent(String(legalStudyId))}/cases/${encodeURIComponent(String(caseId))}/assignments`);
+  return Array.isArray(response?.data) ? response.data : [];
+}
+
+export async function updateStudyCaseAssignments(legalStudyId, caseId, assignments) {
+  const response = await request(`/legal-studies/${encodeURIComponent(String(legalStudyId))}/cases/${encodeURIComponent(String(caseId))}/assignments`, { method: 'PUT', body: { assignments } });
   return response?.data || response;
 }
 
@@ -1433,6 +1511,7 @@ export async function createCase(data) {
   const requestedStudyId = safeOptionalString(data.legalStudyId);
   const caseData = {
     ...normalizeCasePayload(data),
+    ...(Array.isArray(data.assignments) ? { assignments: data.assignments } : {}),
     ...(data.scope ? { scope: data.scope } : {}),
     ...(data.scope === 'LEGAL_STUDY' && requestedStudyId
       ? { legalStudyId: requestedStudyId }
@@ -1492,7 +1571,10 @@ export async function updateCase(id, data) {
     return simulateDelay(updatedCase);
   }
 
-  const payload = normalizeCasePayload(data);
+  const payload = {
+    ...normalizeCasePayload(data),
+    ...(Array.isArray(data.assignments) ? { assignments: data.assignments } : {}),
+  };
   const response = await requestWithFallback(
     withWorkScope(`/causas/${id}`),
     withWorkScope(`/cases/${id}`),

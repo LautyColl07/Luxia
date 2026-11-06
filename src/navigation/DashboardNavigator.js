@@ -14,6 +14,8 @@ import DocumentsScreen from '../screens/DocumentsScreen';
 import LiveTranscriptionScreen from '../screens/LiveTranscriptionScreen';
 import LuxMemoryScreen from '../screens/LuxMemoryScreen';
 import MoreScreen from '../screens/MoreScreen';
+import StudyAdministrationScreen from '../screens/StudyAdministrationScreen';
+import StudyInvitationsScreen from '../screens/StudyInvitationsScreen';
 import NewCaseScreen from '../screens/NewCaseScreen';
 import NewHearingScreen from '../screens/NewHearingScreen';
 import TranscriptionTestScreen from '../screens/TranscriptionTestScreen';
@@ -128,6 +130,8 @@ export default function DashboardNavigator() {
       />
       <Stack.Screen component={UploadDocumentScreen} name="UploadDocument" options={{ title: 'Subir documento' }} />
       <Stack.Screen component={LuxMemoryScreen} name="LuxMemory" options={{ title: 'Memoria de LUX' }} />
+      <Stack.Screen component={StudyAdministrationScreen} name="AdministracionEstudio" options={{ title: 'Administración del estudio' }} />
+      <Stack.Screen component={StudyInvitationsScreen} name="InvitacionesEstudio" options={{ title: 'Invitaciones al estudio' }} />
     </Stack.Navigator>
   );
 }

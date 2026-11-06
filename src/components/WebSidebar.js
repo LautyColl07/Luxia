@@ -2,6 +2,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useAppTheme } from '../context/ThemeContext';
+import { useStudyContext } from '../context/StudyContext';
 
 const NAV_ITEMS = [
   { label: 'Inicio', route: 'Inicio', icon: 'view-dashboard-outline' },
@@ -13,9 +14,13 @@ const NAV_ITEMS = [
 
 export default function WebSidebar({ activeRoute = 'Inicio', currentUser, onNavigate, collapsed = false, onToggle }) {
   const { colors } = useAppTheme();
+  const { legalStudies } = useStudyContext();
   const styles = createStyles(colors);
   const userName = currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Usuario';
   const userInitial = userName.slice(0, 1).toUpperCase();
+  const navItems = legalStudies.some((study) => study.role === 'ADMIN')
+    ? [...NAV_ITEMS, { label: 'Administración', route: 'AdministracionEstudio', icon: 'office-building-cog-outline' }]
+    : NAV_ITEMS;
 
   return (
     <View style={[styles.sidebar, collapsed && styles.sidebarCollapsed]}>
@@ -54,7 +59,7 @@ export default function WebSidebar({ activeRoute = 'Inicio', currentUser, onNavi
 
         {!collapsed ? <Text style={styles.sectionLabel}>ESPACIO DE TRABAJO</Text> : null}
         <View style={styles.navList}>
-          {NAV_ITEMS.map((item) => {
+          {navItems.map((item) => {
             const isActive = activeRoute === item.route;
             return (
               <Pressable

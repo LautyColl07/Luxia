@@ -1,0 +1,14 @@
+.git
+.expo
+.tmp-web-verify
+node_modules
+dist
+web-build
+coverage
+.env
+.env.*
+!.env.example
+!.env.capture.example
+android
+ios
+*.log

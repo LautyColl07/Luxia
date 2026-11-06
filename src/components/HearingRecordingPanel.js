@@ -48,7 +48,7 @@ function getErrorMessage(error, fallback) {
   );
 }
 
-export default function HearingRecordingPanel({ caseDetail, hearing, onDocumentsChanged, onViewDocuments }) {
+export default function HearingRecordingPanel({ caseDetail, hearing, onDocumentsChanged, onViewDocuments, canTranscribe = true }) {
   const { colors } = useAppTheme();
   const { width: viewportWidth } = useWindowDimensions();
   const compactLayout = viewportWidth < 640;
@@ -676,21 +676,21 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
         <View style={styles.headerCopy}>
           <Text style={styles.panelTitle}>Transcripción de audiencia</Text>
           <Text style={styles.panelDescription}>
-            Grabá la audiencia y visualizá la transcripción en tiempo real.
+            {canTranscribe ? 'Grabá la audiencia y visualizá la transcripción en tiempo real.' : 'Podés consultar la transcripción; solo los abogados responsables pueden iniciar una nueva.'}
           </Text>
         </View>
       </View>
 
       <View style={styles.buttonGrid}>
         <ActionButton
-          disabled={isRecording || isStarting || isFinishing || hasActiveSession || pendingChunkCount > 0}
+          disabled={!canTranscribe || isRecording || isStarting || isFinishing || hasActiveSession || pendingChunkCount > 0}
           label={isStarting ? 'Iniciando...' : 'Iniciar grabación'}
           onPress={() => void handleStartRecording()}
           styles={styles}
           variant="primary"
         />
         <ActionButton
-          disabled={(!isRecording && !isStarting && !hasActiveSession) || isFinishing}
+          disabled={!canTranscribe || (!isRecording && !isStarting && !hasActiveSession) || isFinishing}
           label={
             isStarting
               ? 'Cancelar inicio'
@@ -705,7 +705,7 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
           variant="secondary"
         />
         <ActionButton
-          disabled={isRecording || isStarting || isFinishing || isUploadingAudio || isTranscribing || isGeneratingPdf}
+          disabled={!canTranscribe || isRecording || isStarting || isFinishing || isUploadingAudio || isTranscribing || isGeneratingPdf}
           label={isUploadingAudio ? 'Subiendo...' : 'Subir audio'}
           onPress={() => void handleUploadAudio()}
           styles={styles}
@@ -757,7 +757,7 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
           </View>
           <View style={[styles.transcribeButtonWrap, compactLayout && styles.transcribeButtonWrapCompact]}>
             <ActionButton
-              disabled={isTranscribing || isUploadingAudio || selectedAudio.status === 'transcribed'}
+              disabled={!canTranscribe || isTranscribing || isUploadingAudio || selectedAudio.status === 'transcribed'}
               label={isTranscribing ? 'Transcribiendo...' : 'Transcribir'}
               onPress={() => void handleTranscribeUploadedAudio()}
               styles={styles}
@@ -779,7 +779,7 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
       {hasTranscript ? (
         <View style={styles.pdfActions}>
           <ActionButton
-            disabled={isGeneratingPdf || !canGeneratePdf}
+            disabled={!canTranscribe || isGeneratingPdf || !canGeneratePdf}
             label={isGeneratingPdf ? 'Guardando PDF...' : 'Guardar transcripción en PDF'}
             onPress={() => void handleGeneratePdf()}
             styles={styles}

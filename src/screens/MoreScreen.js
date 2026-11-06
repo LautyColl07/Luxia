@@ -3,7 +3,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { signOut } from 'firebase/auth';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import ErrorState from '../components/ErrorState';
@@ -12,7 +12,7 @@ import { auth } from '../config/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
-import { addLegalStudyMember, getMe, getNotifications, joinLegalStudy } from '../services/api';
+import { getMe, getMyStudyInvitations, getNotifications } from '../services/api';
 import { authClient } from '../services/authClient';
 import { useResponsiveLayout } from '../theme/layout';
 import { buildDisplayUser } from '../utils/userDisplay';
@@ -35,6 +35,7 @@ export default function MoreScreen({ navigation }) {
   );
   const [profile, setProfile] = useState(null);
   const [notifications, setNotifications] = useState([]);
+  const [studyInvitations, setStudyInvitations] = useState([]);
   const [settings, setSettings] = useState({
     hearingReminders: true,
     caseActivity: true,
@@ -44,16 +45,6 @@ export default function MoreScreen({ navigation }) {
   const [sendingReset, setSendingReset] = useState(false);
   const [error, setError] = useState('');
 
-  // Study Modal State
-  const [showStudyModal, setShowStudyModal] = useState(false);
-  const [studyInput, setStudyInput] = useState('');
-  const [savingStudy, setSavingStudy] = useState(false);
-  const [studyError, setStudyError] = useState('');
-  const [inviteStudy, setInviteStudy] = useState(null);
-  const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteError, setInviteError] = useState('');
-  const [savingInvite, setSavingInvite] = useState(false);
-
   const loadProfile = useCallback(async () => {
     if (!isAuthReady || authStatus !== 'authenticated' || !currentUser) {
       return;
@@ -62,9 +53,10 @@ export default function MoreScreen({ navigation }) {
     try {
       setLoading(true);
       setError('');
-      const [user, items] = await Promise.all([getMe(), getNotifications().catch(() => [])]);
+      const [user, items, invitations] = await Promise.all([getMe(), getNotifications().catch(() => []), getMyStudyInvitations().catch(() => [])]);
       setProfile(user);
       setNotifications(Array.isArray(items) ? items : []);
+      setStudyInvitations(Array.isArray(invitations) ? invitations : []);
     } catch (loadError) {
       console.error('[MoreScreen] No se pudo cargar el perfil.');
       setError(
@@ -181,53 +173,6 @@ export default function MoreScreen({ navigation }) {
     }
   }, [displayProfile.email]);
 
-  const handleSaveStudy = async () => {
-    if (savingStudy) return;
-    const name = studyInput.trim();
-    setStudyError('');
-    if (!name) {
-      setStudyError('Ingresa el nombre de tu estudio juridico.');
-      return;
-    }
-
-    try {
-      setSavingStudy(true);
-      const study = await joinLegalStudy(name);
-      await refreshLegalStudies();
-      setShowStudyModal(false);
-      const message = `Estudio ${study.name} creado correctamente.`;
-      if (Platform.OS === 'web') {
-        globalThis.alert(message);
-      } else {
-        Alert.alert('Estudio actualizado', message);
-      }
-    } catch (err) {
-      console.error('[MoreScreen] No se pudo vincular el estudio.');
-      setStudyError(err instanceof Error ? err.message : 'No pudimos vincular el estudio. Intenta nuevamente.');
-    } finally {
-      setSavingStudy(false);
-    }
-  };
-
-  const handleAddMember = async () => {
-    if (!inviteStudy || savingInvite) return;
-    const email = inviteEmail.trim();
-    setInviteError('');
-    if (!email) { setInviteError('Ingresá el correo de la persona.'); return; }
-    try {
-      setSavingInvite(true);
-      await addLegalStudyMember(inviteStudy.id, email);
-      setInviteStudy(null);
-      const message = 'Integrante agregado. Al actualizar su app verá las causas del estudio.';
-      if (Platform.OS === 'web') globalThis.alert(message);
-      else Alert.alert('Integrante agregado', message);
-    } catch (error) {
-      setInviteError(error instanceof Error ? error.message : 'No pudimos agregar al integrante.');
-    } finally {
-      setSavingInvite(false);
-    }
-  };
-
   const updateSetting = useCallback((key, value) => {
     setSettings((current) => ({ ...current, [key]: value }));
   }, []);
@@ -294,7 +239,7 @@ export default function MoreScreen({ navigation }) {
         colors={colors}
         icon="office-building-outline"
         styles={styles}
-        subtitle="Vincula tu cuenta a un equipo de trabajo."
+        subtitle="Administrá los estudios de tu equipo o respondé una invitación recibida."
         title="Estudio Juridico"
       >
         <InfoRow 
@@ -302,29 +247,22 @@ export default function MoreScreen({ navigation }) {
           styles={styles} 
           value={legalStudies.length > 0 ? legalStudies.map(s => s.name).join(', ') : 'Ninguno'} 
         />
+        {legalStudies.some((study) => study.role === 'ADMIN') || profile?.canCreateLegalStudies ? <ActionRow
+          colors={colors}
+          description="Gestionar integrantes, roles, invitaciones y causas del estudio."
+          icon="office-building-cog-outline"
+          onPress={() => navigation.navigate('AdministracionEstudio')}
+          styles={styles}
+          title="Administración del estudio"
+        /> : null}
         <ActionRow
           colors={colors}
-          description="Crear un estudio nuevo. Para unirte a otro, su responsable debe agregarte por correo."
-          icon="account-group-outline"
-          onPress={() => {
-            setStudyInput('');
-            setStudyError('');
-            setShowStudyModal(true);
-          }}
+          description={studyInvitations.length ? `Tenés ${studyInvitations.length} invitación${studyInvitations.length === 1 ? '' : 'es'} pendiente${studyInvitations.length === 1 ? '' : 's'} para revisar.` : 'Revisá invitaciones, confirmá el rol y aceptá o rechazá.'}
+          icon="email-check-outline"
+          onPress={() => navigation.navigate('InvitacionesEstudio')}
           styles={styles}
-          title={legalStudies.length > 0 ? 'Crear otro estudio' : 'Crear estudio'}
+          title={`Invitaciones recibidas${studyInvitations.length ? ` · ${studyInvitations.length}` : ''}`}
         />
-        {legalStudies.filter((study) => ['OWNER', 'ADMIN'].includes(study.role)).map((study) => (
-          <ActionRow
-            colors={colors}
-            description={`Dar acceso a las causas de ${study.name} a una cuenta existente.`}
-            icon="account-plus-outline"
-            key={study.id}
-            onPress={() => { setInviteStudy(study); setInviteEmail(''); setInviteError(''); }}
-            styles={styles}
-            title={`Agregar integrante a ${study.name}${legalStudies.filter((item) => item.name === study.name).length > 1 ? ` · ${String(study.id).slice(-6)}` : ''}`}
-          />
-        ))}
       </CardSection>
 
       <CardSection
@@ -508,83 +446,6 @@ export default function MoreScreen({ navigation }) {
         </Text>
       </View>
 
-      <Modal
-        visible={showStudyModal}
-        animationType="fade"
-        transparent={true}
-        onRequestClose={() => setShowStudyModal(false)}
-      >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.modalOverlay}
-        >
-          <View style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <View style={styles.modalIconContainer}>
-                <MaterialCommunityIcons name="office-building-outline" size={24} color={colors.primary} />
-              </View>
-              <Text style={styles.modalTitle}>Estudio Juridico</Text>
-              <Text style={styles.modalSubtitle}>Crea un estudio nuevo. Si ya existe uno de tu equipo, pedile a su responsable que te agregue por correo.</Text>
-            </View>
-            <TextInput
-              style={styles.modalInput}
-              placeholder="Nombre del estudio (ej. Perez & Asoc)"
-              placeholderTextColor={colors.textMuted}
-              value={studyInput}
-              onChangeText={setStudyInput}
-              autoCapitalize="words"
-              maxLength={160}
-              editable={!savingStudy}
-            />
-            {studyError ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{studyError}</Text> : null}
-            <View style={styles.modalActions}>
-              <Pressable
-                style={styles.modalButtonSecondary}
-                onPress={() => setShowStudyModal(false)}
-                disabled={savingStudy}
-              >
-                <Text style={styles.modalButtonSecondaryText}>Cancelar</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.modalButtonPrimary, savingStudy && styles.modalButtonDisabled]}
-                onPress={handleSaveStudy}
-                disabled={savingStudy}
-              >
-                <Text style={styles.modalButtonPrimaryText}>
-                  {savingStudy ? 'Guardando...' : 'Crear estudio'}
-                </Text>
-              </Pressable>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-      <Modal transparent animationType="fade" visible={Boolean(inviteStudy)} onRequestClose={() => setInviteStudy(null)}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
-            <Text style={styles.modalTitle}>Agregar integrante</Text>
-            <Text style={styles.modalSubtitle}>{inviteStudy?.name}. La persona debe tener una cuenta de LuxIA.</Text>
-            <TextInput
-              autoCapitalize="none"
-              keyboardType="email-address"
-              editable={!savingInvite}
-              onChangeText={setInviteEmail}
-              placeholder="Correo de la persona"
-              placeholderTextColor={colors.textMuted}
-              style={styles.modalInput}
-              value={inviteEmail}
-            />
-            {inviteError ? <Text accessibilityRole="alert" style={{ color: colors.danger }}>{inviteError}</Text> : null}
-            <View style={styles.modalActions}>
-              <Pressable disabled={savingInvite} onPress={() => setInviteStudy(null)} style={styles.modalButtonSecondary}>
-                <Text style={styles.modalButtonSecondaryText}>Cancelar</Text>
-              </Pressable>
-              <Pressable disabled={savingInvite} onPress={handleAddMember} style={[styles.modalButtonPrimary, savingInvite && styles.modalButtonDisabled]}>
-                <Text style={styles.modalButtonPrimaryText}>{savingInvite ? 'Agregando...' : 'Agregar'}</Text>
-              </Pressable>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
     </ScrollView>
   );
 }

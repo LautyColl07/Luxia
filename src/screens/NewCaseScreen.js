@@ -5,7 +5,7 @@ import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, Text
 import ActionFeedbackModal from '../components/ActionFeedbackModal';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
-import { createCase, getCaseById, updateCase } from '../services/api';
+import { createCase, getCaseById, getStudyCaseAssignments, getStudyMembers, updateCase } from '../services/api';
 import { useResponsiveLayout } from '../theme/layout';
 import { normalizeStatusLabel } from '../utils/status';
 import { CASE_COURT_TYPES } from '../constants/caseCourtTypes';
@@ -18,11 +18,13 @@ export default function NewCaseScreen({ navigation, route }) {
   const layout = useResponsiveLayout();
   const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
   const hasStudy = legalStudies.length > 0;
+  const studyChoices = legalStudies.filter((study) => study.role === 'ADMIN');
   const caseId = route?.params?.caseId;
   const isEditing = Boolean(caseId);
   const [loadingCase, setLoadingCase] = useState(isEditing);
   const [selectedStudyId, setSelectedStudyId] = useState(activeLegalStudy?.id || null);
   const studyId = selectedStudyId || activeLegalStudy?.id || legalStudies[0]?.id || null;
+  const isStudyAdmin = legalStudies.find((study) => String(study.id) === String(studyId))?.role === 'ADMIN';
   const [form, setForm] = useState({
     title: '',
     description: '',
@@ -33,6 +35,8 @@ export default function NewCaseScreen({ navigation, route }) {
   const [scope, setScope] = useState(activeContext.type === 'study' ? 'LEGAL_STUDY' : 'PRIVATE');
   const [submitting, setSubmitting] = useState(false);
   const [successFeedback, setSuccessFeedback] = useState(null);
+  const [assignmentCandidates, setAssignmentCandidates] = useState([]);
+  const [assignmentAccess, setAssignmentAccess] = useState({});
 
   useEffect(() => {
     setScope(activeContext.type === 'study' ? 'LEGAL_STUDY' : 'PRIVATE');
@@ -45,6 +49,10 @@ export default function NewCaseScreen({ navigation, route }) {
     getCaseById(caseId).then((item) => {
       if (!active) return;
       setForm({ title: item.title || '', description: item.description || '', court: item.court || '', status: item.status || 'Activa', courtType: item.courtType || null });
+      setScope(item.scope === 'LEGAL_STUDY' ? 'LEGAL_STUDY' : 'PRIVATE');
+      if (item.scope === 'LEGAL_STUDY' && item.legalStudyId) {
+        setSelectedStudyId(String(item.legalStudyId));
+      }
       setLoadingCase(false);
     }).catch((error) => {
       if (!active) return;
@@ -54,11 +62,44 @@ export default function NewCaseScreen({ navigation, route }) {
     return () => { active = false; };
   }, [caseId]);
 
+  useEffect(() => {
+    if (scope !== 'LEGAL_STUDY' || !studyId || !isStudyAdmin) {
+      setAssignmentCandidates([]); setAssignmentAccess({});
+      return undefined;
+    }
+    let active = true;
+    Promise.all([
+      getStudyMembers(studyId),
+      isEditing ? getStudyCaseAssignments(studyId, caseId) : Promise.resolve([]),
+    ]).then(([members, currentAssignments]) => {
+      if (!active) return;
+      const eligible = members.filter((member) => member.status === 'ACTIVE' && ['LAWYER', 'COLLABORATOR'].includes(member.role));
+      setAssignmentCandidates(eligible);
+      setAssignmentAccess(Object.fromEntries(eligible.map((member) => [member.id, currentAssignments.find((item) => item.memberId === member.id)?.access || 'NONE'])));
+    }).catch((error) => {
+      if (active) Alert.alert('No pudimos cargar los integrantes', error instanceof Error ? error.message : 'Intenta nuevamente.');
+    });
+    return () => { active = false; };
+  }, [caseId, isEditing, isStudyAdmin, scope, studyId]);
+
   const updateField = (key, value) => setForm((current) => ({ ...current, [key]: value }));
 
   const handleSubmit = async () => {
     if (!form.title.trim()) {
       Alert.alert('Informacion incompleta', 'Ingresa la caratula o el nombre de la causa para continuar.');
+      return;
+    }
+
+    if (!isEditing && activeContext.type === 'study' && !isStudyAdmin) {
+      Alert.alert('Causa del estudio', 'Los abogados y colaboradores no pueden crear causas desde el estudio. Cambiá a Mis Casos para crear una causa personal.');
+      return;
+    }
+    if (!isEditing && scope === 'LEGAL_STUDY' && !isStudyAdmin) {
+      Alert.alert('Permiso requerido', 'Solo un administrador del estudio puede crear causas del equipo.');
+      return;
+    }
+    if (scope === 'LEGAL_STUDY' && isStudyAdmin && !Object.values(assignmentAccess).includes('RESPONSIBLE')) {
+      Alert.alert('Falta un responsable', 'Asigná al menos un abogado responsable para esta causa.');
       return;
     }
 
@@ -72,6 +113,7 @@ export default function NewCaseScreen({ navigation, route }) {
         courtType: form.courtType,
         scope,
         ...(scope === 'LEGAL_STUDY' && studyId ? { legalStudyId: studyId } : {}),
+        ...(scope === 'LEGAL_STUDY' && isStudyAdmin ? { assignments: assignmentCandidates.map((member) => ({ memberId: member.id, access: assignmentAccess[member.id] || 'NONE' })) } : {}),
       };
 
       if (isEditing) await updateCase(caseId, payload);
@@ -182,6 +224,7 @@ export default function NewCaseScreen({ navigation, route }) {
         </Text>
         <View style={styles.scopeCards}>
           <Pressable
+            disabled={isEditing}
             onPress={() => setScope('PRIVATE')}
             style={[
               styles.scopeCard,
@@ -214,12 +257,12 @@ export default function NewCaseScreen({ navigation, route }) {
           </Pressable>
 
           <Pressable
-            disabled={!hasStudy}
+            disabled={isEditing || !studyChoices.length}
             onPress={() => setScope('LEGAL_STUDY')}
             style={[
               styles.scopeCard,
               scope === 'LEGAL_STUDY' && styles.scopeCardActive,
-              !hasStudy && { opacity: 0.45 },
+              !studyChoices.length && { opacity: 0.45 },
             ]}
           >
             <View style={[
@@ -239,7 +282,7 @@ export default function NewCaseScreen({ navigation, route }) {
             <Text style={[
               styles.scopeCardDesc,
               scope === 'LEGAL_STUDY' && styles.scopeCardDescActive,
-            ]}>{hasStudy ? 'Visible para el equipo' : 'No perteneces a un estudio'}</Text>
+            ]}>{studyChoices.length ? 'Solo los administradores pueden crearla' : hasStudy ? 'Tu rol no permite crearla' : 'No perteneces a un estudio'}</Text>
             {scope === 'LEGAL_STUDY' && (
               <View style={styles.scopeCheckBadge}>
                 <MaterialCommunityIcons name="check-bold" size={14} color={colors.textOnPrimary} />
@@ -247,10 +290,10 @@ export default function NewCaseScreen({ navigation, route }) {
             )}
           </Pressable>
         </View>
-        {scope === 'LEGAL_STUDY' && legalStudies.length > 1 ? (
+        {scope === 'LEGAL_STUDY' && studyChoices.length > 1 ? (
           <View style={styles.scopeStudyChoices}>
             <Text style={styles.scopeSectionHint}>Estudio donde se guardará</Text>
-            {legalStudies.map((study) => (
+            {studyChoices.map((study) => (
               <Pressable
                 accessibilityRole="radio"
                 accessibilityState={{ checked: String(study.id) === String(studyId) }}
@@ -265,6 +308,18 @@ export default function NewCaseScreen({ navigation, route }) {
             ))}
           </View>
         ) : null}
+        {scope === 'LEGAL_STUDY' && isStudyAdmin ? <View style={styles.assignmentSection}>
+          <Text style={styles.scopeSectionTitle}>Responsables y acceso a la causa</Text>
+          <Text style={styles.scopeSectionHint}>Los cambios se aplican a esta causa. Debe quedar al menos un abogado responsable.</Text>
+          {assignmentCandidates.length ? assignmentCandidates.map((member) => {
+            const access = assignmentAccess[member.id] || 'NONE';
+            const options = member.role === 'COLLABORATOR' ? [['COLLABORATOR', 'Colaborador'], ['NONE', 'Sin acceso']] : [['RESPONSIBLE', 'Responsable'], ['COLLABORATOR', 'Colaborador'], ['NONE', 'Sin acceso']];
+            return <View key={member.id} style={styles.assignmentRow}>
+              <View style={styles.assignmentMember}><Text style={styles.assignmentName}>{member.name}</Text><Text style={styles.assignmentEmail}>{member.email}</Text></View>
+              <View style={styles.assignmentOptions}>{options.map(([value, label]) => <Pressable key={value} onPress={() => setAssignmentAccess((current) => ({ ...current, [member.id]: value }))} style={[styles.assignmentOption, access === value && styles.assignmentOptionActive]}><Text style={[styles.assignmentOptionText, access === value && styles.assignmentOptionTextActive]}>{label}</Text></Pressable>)}</View>
+            </View>;
+          }) : <Text style={styles.scopeSectionHint}>Invitá primero a un abogado o colaborador para asignarle acceso.</Text>}
+        </View> : null}
       </View>
 
       <Pressable
@@ -398,6 +453,16 @@ const createStyles = (colors, layout) => StyleSheet.create({
     marginTop: 4,
   },
   scopeStudyChoices: { gap: 8, marginTop: 6 },
+  assignmentSection: { marginTop: 10, gap: 10, backgroundColor: colors.card, borderRadius: 16, borderWidth: 1, borderColor: colors.borderSoft, padding: 15 },
+  assignmentRow: { borderTopWidth: 1, borderTopColor: colors.borderSoft, paddingTop: 10, gap: 9 },
+  assignmentMember: { gap: 2 },
+  assignmentName: { color: colors.text, fontSize: 13, fontWeight: '700' },
+  assignmentEmail: { color: colors.textMuted, fontSize: 11 },
+  assignmentOptions: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  assignmentOption: { borderWidth: 1, borderColor: colors.borderSoft, borderRadius: 9, paddingHorizontal: 9, paddingVertical: 7 },
+  assignmentOptionActive: { borderColor: colors.primary, backgroundColor: colors.accentSoft },
+  assignmentOptionText: { color: colors.textSecondary, fontSize: 11, fontWeight: '600' },
+  assignmentOptionTextActive: { color: colors.primary },
   scopeCard: {
     flex: 1,
     backgroundColor: colors.card,

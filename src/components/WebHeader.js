@@ -9,6 +9,8 @@ const SECTION_LABELS = {
   Calendario: 'Agenda judicial',
   Documentos: 'Repositorio documental',
   Mas: 'Preferencias y actividad',
+  AdministracionEstudio: 'Administración del estudio',
+  InvitacionesEstudio: 'Invitaciones al estudio',
 };
 
 export default function WebHeader({ activeRoute = 'Inicio' }) {

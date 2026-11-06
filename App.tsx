@@ -1,7 +1,7 @@
 import "react-native-gesture-handler";
 
-import React, { useMemo, useState } from "react";
-import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Linking, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { createNavigationContainerRef, NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
@@ -33,6 +33,34 @@ const AppNavigator = () => {
   const { colors, isDark, navigationTheme } = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [navigationState, setNavigationState] = useState<any>(null);
+  const [pendingInvitation, setPendingInvitation] = useState<{ invitationId: string; token: string } | null>(null);
+  const invitationOpenedRef = useRef(false);
+
+  useEffect(() => {
+    const readInvitationUrl = (url?: string | null) => {
+      if (!url) return;
+      try {
+        const parsed = new URL(url);
+        const invitationId = parsed.searchParams.get("invitation");
+        const token = new URLSearchParams(parsed.hash.replace(/^#/, "")).get("token");
+        if (!invitationId || !token) return;
+        setPendingInvitation({ invitationId, token });
+        if (Platform.OS === "web" && typeof window !== "undefined") {
+          window.history.replaceState(null, document.title, parsed.pathname);
+        }
+      } catch { /* Ignore unrelated links. */ }
+    };
+    if (Platform.OS === "web" && typeof window !== "undefined") readInvitationUrl(window.location.href);
+    void Linking.getInitialURL().then(readInvitationUrl).catch(() => undefined);
+    const subscription = Linking.addEventListener("url", ({ url }) => readInvitationUrl(url));
+    return () => subscription.remove();
+  }, []);
+
+  useEffect(() => {
+    if (!pendingInvitation || authStatus !== "authenticated" || !navigationRef.isReady() || invitationOpenedRef.current) return;
+    invitationOpenedRef.current = true;
+    navigationRef.navigate("MainApp", { screen: "InvitacionesEstudio", params: pendingInvitation });
+  }, [authStatus, pendingInvitation, navigationState]);
 
   return (
     <>
@@ -105,6 +133,10 @@ const AuthenticatedApp = ({ authWarning, clearAuthWarning, currentUser, colors, 
 
   const handleNavigate = (route: string) => {
     if (navigationRef.isReady()) {
+      if (route === "AdministracionEstudio" || route === "InvitacionesEstudio") {
+        navigationRef.navigate("MainApp", { screen: route });
+        return;
+      }
       navigationRef.navigate("MainApp", {
         screen: "MainTabs",
         params: { screen: route },

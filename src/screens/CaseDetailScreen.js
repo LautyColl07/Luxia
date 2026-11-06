@@ -89,7 +89,7 @@ export default function CaseDetailScreen({ navigation, route }) {
     (caseDetail?.ownerUserId === currentUser?.uid &&
       (caseDetail?.scope === 'PRIVATE' || ['OWNER', 'ADMIN'].includes(sourceStudy?.role)));
   const targetStudies = legalStudies.filter((study) =>
-    String(study.id) !== String(caseDetail?.legalStudyId) && ['OWNER', 'ADMIN', 'MEMBER'].includes(study.role)
+    String(study.id) !== String(caseDetail?.legalStudyId) && study.role === 'ADMIN'
   );
   const courtType = getCaseCourtType(caseDetail?.courtType);
   const confirmMove = (study) => {
@@ -149,17 +149,17 @@ export default function CaseDetailScreen({ navigation, route }) {
           <Text style={styles.metaText}>Fecha de alta: {formatDate(caseDetail?.createdAt)}</Text>
         </View>
 
-        <Pressable
+        {caseDetail?.canEditCase !== false ? <Pressable
           onPress={() => navigation.navigate('NewHearing', { caseId: caseDetail?.id })}
           style={styles.primaryButton}
         >
           <Text style={styles.primaryButtonText}>Registrar audiencia</Text>
           <MaterialCommunityIcons color={colors.textOnPrimary} name="arrow-right" size={18} />
-        </Pressable>
-        <Pressable accessibilityRole="button" onPress={() => navigation.navigate('NewCase', { caseId: caseDetail?.id })} style={styles.editCaseButton}>
+        </Pressable> : null}
+        {caseDetail?.canEditCase !== false ? <Pressable accessibilityRole="button" onPress={() => navigation.navigate('NewCase', { caseId: caseDetail?.id })} style={styles.editCaseButton}>
           <MaterialCommunityIcons color={colors.primary} name="pencil-outline" size={18} />
           <Text style={styles.editCaseButtonText}>Editar causa</Text>
-        </Pressable>
+        </Pressable> : null}
         {canMove && targetStudies.length ? (
           <Pressable accessibilityRole="button" onPress={() => { setMoveError(''); setShowMoveModal(true); }} style={styles.moveButton}>
             <MaterialCommunityIcons color={colors.primary} name="account-group-outline" size={18} />
@@ -204,6 +204,7 @@ export default function CaseDetailScreen({ navigation, route }) {
                 caseDetail={caseDetail}
                 documents={documents}
                 hearing={hearing}
+                canTranscribe={caseDetail?.canTranscribe !== false}
                 onDocumentsChanged={refreshCase}
                 onViewDocuments={() => navigation.navigate('MainTabs', { screen: 'Documentos' })}
               />
@@ -211,19 +212,19 @@ export default function CaseDetailScreen({ navigation, route }) {
           ))
         ) : (
           <EmptyState
-            actionLabel="Registrar audiencia"
+            actionLabel={caseDetail?.canEditCase !== false ? 'Registrar audiencia' : undefined}
             icon="calendar-blank-outline"
             message="Todavia no hay audiencias vinculadas a esta causa."
-            onAction={() => navigation.navigate('NewHearing', { caseId: caseDetail?.id })}
+            onAction={caseDetail?.canEditCase !== false ? () => navigation.navigate('NewHearing', { caseId: caseDetail?.id }) : undefined}
             title="Sin audiencias registradas"
           />
         )}
       </Section>
 
       <Section
-        actionLabel="Subir documento"
+        actionLabel={caseDetail?.canUploadDocument !== false ? 'Subir documento' : undefined}
         colors={colors}
-        onAction={() => navigation.navigate('UploadDocument', { caseId: caseDetail?.id })}
+        onAction={caseDetail?.canUploadDocument !== false ? () => navigation.navigate('UploadDocument', { caseId: caseDetail?.id }) : undefined}
         styles={styles}
         title="Documentos"
       >
@@ -239,10 +240,10 @@ export default function CaseDetailScreen({ navigation, route }) {
           ))
         ) : (
           <EmptyState
-            actionLabel="Subir documento"
+            actionLabel={caseDetail?.canUploadDocument !== false ? 'Subir documento' : undefined}
             icon="file-document-outline"
             message="Todavia no se cargaron documentos para esta causa."
-            onAction={() => navigation.navigate('UploadDocument', { caseId: caseDetail?.id })}
+            onAction={caseDetail?.canUploadDocument !== false ? () => navigation.navigate('UploadDocument', { caseId: caseDetail?.id }) : undefined}
             title="Sin documentos registrados"
           />
         )}

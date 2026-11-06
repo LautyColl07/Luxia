@@ -31,6 +31,12 @@ type LegalStudyOption = {
   id: string;
   name: string;
   role?: string;
+  capabilities?: {
+    canManageStudy?: boolean;
+    canCreateStudyCase?: boolean;
+    canCreateCase?: boolean;
+    canInviteMembers?: boolean;
+  };
 };
 
 type StudyContextValue = {
