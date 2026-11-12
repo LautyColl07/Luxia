@@ -147,7 +147,7 @@ export default function StudyAdministrationScreen({ navigation, route }) {
   };
 
   const changeRole = (member, role) => {
-    if (!selectedStudy || role === member.role) return;
+    if (!selectedStudy || member.isCurrentUser === true || role === member.role) return;
     const proceed = async () => {
       try { setBusy(true); await updateStudyMemberRole(selectedStudy.id, member.id, role); await reloadSelected(); }
       catch (failure) { setError(failure instanceof Error ? failure.message : 'No se pudo actualizar el rol.'); }
@@ -156,11 +156,14 @@ export default function StudyAdministrationScreen({ navigation, route }) {
     confirm('Cambiar rol', role === 'ADMIN' ? `${member.name} tendrá acceso completo y podrá administrar integrantes y causas.` : `El nuevo rol de ${member.name} se aplicará en este estudio.` , proceed);
   };
 
-  const removeMember = (member) => confirm('Quitar integrante', `¿Querés revocar el acceso de ${member.name}? Las causas deberán conservar al menos un abogado responsable.`, async () => {
+  const removeMember = (member) => {
+    if (!selectedStudy || member.isCurrentUser === true) return;
+    confirm('Quitar integrante', `¿Querés revocar el acceso de ${member.name}? Las causas deberán conservar al menos un abogado responsable.`, async () => {
     try { setBusy(true); await removeStudyMember(selectedStudy.id, member.id); await reloadSelected(); }
     catch (failure) { setError(failure instanceof Error ? failure.message : 'No se pudo quitar al integrante.'); }
     finally { setBusy(false); }
-  });
+    });
+  };
 
   const invitationAction = (item, action) => confirm(action === 'resend' ? 'Reenviar invitación' : 'Revocar invitación', action === 'resend' ? `Se generará un enlace nuevo para ${item.email}; el anterior dejará de servir.` : `La persona ya no podrá usar la invitación enviada a ${item.email}.`, async () => {
     try { setBusy(true); if (action === 'resend') await resendStudyInvitation(selectedStudy.id, item.id); else await revokeStudyInvitation(selectedStudy.id, item.id); await reloadSelected(); }
@@ -203,7 +206,7 @@ export default function StudyAdministrationScreen({ navigation, route }) {
           <Text style={styles.bodyText}>Un integrante obtiene acceso al estudio después de aceptar su invitación. Abogados y colaboradores solo ven las causas asignadas.</Text>
           {visibleMembers.length ? visibleMembers.map((member) => <View key={member.id} style={styles.memberCard}>
             <View style={styles.memberCopy}><Text style={styles.memberName}>{member.name}</Text><Text style={styles.memberEmail}>{member.email}</Text><Text style={styles.memberMeta}>{member.status === 'ACTIVE' ? 'Activo' : 'Inactivo'} · {member.assignments?.length || 0} causas asignadas</Text></View>
-            <View style={styles.memberActions}><RolePill colors={colors} role={member.role} styles={styles} />{member.status === 'ACTIVE' ? <><View style={styles.roleChoices}>{ROLES.map((role) => <Pressable disabled={busy} key={role.key} onPress={() => changeRole(member, role.key)} style={[styles.roleChoice, member.role === role.key && styles.roleChoiceActive]}><Text style={[styles.roleChoiceText, member.role === role.key && styles.roleChoiceTextActive]}>{role.label}</Text></Pressable>)}</View><Pressable disabled={busy} onPress={() => removeMember(member)} style={styles.removeButton}><MaterialCommunityIcons color={colors.danger} name="account-remove-outline" size={18} /><Text style={styles.removeText}>Quitar</Text></Pressable></> : null}</View>
+            <View style={styles.memberActions}><RolePill colors={colors} role={member.role} styles={styles} />{member.isCurrentUser === true ? <Text style={styles.statusTextMuted}>Tu cuenta</Text> : null}{member.status === 'ACTIVE' && member.isCurrentUser !== true ? <><View style={styles.roleChoices}>{ROLES.map((role) => <Pressable disabled={busy} key={role.key} onPress={() => changeRole(member, role.key)} style={[styles.roleChoice, member.role === role.key && styles.roleChoiceActive]}><Text style={[styles.roleChoiceText, member.role === role.key && styles.roleChoiceTextActive]}>{role.label}</Text></Pressable>)}</View><Pressable disabled={busy} onPress={() => removeMember(member)} style={styles.removeButton}><MaterialCommunityIcons color={colors.danger} name="account-remove-outline" size={18} /><Text style={styles.removeText}>Quitar</Text></Pressable></> : null}</View>
           </View>) : <EmptyState icon="account-group-outline" title="Sin integrantes para mostrar" message={query ? 'Probá con otro nombre o correo.' : 'Cuando una persona acepte una invitación aparecerá en esta lista.'} />}
         </View>
 

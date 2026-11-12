@@ -28,7 +28,10 @@ export default function CasesScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const layout = useResponsiveLayout();
   const { authStatus, currentUser, isAuthReady } = useAuth();
-  const { activeContextKey, isHydrated } = useStudyContext();
+  const { activeContext, activeContextKey, activeLegalStudy, isHydrated } = useStudyContext();
+  const canCreateCase = activeContext.type !== 'study' ||
+    activeLegalStudy?.capabilities?.canCreateStudyCase === true ||
+    activeLegalStudy?.capabilities?.canCreateCase === true;
   const styles = useMemo(() => createStyles(colors, layout, insets.top), [colors, insets.top, layout]);
   const requestSequenceRef = useRef(0);
   const pendingPageRef = useRef(null);
@@ -114,10 +117,10 @@ export default function CasesScreen({ navigation }) {
         <Text style={styles.title}>Causas</Text>
         {layout.isWebDesktop ? <Text style={styles.subtitle}>Consulta y organiza tus expedientes.</Text> : null}
         <View style={styles.actionRow}>
-          <Pressable accessibilityRole="button" onPress={() => navigation.navigate('NewCase')} style={styles.primaryButton}>
+          {canCreateCase ? <Pressable accessibilityRole="button" onPress={() => navigation.navigate('NewCase')} style={styles.primaryButton}>
             <MaterialCommunityIcons color={colors.textOnPrimary} name="plus" size={19} />
             <Text style={styles.primaryButtonText}>Nueva causa</Text>
-          </Pressable>
+          </Pressable> : null}
         </View>
         <View style={styles.searchRow}>
           <View style={styles.searchBox}>
@@ -169,7 +172,7 @@ export default function CasesScreen({ navigation }) {
         refreshControl={<RefreshControl onRefresh={() => void loadCases(true, 1)} refreshing={refreshing} tintColor={colors.primary} />}
         renderItem={({ item }) => <CaseRow item={item} colors={colors} styles={styles} onPress={() => navigation.navigate('CaseDetail', { caseId: item?.id })} />}
         ListFooterComponent={fetchingMore ? <ActivityIndicator color={colors.primary} style={styles.loadingMore} /> : null}
-        ListEmptyComponent={!loading && !error ? <EmptyState actionLabel="Nueva causa" icon="briefcase-search-outline" message="No se encontraron causas con la búsqueda o los filtros seleccionados." onAction={() => navigation.navigate('NewCase')} title="Sin resultados" /> : null}
+        ListEmptyComponent={!loading && !error ? <EmptyState actionLabel={canCreateCase ? 'Nueva causa' : undefined} icon="briefcase-search-outline" message="No se encontraron causas con la búsqueda o los filtros seleccionados." onAction={canCreateCase ? () => navigation.navigate('NewCase') : undefined} title="Sin resultados" /> : null}
         showsVerticalScrollIndicator={false}
       />
       <DatePickerModal

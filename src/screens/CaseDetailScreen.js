@@ -12,7 +12,7 @@ import { getCaseCourtType } from '../constants/caseCourtTypes';
 import { useAuth } from '../context/AuthContext';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
-import { getCaseById, moveCaseToStudy } from '../services/api';
+import { deleteCase, getCaseById, moveCaseToStudy } from '../services/api';
 import { useResponsiveLayout } from '../theme/layout';
 import { formatDate, formatDateTime } from '../utils/date';
 
@@ -29,6 +29,7 @@ export default function CaseDetailScreen({ navigation, route }) {
   const [moveError, setMoveError] = useState('');
   const [showMoveModal, setShowMoveModal] = useState(false);
   const [moving, setMoving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const requestSequenceRef = useRef(0);
 
   const loadCase = useCallback(async ({ preserveExisting = false } = {}) => {
@@ -121,6 +122,35 @@ export default function CaseDetailScreen({ navigation, route }) {
     }
   };
 
+  const performDelete = async () => {
+    if (deleting || caseDetail?.canDeleteCase !== true) return;
+    try {
+      setDeleting(true);
+      await deleteCase(caseId);
+      setCaseDetail(null);
+      navigation.goBack();
+    } catch (failure) {
+      const message = failure instanceof Error ? failure.message : 'No pudimos eliminar la causa.';
+      if (Platform.OS === 'web') globalThis.alert(message);
+      else Alert.alert('No pudimos eliminar la causa', message);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const confirmDelete = () => {
+    if (deleting || caseDetail?.canDeleteCase !== true) return;
+    const message = 'La causa dejará de aparecer en el estudio. Sus documentos se conservarán.';
+    if (Platform.OS === 'web') {
+      if (globalThis.confirm(`Eliminar causa\n\n${message}`)) void performDelete();
+      return;
+    }
+    Alert.alert('Eliminar causa', message, [
+      { text: 'Cancelar', style: 'cancel' },
+      { text: 'Eliminar', style: 'destructive', onPress: () => void performDelete() },
+    ]);
+  };
+
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} style={styles.screen}>
       <View style={styles.heroCard}>
@@ -149,14 +179,14 @@ export default function CaseDetailScreen({ navigation, route }) {
           <Text style={styles.metaText}>Fecha de alta: {formatDate(caseDetail?.createdAt)}</Text>
         </View>
 
-        {caseDetail?.canEditCase !== false ? <Pressable
+        {caseDetail?.canEditCase === true ? <Pressable
           onPress={() => navigation.navigate('NewHearing', { caseId: caseDetail?.id })}
           style={styles.primaryButton}
         >
           <Text style={styles.primaryButtonText}>Registrar audiencia</Text>
           <MaterialCommunityIcons color={colors.textOnPrimary} name="arrow-right" size={18} />
         </Pressable> : null}
-        {caseDetail?.canEditCase !== false ? <Pressable accessibilityRole="button" onPress={() => navigation.navigate('NewCase', { caseId: caseDetail?.id })} style={styles.editCaseButton}>
+        {caseDetail?.canEditCase === true ? <Pressable accessibilityRole="button" onPress={() => navigation.navigate('NewCase', { caseId: caseDetail?.id })} style={styles.editCaseButton}>
           <MaterialCommunityIcons color={colors.primary} name="pencil-outline" size={18} />
           <Text style={styles.editCaseButtonText}>Editar causa</Text>
         </Pressable> : null}
@@ -166,6 +196,10 @@ export default function CaseDetailScreen({ navigation, route }) {
             <Text style={styles.moveButtonText}>{caseDetail?.scope === 'PRIVATE' ? 'Compartir con un estudio' : 'Mover a otro estudio'}</Text>
           </Pressable>
         ) : null}
+        {caseDetail?.canDeleteCase === true ? <Pressable accessibilityRole="button" disabled={deleting} onPress={confirmDelete} style={styles.deleteCaseButton}>
+          <MaterialCommunityIcons color={colors.danger} name="delete-outline" size={18} />
+          <Text style={styles.deleteCaseButtonText}>{deleting ? 'Eliminando…' : 'Eliminar causa'}</Text>
+        </Pressable> : null}
       </View>
       <Modal transparent animationType="fade" visible={showMoveModal} onRequestClose={() => setShowMoveModal(false)}>
         <View style={styles.moveBackdrop}>
@@ -382,6 +416,8 @@ const createStyles = (colors, layout) => StyleSheet.create({
   editCaseButtonText: { color: colors.primary, fontSize: 14, fontWeight: '600' },
   moveButton: { minHeight: 44, marginTop: 10, flexDirection: 'row', alignItems: 'center', gap: 8 },
   moveButtonText: { color: colors.primary, fontSize: 14, fontWeight: '600' },
+  deleteCaseButton: { minHeight: 44, marginTop: 10, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  deleteCaseButtonText: { color: colors.danger, fontSize: 14, fontWeight: '600' },
   moveBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 24 },
   movePanel: { width: '100%', maxWidth: 420, alignSelf: 'center', backgroundColor: colors.card, borderRadius: 18, padding: 18 },
   moveTitle: { color: colors.text, fontSize: 18, fontWeight: '700', marginBottom: 10 },

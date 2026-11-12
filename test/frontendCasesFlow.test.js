@@ -34,6 +34,18 @@ function loadApi(fetchImplementation) {
     if (request === 'firebase/auth') return { signOut: async () => undefined };
     if (request === '../data/mockData') return [];
     if (request === '../utils/status') return { normalizeStatusLabel: (value) => value || 'Pendiente' };
+    if (request === '../utils/apiError') {
+      return { normalizeApiErrorPayload: (data, error) => ({
+        code: data?.errorCode ?? data?.code ?? data?.error?.code ?? error?.code ?? null,
+        message: typeof data === 'string' ? data : typeof data?.error === 'string' ? data.error : data?.error?.message ?? data?.message ?? error?.message ?? null,
+      }) };
+    }
+    if (request === '../utils/studyInvitationStatus') {
+      return { requirePendingStudyInvitation: (invitation) => {
+        if (!invitation || invitation.status !== 'PENDING') throw Object.assign(new Error('Estado de invitación inválido.'), { code: 'INVITATION_STATE_UNAVAILABLE' });
+        return invitation;
+      } };
+    }
     if (request === '../utils/userDisplay') {
       return {
         getUserDisplayName: () => 'Usuario',
@@ -86,6 +98,34 @@ test('deleteDocument rechaza IDs inválidos sin enviar solicitudes', async () =>
   }
 });
 
+test('deleteCase llama a la baja lógica autenticada del estudio', async () => {
+  let request;
+  const api = loadApi(async (url, options) => {
+    request = { url, options };
+    return jsonResponse(204, {});
+  });
+  api.setAuthState('authenticated');
+  assert.equal(await api.deleteCase(42), true);
+  assert.equal(request.url, 'https://api.test/api/v1/causas/42');
+  assert.equal(request.options.method, 'DELETE');
+  assert.equal(request.options.headers.Authorization, 'Bearer test-token');
+});
+
+test('the screens follow server capabilities for self-protection and case actions', () => {
+  const adminSource = fs.readFileSync(path.join(root, 'src/screens/StudyAdministrationScreen.js'), 'utf8');
+  const casesSource = fs.readFileSync(path.join(root, 'src/screens/CasesScreen.js'), 'utf8');
+  const detailSource = fs.readFileSync(path.join(root, 'src/screens/CaseDetailScreen.js'), 'utf8');
+
+  assert.match(adminSource, /member\.isCurrentUser === true/);
+  assert.match(adminSource, /member\.status === 'ACTIVE' && member\.isCurrentUser !== true/);
+  assert.match(adminSource, /Tu cuenta/);
+  assert.match(casesSource, /activeLegalStudy\?\.capabilities\?\.canCreateStudyCase === true/);
+  assert.match(casesSource, /actionLabel=\{canCreateCase \? 'Nueva causa' : undefined\}/);
+  assert.match(detailSource, /caseDetail\?\.canEditCase === true/);
+  assert.match(detailSource, /caseDetail\?\.canDeleteCase === true/);
+  assert.match(detailSource, /Eliminar causa/);
+});
+
 test('deleteDocument conserva los errores de permiso y procesamiento del backend', async () => {
   for (const [status, error] of [[404, 'Recurso no encontrado'], [409, 'El documento está siendo procesado']]) {
     const api = loadApi(async () => jsonResponse(status, { error }));
@@ -94,29 +134,29 @@ test('deleteDocument conserva los errores de permiso y procesamiento del backend
   }
 });
 
-test('joinLegalStudy usa la ruta autenticada y conserva el ID y nombre devueltos por el backend', async () => {
+test('createLegalStudy usa la ruta vigente y conserva el ID y nombre devueltos por el backend', async () => {
   for (const payload of [
     { success: true, data: { id: 'study-uuid', name: 'Estudio Sur' } },
     { id: 'study-uuid', name: 'Estudio Sur' },
   ]) {
     const api = loadApi(async (url, options) => {
-      assert.equal(url, 'https://api.test/api/v1/legal-studies/join');
+      assert.equal(url, 'https://api.test/api/v1/legal-studies');
       assert.equal(options.method, 'POST');
       assert.equal(options.headers.Authorization, 'Bearer test-token');
       assert.deepEqual(JSON.parse(options.body), { name: 'Estudio   Sur' });
       return jsonResponse(201, payload);
     });
     api.setAuthState('authenticated');
-    const study = await api.joinLegalStudy('  Estudio   Sur  ');
+    const study = await api.createLegalStudy('  Estudio   Sur  ');
     assert.equal(study.id, 'study-uuid');
     assert.equal(study.name, 'Estudio Sur');
   }
 });
 
-test('joinLegalStudy rechaza respuestas incompletas sin inventar identificadores', async () => {
+test('createLegalStudy rechaza respuestas incompletas sin inventar identificadores', async () => {
   const api = loadApi(async () => jsonResponse(201, { success: true, data: {} }));
   api.setAuthState('authenticated');
-  await assert.rejects(api.joinLegalStudy('Sur'), /no devolvio el estudio/);
+  await assert.rejects(api.createLegalStudy('Sur'), /No se pudo crear el estudio/);
 });
 
 test('el cliente interpreta el contrato paginado y conserva IDs UUID/CUID como strings', () => {
@@ -414,19 +454,19 @@ test('Inicio controla el selector; otras pantallas no muestran selectores redund
   assert.match(read('src/components/CaseScopeSelector.tsx'), /duration: reduceMotion\.current \? 0 : 220/);
 });
 
-test('el responsable agrega un integrante al ID del estudio y puede mover una causa existente', async () => {
+test('el administrador envía una invitación al estudio y puede mover una causa existente', async () => {
   const calls = [];
   const api = loadApi(async (url, options) => {
     calls.push({ url: String(url), method: options.method, body: options.body ? JSON.parse(options.body) : null });
-    if (String(url).includes('/members')) return jsonResponse(200, { data: { legalStudyId: 'study-a', email: 'b@test.test', role: 'MEMBER', status: 'ACTIVE' } });
+    if (String(url).includes('/invitations')) return jsonResponse(201, { data: { id: 'invite-a', studyId: 'study-a', email: 'b@test.test', role: 'LAWYER', status: 'PENDING' } });
     return jsonResponse(200, { id: 12, title: 'Causa', scope: 'LEGAL_STUDY', legalStudyId: 'study-a' });
   });
   api.setAuthState('authenticated');
-  await api.addLegalStudyMember('study-a', ' B@Test.Test ');
+  await api.createStudyInvitation('study-a', ' B@Test.Test ', 'LAWYER');
   await api.moveCaseToStudy(12, 'study-a');
-  assert.equal(calls[0].url, 'https://api.test/api/v1/legal-studies/study-a/members');
+  assert.equal(calls[0].url, 'https://api.test/api/v1/legal-studies/study-a/invitations');
   assert.equal(calls[0].method, 'POST');
-  assert.deepEqual(calls[0].body, { email: 'b@test.test' });
+  assert.deepEqual(calls[0].body, { email: 'b@test.test', role: 'LAWYER' });
   assert.equal(calls[1].url, 'https://api.test/api/v1/causas/12/move-to-study');
   assert.deepEqual(calls[1].body, { legalStudyId: 'study-a' });
 });

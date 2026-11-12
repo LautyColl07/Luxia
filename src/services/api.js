@@ -1591,6 +1591,20 @@ export async function updateCase(id, data) {
   });
 }
 
+export async function deleteCase(id) {
+  if (USE_MOCKS) {
+    const exists = mockStore.cases.some((item) => String(item.id) === String(id));
+    if (!exists) throw new Error('No encontramos la causa solicitada.');
+    mockStore.cases = mockStore.cases.filter((item) => String(item.id) !== String(id));
+    setScopedCacheDirty();
+    return true;
+  }
+
+  await request(`/causas/${encodeURIComponent(String(id))}`, { method: 'DELETE' });
+  setScopedCacheDirty();
+  return true;
+}
+
 export async function getHearings() {
   if (USE_MOCKS) {
     const caseMap = getCaseMap();
