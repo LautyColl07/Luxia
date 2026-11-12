@@ -1,5 +1,5 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
@@ -38,6 +38,7 @@ export default function StudyAdministrationScreen({ navigation, route }) {
   const { colors } = useAppTheme();
   const layout = useResponsiveLayout();
   const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
+  const isFocused = useIsFocused();
   const adminStudies = legalStudies.filter((study) => study.role === 'ADMIN');
   const adminStudiesRef = useRef(adminStudies);
   adminStudiesRef.current = adminStudies;
@@ -86,6 +87,18 @@ export default function StudyAdministrationScreen({ navigation, route }) {
   }, [refreshLegalStudies, route?.params?.studyId, studyId]);
 
   useFocusEffect(useCallback(() => { if (authStatus === 'authenticated' && currentUser) void load(); return undefined; }, [authStatus, currentUser?.uid, load]));
+
+  const hasDeliveryInProgress = invitations.some((item) => item.status === 'PENDING' && ['QUEUED', 'SENDING'].includes(item.deliveryStatus));
+  useEffect(() => {
+    if (!isFocused || !selectedStudy?.id || !hasDeliveryInProgress) return undefined;
+    let cancelled = false;
+    const timer = setInterval(() => {
+      void getStudyInvitations(selectedStudy.id).then((latest) => {
+        if (!cancelled) setInvitations(latest);
+      }).catch(() => undefined);
+    }, 5000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [hasDeliveryInProgress, isFocused, selectedStudy?.id]);
 
   const reloadSelected = useCallback(async () => {
     if (!selectedStudy) return;
@@ -196,7 +209,7 @@ export default function StudyAdministrationScreen({ navigation, route }) {
 
         <View style={styles.panel}>
           <Text style={styles.panelTitle}>Invitaciones · {pendingCount} pendientes</Text>
-          {invitations.length ? invitations.map((item) => <View key={item.id} style={styles.invitationRow}><View style={styles.memberCopy}><Text style={styles.memberName}>{item.email}</Text><Text style={styles.memberEmail}>{roleLabel(item.role)} · vence {new Date(item.expiresAt).toLocaleDateString()}</Text><Text style={styles.memberMeta}>Correo: {deliveryLabel(item.deliveryStatus)}</Text></View><View style={styles.inviteRight}><Text style={[styles.statusText, item.status !== 'PENDING' && styles.statusTextMuted]}>{ACCESS_STATUS[item.status] || item.status}</Text>{item.status === 'PENDING' ? <View style={styles.inviteActions}><Pressable disabled={busy} onPress={() => invitationAction(item, 'resend')} style={styles.smallButton}><Text style={styles.smallButtonText}>Reenviar</Text></Pressable><Pressable disabled={busy} onPress={() => invitationAction(item, 'revoke')} style={styles.smallButton}><Text style={[styles.smallButtonText, { color: colors.danger }]}>Revocar</Text></Pressable></View> : null}</View></View>) : <EmptyState icon="email-check-outline" title="Sin invitaciones" message="Las invitaciones pendientes y sus estados aparecerán aquí." />}
+          {invitations.length ? invitations.map((item) => <View key={item.id} style={styles.invitationRow}><View style={styles.memberCopy}><Text style={styles.memberName}>{item.email}</Text><Text style={styles.memberEmail}>{roleLabel(item.role)} · vence {new Date(item.expiresAt).toLocaleDateString()}</Text><Text style={styles.memberMeta}>Correo: {deliveryLabel(item.deliveryStatus)}</Text>{item.deliveryStatus === 'FAILED' ? <Text accessibilityRole="alert" style={styles.memberMeta}>{deliveryErrorMessage(item.deliveryErrorCode)}</Text> : null}</View><View style={styles.inviteRight}><Text style={[styles.statusText, item.status !== 'PENDING' && styles.statusTextMuted]}>{ACCESS_STATUS[item.status] || item.status}</Text>{item.status === 'PENDING' ? <View style={styles.inviteActions}><Pressable disabled={busy} onPress={() => invitationAction(item, 'resend')} style={styles.smallButton}><Text style={styles.smallButtonText}>Reenviar</Text></Pressable><Pressable disabled={busy} onPress={() => invitationAction(item, 'revoke')} style={styles.smallButton}><Text style={[styles.smallButtonText, { color: colors.danger }]}>Revocar</Text></Pressable></View> : null}</View></View>) : <EmptyState icon="email-check-outline" title="Sin invitaciones" message="Las invitaciones pendientes y sus estados aparecerán aquí." />}
         </View>
 
         <View style={styles.panel}>
@@ -221,7 +234,8 @@ export default function StudyAdministrationScreen({ navigation, route }) {
 }
 
 function roleLabel(role) { return ROLES.find((item) => item.key === role)?.label || 'Abogado'; }
-function deliveryLabel(status) { return ({ WAITING_CONFIGURATION: 'pendiente de configuración', QUEUED: 'en cola', SENT: 'enviado', FAILED: 'con error' })[status] || 'sin estado'; }
+function deliveryLabel(status) { return ({ WAITING_CONFIGURATION: 'pendiente de configuración', QUEUED: 'en cola', SENDING: 'enviando', SENT: 'aceptado por Resend', FAILED: 'falló el envío' })[status] || 'sin estado'; }
+function deliveryErrorMessage(code) { return code === 'RESEND_HTTP_403' ? 'Resend rechazó el remitente o destinatario (403). Revisá el dominio y el remitente configurados en Resend.' : code === 'INVITATION_SUPERSEDED' ? 'Entrega cancelada porque se generó un enlace nuevo.' : code === 'INVITATION_REVOKED' ? 'Entrega cancelada porque se revocó la invitación.' : code ? `No se pudo enviar el correo (${code}). La invitación sigue disponible en la bandeja de la persona destinataria.` : 'No se pudo enviar el correo. La invitación sigue disponible en la bandeja de la persona destinataria.'; }
 
 function Metric({ colors, label, value, styles }) { return <View style={styles.metricCard}><Text style={styles.metricLabel}>{label}</Text><Text style={[styles.metricValue, { color: colors.text }]}>{value}</Text></View>; }
 function RolePill({ colors, role, styles }) { return <View style={[styles.rolePill, role === 'ADMIN' && styles.roleAdmin, role === 'LAWYER' && styles.roleLawyer, role === 'COLLABORATOR' && styles.roleCollaborator]}><Text style={[styles.rolePillText, { color: role === 'ADMIN' ? colors.primary : colors.text }]}>{roleLabel(role)}</Text></View>; }

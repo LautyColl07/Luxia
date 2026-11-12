@@ -3,6 +3,7 @@ import { IS_CAPTURE_MODE } from '../config/captureMode';
 import { auth, firebaseConfig } from '../config/firebase';
 import { signOut } from 'firebase/auth';
 import mockData from '../data/mockData';
+import { normalizeApiErrorPayload } from '../utils/apiError';
 import { normalizeStatusLabel } from '../utils/status';
 import { getUserDisplayName, getUserEmail, getUserRole } from '../utils/userDisplay';
 
@@ -651,15 +652,11 @@ function getResponseShape(data) {
 }
 
 function getSafeErrorCode(data, error = null) {
-  const code = data?.errorCode ?? data?.code ?? error?.code;
-  return typeof code === 'string' && code.trim() ? code.trim().slice(0, 80) : null;
+  return normalizeApiErrorPayload(data, error).code;
 }
 
 function getSafeErrorMessage(data, error = null) {
-  const value = typeof data === 'string'
-    ? data
-    : data?.error?.message ?? data?.error ?? data?.message ?? error?.message;
-  return typeof value === 'string' && value.trim() ? value.trim().slice(0, 240) : null;
+  return normalizeApiErrorPayload(data, error).message;
 }
 
 function logLuxDebug(details) {
@@ -682,16 +679,17 @@ function isTransientConnectionError(error) {
 }
 
 function getErrorMessage(status, data) {
+  const payloadMessage = getSafeErrorMessage(data);
   if (status === 401) {
     return EXPIRED_SESSION_MESSAGE;
   }
 
   if (status === 403) {
-    return data?.error || 'No tenes permisos para realizar esta operacion.';
+    return payloadMessage || 'No tenes permisos para realizar esta operacion.';
   }
 
   if (status === 404) {
-    return data?.error || 'No encontramos el recurso solicitado.';
+    return payloadMessage || 'No encontramos el recurso solicitado.';
   }
 
   if (status === 413) {
@@ -699,7 +697,7 @@ function getErrorMessage(status, data) {
   }
 
   if (status === 415) {
-    return data?.error || 'El formato del archivo no esta permitido. Usa PDF, DOC, DOCX, JPG o PNG.';
+    return payloadMessage || 'El formato del archivo no esta permitido. Usa PDF, DOC, DOCX, JPG o PNG.';
   }
 
   if (status === 0) {
@@ -714,16 +712,16 @@ function getErrorMessage(status, data) {
     return data;
   }
 
-  if (data?.message) {
-    return data.message;
-  }
-
-  if (status >= 400 && status < 500 && data?.error) {
+  if (status >= 400 && status < 500 && payloadMessage) {
     if (Array.isArray(data?.missingFields) && data.missingFields.length) {
-      return data.error + ': ' + data.missingFields.join(', ');
+      return payloadMessage + ': ' + data.missingFields.join(', ');
     }
 
-    return data.error;
+    return payloadMessage;
+  }
+
+  if (payloadMessage) {
+    return payloadMessage;
   }
 
   return 'No pudimos completar la solicitud. Intenta nuevamente.';
@@ -989,7 +987,7 @@ export async function request(endpoint, options = {}) {
       setAuthToken(null);
       void signOut(auth).catch(() => undefined);
     }
-    const requestError = createRequestError(getErrorMessage(response.status, data), response.status, data);
+    const requestError = createRequestError(getErrorMessage(response.status, data), response.status, data, getSafeErrorCode(data));
     // Keep request metadata available to the UI without exposing credentials.
     requestError.endpoint = path;
     requestError.url = url;

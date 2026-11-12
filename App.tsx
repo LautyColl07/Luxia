@@ -24,6 +24,7 @@ import WebHeader from "./src/components/WebHeader";
 import WebSidebar from "./src/components/WebSidebar";
 import CaptureModeBadge from "./src/components/CaptureModeBadge";
 import { useResponsiveLayout } from "./src/theme/layout";
+import { readPendingStudyInvitation, savePendingStudyInvitation } from "./src/utils/pendingStudyInvitation";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const navigationRef = createNavigationContainerRef<any>();
@@ -38,28 +39,60 @@ const AppNavigator = () => {
 
   useEffect(() => {
     const readInvitationUrl = (url?: string | null) => {
-      if (!url) return;
+      if (!url) return false;
       try {
         const parsed = new URL(url);
         const invitationId = parsed.searchParams.get("invitation");
         const token = new URLSearchParams(parsed.hash.replace(/^#/, "")).get("token");
-        if (!invitationId || !token) return;
-        setPendingInvitation({ invitationId, token });
-        if (Platform.OS === "web" && typeof window !== "undefined") {
-          window.history.replaceState(null, document.title, parsed.pathname);
+        if (!invitationId || !token) return false;
+        const invitation = { invitationId, token };
+        savePendingStudyInvitation(invitation);
+        setPendingInvitation(invitation);
+        const browserWindow = (globalThis as any).window;
+        if (Platform.OS === "web" && browserWindow) {
+          parsed.searchParams.delete("invitation");
+          const remainingHash = new URLSearchParams(parsed.hash.replace(/^#/, ""));
+          remainingHash.delete("token");
+          const remainingSearchText = parsed.searchParams.toString();
+          const remainingHashText = remainingHash.toString();
+          const safeUrl = `${parsed.pathname}${remainingSearchText ? `?${remainingSearchText}` : ""}${remainingHashText ? `#${remainingHashText}` : ""}`;
+          browserWindow.history.replaceState(null, browserWindow.document?.title || "", safeUrl);
         }
-      } catch { /* Ignore unrelated links. */ }
+        return true;
+      } catch { return false; /* Ignore unrelated links. */ }
     };
-    if (Platform.OS === "web" && typeof window !== "undefined") readInvitationUrl(window.location.href);
-    void Linking.getInitialURL().then(readInvitationUrl).catch(() => undefined);
+    let foundInCurrentUrl = false;
+    const browserWindow = (globalThis as any).window;
+    if (Platform.OS === "web" && browserWindow) foundInCurrentUrl = readInvitationUrl(browserWindow.location.href);
+    void Linking.getInitialURL().then((url) => {
+      const foundInInitialUrl = readInvitationUrl(url);
+      if (!foundInCurrentUrl && !foundInInitialUrl) {
+        const saved = readPendingStudyInvitation();
+        if (saved) setPendingInvitation(saved);
+      }
+    }).catch(() => {
+      if (!foundInCurrentUrl) {
+        const saved = readPendingStudyInvitation();
+        if (saved) setPendingInvitation(saved);
+      }
+    });
     const subscription = Linking.addEventListener("url", ({ url }) => readInvitationUrl(url));
     return () => subscription.remove();
   }, []);
 
   useEffect(() => {
+    if (authStatus === "unauthenticated") {
+      invitationOpenedRef.current = false;
+      const saved = readPendingStudyInvitation();
+      if (saved) setPendingInvitation(saved);
+    }
+  }, [authStatus]);
+
+  useEffect(() => {
     if (!pendingInvitation || authStatus !== "authenticated" || !navigationRef.isReady() || invitationOpenedRef.current) return;
     invitationOpenedRef.current = true;
     navigationRef.navigate("MainApp", { screen: "InvitacionesEstudio", params: pendingInvitation });
+    setPendingInvitation(null);
   }, [authStatus, pendingInvitation, navigationState]);
 
   return (
