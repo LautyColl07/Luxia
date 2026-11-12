@@ -4,6 +4,7 @@ import { auth, firebaseConfig } from '../config/firebase';
 import { signOut } from 'firebase/auth';
 import mockData from '../data/mockData';
 import { normalizeApiErrorPayload } from '../utils/apiError';
+import { requirePendingStudyInvitation } from '../utils/studyInvitationStatus';
 import { normalizeStatusLabel } from '../utils/status';
 import { getUserDisplayName, getUserEmail, getUserRole } from '../utils/userDisplay';
 
@@ -1178,12 +1179,12 @@ export async function revokeStudyInvitation(legalStudyId, invitationId) {
 export async function getMyStudyInvitations() {
   if (USE_MOCKS) return simulateDelay([]);
   const response = await request('/legal-studies/invitations/my');
-  return Array.isArray(response?.data) ? response.data : [];
+  return Array.isArray(response?.data) ? response.data.map(requirePendingStudyInvitation) : [];
 }
 
 export async function resolveStudyInvitation(token) {
   const response = await request('/legal-studies/invitations/resolve', { method: 'POST', body: { token } });
-  return response?.data || response;
+  return requirePendingStudyInvitation(response?.data || response);
 }
 
 export async function respondToStudyInvitation(invitationId, decision, token) {

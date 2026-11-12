@@ -15,6 +15,14 @@ import { clearPendingStudyInvitation } from '../utils/pendingStudyInvitation';
 import { reload, sendEmailVerification, signOut } from 'firebase/auth';
 
 const ROLE_NAMES = { ADMIN: 'Administrador', LAWYER: 'Abogado', COLLABORATOR: 'Colaborador' };
+const INVITATION_ERROR_TITLES = {
+  EMAIL_NOT_VERIFIED: 'Verificá tu correo para continuar',
+  INVITATION_STATE_UNAVAILABLE: 'No pudimos comprobar si la invitación sigue pendiente',
+  INVITATION_EXPIRED: 'Esta invitación ya no está disponible',
+  INVITATION_REVOKED: 'Esta invitación ya no está disponible',
+  INVITATION_ACCEPTED: 'Esta invitación ya no está disponible',
+  INVITATION_DECLINED: 'Esta invitación ya no está disponible',
+};
 
 export default function StudyInvitationsScreen({ route }) {
   const { authStatus, currentUser } = useAuth();
@@ -126,7 +134,7 @@ export default function StudyInvitationsScreen({ route }) {
       <Text style={styles.title}>Invitaciones al estudio</Text>
       <View style={styles.card}>
         <View style={styles.errorIcon}><MaterialCommunityIcons color={colors.danger} name="alert-circle-outline" size={25} /></View>
-        <Text style={styles.studyName}>{error.code === 'EMAIL_NOT_VERIFIED' ? 'Verificá tu correo para continuar' : error.code === 'INVITATION_EXPIRED' || error.code === 'INVITATION_REVOKED' ? 'Esta invitación ya no está disponible' : 'No pudimos validar la invitación'}</Text>
+        <Text style={styles.studyName}>{INVITATION_ERROR_TITLES[error.code] || 'No pudimos validar la invitación'}</Text>
         <Text accessibilityRole="alert" style={styles.detail}>{error.code === 'INVITATION_INVALID' ? 'Iniciá sesión con la dirección de correo a la que enviaron la invitación. Por seguridad, no mostramos detalles del estudio hasta validar la cuenta.' : error.message}</Text>
         {error.code === 'EMAIL_NOT_VERIFIED' ? <>
           <Text style={styles.notice}>Recibir una invitación no da acceso automáticamente. Primero verificá el correo de esta cuenta; luego podrás revisar y aceptar o rechazar la invitación.</Text>
