@@ -5,6 +5,7 @@ import { ActivityIndicator, FlatList, Modal, Pressable, RefreshControl, ScrollVi
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import EmptyState from '../components/EmptyState';
+import SharedDatePickerModal from '../components/DatePickerModal';
 import LoadingState from '../components/LoadingState';
 import StatusBadge from '../components/StatusBadge';
 import DocumentPopover from '../components/documents/DocumentPopover';
@@ -113,7 +114,8 @@ export default function CasesScreen({ navigation }) {
   if (loading && cases.length === 0) return <LoadingState title="Cargando causas" message="Estamos reuniendo los expedientes y su información principal." />;
   return (
     <View style={styles.screen}>
-      <View style={styles.header}>
+      <FlatList
+        ListHeaderComponent={<View style={styles.header}>
         <Text style={styles.title}>Causas</Text>
         {layout.isWebDesktop ? <Text style={styles.subtitle}>Consulta y organiza tus expedientes.</Text> : null}
         <View style={styles.actionRow}>
@@ -161,8 +163,7 @@ export default function CasesScreen({ navigation }) {
           <View style={styles.inlineErrorCopy}><Text style={styles.inlineErrorTitle}>No pudimos cargar las causas</Text><Text style={styles.inlineErrorText}>{error}</Text></View>
           <Pressable accessibilityRole="button" onPress={() => void loadCases(false, 1)} style={styles.inlineRetry}><Text style={styles.inlineRetryText}>Reintentar</Text></Pressable>
         </View> : null}
-      </View>
-      <FlatList
+        </View>}
         contentContainerStyle={styles.listContent}
         data={cases}
         keyExtractor={(item) => String(item?.id)}
@@ -175,7 +176,7 @@ export default function CasesScreen({ navigation }) {
         ListEmptyComponent={!loading && !error ? <EmptyState actionLabel={canCreateCase ? 'Nueva causa' : undefined} icon="briefcase-search-outline" message="No se encontraron causas con la búsqueda o los filtros seleccionados." onAction={canCreateCase ? () => navigation.navigate('NewCase') : undefined} title="Sin resultados" /> : null}
         showsVerticalScrollIndicator={false}
       />
-      <DatePickerModal
+      <SharedDatePickerModal
         visible={Boolean(datePickerField)}
         selectedValue={datePickerField ? filters[datePickerField] : ''}
         minDate={datePickerField === 'endDate' ? filters.startDate : ''}
@@ -323,7 +324,7 @@ const createStyles = (colors, layout, topInset) => StyleSheet.create({
   statusChipText: { color: colors.textSecondary, fontSize: 12 },
   statusChipTextActive: { color: colors.textOnPrimary, fontWeight: '700' },
   dateRow: { width: '100%', minWidth: 0, flexDirection: layout.isPhone ? 'column' : 'row', gap: 10 },
-  dateField: { flex: 1, minWidth: 0, gap: 7 },
+  dateField: { ...(layout.isPhone ? {} : { flex: 1 }), minWidth: 0, gap: 7 },
   datePickerTrigger: { width: '100%', minWidth: 0, minHeight: 44, borderRadius: 12, borderWidth: 1, borderColor: colors.borderSoft, backgroundColor: colors.inputBackground, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 9 },
   datePickerText: { flex: 1, minWidth: 0, flexShrink: 1, color: colors.text, fontSize: 14 },
   datePickerPlaceholder: { color: colors.textMuted },

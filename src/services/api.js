@@ -335,6 +335,9 @@ function normalizeHearing(hearing, context = {}) {
     source.causa?.modalidad
   );
   const location = firstTextValue(source.location, source.ubicacion, source.sala);
+  const room = firstTextValue(source.room, source.location, source.ubicacion, source.sala);
+  const videoConferenceUrl = firstTextValue(source.videoConferenceUrl, source.video_conference_url, source.meetingUrl, source.enlaceVideoconferencia);
+  const phoneNumber = firstTextValue(source.phoneNumber, source.phone_number, source.telefono, source.numeroTelefono);
   const canStart =
     typeof source.canStart === 'boolean'
       ? source.canStart
@@ -361,6 +364,9 @@ function normalizeHearing(hearing, context = {}) {
     modalidad: modality,
     location,
     ubicacion: location,
+    room,
+    videoConferenceUrl,
+    phoneNumber,
     canStart,
     puedeIniciar: canStart,
     status,
@@ -415,6 +421,9 @@ function normalizeCase(caseItem) {
   const defaultCase = { id: source.id, title, court };
   const rawHearings = toArray(source.hearings ?? source.audiencias);
   const hearings = rawHearings.map((item) => normalizeHearing(item, { defaultCase }));
+  const upcomingHearings = toArray(source.upcomingHearings ?? source.proximasAudiencias).map((item) => normalizeHearing(item, { defaultCase }));
+  const recentHearings = toArray(source.recentHearings ?? source.audienciasRecientes).map((item) => normalizeHearing(item, { defaultCase }));
+  const undatedHearings = toArray(source.undatedHearings ?? source.audienciasSinFecha).map((item) => normalizeHearing(item, { defaultCase }));
   const nestedDocuments = rawHearings.flatMap((hearing) =>
     toArray(hearing.files ?? hearing.documents ?? hearing.documentos ?? hearing.archivos).map((item) =>
       normalizeDocument(
@@ -450,6 +459,9 @@ function normalizeCase(caseItem) {
     fecha: createdAt,
     hearings,
     audiencias: hearings,
+    upcomingHearings,
+    recentHearings,
+    undatedHearings,
     documents,
     documentos: documents,
     tasks,
@@ -1653,6 +1665,9 @@ function normalizeHearingPayload(data = {}) {
   const caseId = safeOptionalString(data.caseId ?? data.causaId);
   const modality = safeString(data.modality ?? data.modalidad, '').trim();
   const location = safeString(data.location ?? data.ubicacion, '').trim();
+  const room = safeString(data.room, '').trim();
+  const videoConferenceUrl = safeString(data.videoConferenceUrl, '').trim();
+  const phoneNumber = safeString(data.phoneNumber, '').trim();
 
   return {
     title,
@@ -1667,6 +1682,9 @@ function normalizeHearingPayload(data = {}) {
     modalidad: modality || null,
     location,
     ubicacion: location,
+    room,
+    videoConferenceUrl,
+    phoneNumber,
   };
 }
 
@@ -1679,7 +1697,9 @@ export async function createHearing(data) {
       caseId: data.caseId ?? data.causaId,
       date: combineDateTime(data.date ?? data.fecha, data.time ?? data.hora),
       modality: data.modality ?? data.modalidad,
-      location: data.location ?? data.ubicacion,
+      room: data.room,
+      videoConferenceUrl: data.videoConferenceUrl,
+      phoneNumber: data.phoneNumber,
       status: 'Programada',
     });
 
@@ -1705,6 +1725,9 @@ export async function createHearing(data) {
     caseId: response?.caseId ?? payload.caseId,
     modality: response?.modality ?? payload.modality,
     location: response?.location ?? payload.location,
+    room: response?.room ?? payload.room,
+    videoConferenceUrl: response?.videoConferenceUrl ?? payload.videoConferenceUrl,
+    phoneNumber: response?.phoneNumber ?? payload.phoneNumber,
   });
 }
 

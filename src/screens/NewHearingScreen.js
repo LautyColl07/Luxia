@@ -1,9 +1,10 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import ActionFeedbackModal from '../components/ActionFeedbackModal';
+import DatePickerModal from '../components/DatePickerModal';
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
@@ -14,7 +15,6 @@ import { useResponsiveLayout } from '../theme/layout';
 import {
   formatDateTextInput,
   formatDateTimeInput,
-  formatTimeTextInput,
   parseMaskedDateToIso,
 } from '../utils/date';
 
@@ -33,13 +33,18 @@ export default function NewHearingScreen({ navigation, route }) {
   const requestSequenceRef = useRef(0);
   const [submitting, setSubmitting] = useState(false);
   const [successFeedback, setSuccessFeedback] = useState(null);
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const [timePickerOpen, setTimePickerOpen] = useState(false);
+  const [draftTime, setDraftTime] = useState({ hour: '09', minute: '00' });
   const [form, setForm] = useState({
     title: '',
     caseId: initialCaseId,
     date: '',
     time: '',
     modality: '',
-    location: '',
+    room: '',
+    videoConferenceUrl: '',
+    phoneNumber: '',
   });
 
   const loadCases = useCallback(async () => {
@@ -98,10 +103,25 @@ export default function NewHearingScreen({ navigation, route }) {
   const isValidTime = /^([01]\d|2[0-3]):([0-5]\d)$/.test(form.time.trim());
 
   const updateField = (key, value) => setForm((current) => ({ ...current, [key]: value }));
-  const handleDateChange = (value) => updateField('date', formatDateTextInput(value));
-  const handleTimeChange = (value) => updateField('time', formatTimeTextInput(value));
+  const openTimePicker = () => {
+    const [hour, minute] = (form.time || '09:00').split(':');
+    setDraftTime({ hour, minute });
+    setTimePickerOpen(true);
+  };
 
   const handleSubmit = async () => {
+    if (['Presencial', 'Mixta'].includes(form.modality) && !form.room.trim()) {
+      Alert.alert('Falta la sala', 'Ingresá el nombre de la sala para esta modalidad.');
+      return;
+    }
+    if (['Virtual', 'Mixta'].includes(form.modality) && !/^https?:\/\//i.test(form.videoConferenceUrl.trim())) {
+      Alert.alert('Enlace inválido', 'Ingresá el enlace de videoconferencia comenzando con http:// o https://.');
+      return;
+    }
+    if (form.modality === 'Telefonica' && !form.phoneNumber.trim()) {
+      Alert.alert('Falta el teléfono', 'Ingresá el número de teléfono de la audiencia.');
+      return;
+    }
     if (!form.title.trim() || !form.caseId || !form.date.trim() || !form.time.trim()) {
       Alert.alert(
         'Informacion incompleta',
@@ -140,7 +160,9 @@ export default function NewHearingScreen({ navigation, route }) {
         fechaHora: normalizedDateTime,
         modality: form.modality || null,
         modalidad: form.modality || null,
-        location: form.location.trim(),
+        room: form.room.trim(),
+        videoConferenceUrl: form.videoConferenceUrl.trim(),
+        phoneNumber: form.phoneNumber.trim(),
       });
 
       setSuccessFeedback({
@@ -252,27 +274,19 @@ export default function NewHearingScreen({ navigation, route }) {
 
       <View style={styles.dualRow}>
         <Field containerStyle={styles.dualField} label="Fecha" styles={styles}>
-          <TextInput
-            keyboardType="number-pad"
-            maxLength={10}
-            onChangeText={handleDateChange}
-            placeholder="dd/mm/aaaa"
-            placeholderTextColor={colors.textMuted}
-            style={styles.input}
-            value={form.date}
-          />
+          <Pressable accessibilityRole="button" accessibilityLabel={`Elegir fecha${form.date ? `, ${form.date}` : ''}`} onPress={() => setDatePickerOpen(true)} style={styles.pickerInput}>
+            <MaterialCommunityIcons color={colors.textSecondary} name="calendar-month-outline" size={19} />
+            <Text style={[styles.pickerText, !form.date && styles.pickerPlaceholder]}>{form.date || 'dd/mm/aaaa'}</Text>
+            <MaterialCommunityIcons color={colors.textMuted} name="chevron-down" size={18} />
+          </Pressable>
         </Field>
 
         <Field containerStyle={styles.dualField} label="Horario" styles={styles}>
-          <TextInput
-            keyboardType="number-pad"
-            maxLength={5}
-            onChangeText={handleTimeChange}
-            placeholder="HH:mm"
-            placeholderTextColor={colors.textMuted}
-            style={styles.input}
-            value={form.time}
-          />
+          <Pressable accessibilityRole="button" accessibilityLabel={`Elegir horario${form.time ? `, ${form.time}` : ''}`} onPress={openTimePicker} style={styles.pickerInput}>
+            <MaterialCommunityIcons color={colors.textSecondary} name="clock-outline" size={19} />
+            <Text style={[styles.pickerText, !form.time && styles.pickerPlaceholder]}>{form.time || 'HH:mm'}</Text>
+            <MaterialCommunityIcons color={colors.textMuted} name="chevron-down" size={18} />
+          </Pressable>
         </Field>
       </View>
 
@@ -328,15 +342,15 @@ export default function NewHearingScreen({ navigation, route }) {
         </View>
       </Field>
 
-      <Field label="Sala o enlace institucional" styles={styles}>
-        <TextInput
-          onChangeText={(value) => updateField('location', value)}
-          placeholder="Ej. Sala 3 o enlace de videoconferencia"
-          placeholderTextColor={colors.textMuted}
-          style={styles.input}
-          value={form.location}
-        />
-      </Field>
+      {['Presencial', 'Mixta'].includes(form.modality) ? <Field label="Sala" styles={styles}>
+        <TextInput onChangeText={(value) => updateField('room', value)} placeholder="Nombre de la sala" placeholderTextColor={colors.textMuted} style={styles.input} value={form.room} />
+      </Field> : null}
+      {['Virtual', 'Mixta'].includes(form.modality) ? <Field label="Enlace de videoconferencia" styles={styles}>
+        <TextInput autoCapitalize="none" keyboardType="url" onChangeText={(value) => updateField('videoConferenceUrl', value)} placeholder="https://..." placeholderTextColor={colors.textMuted} style={styles.input} value={form.videoConferenceUrl} />
+      </Field> : null}
+      {form.modality === 'Telefonica' ? <Field label="Número de teléfono" styles={styles}>
+        <TextInput keyboardType="phone-pad" onChangeText={(value) => updateField('phoneNumber', value)} placeholder="+54..." placeholderTextColor={colors.textMuted} style={styles.input} value={form.phoneNumber} />
+      </Field> : null}
 
       {selectedCase ? (
         <View style={styles.summaryCard}>
@@ -348,8 +362,10 @@ export default function NewHearingScreen({ navigation, route }) {
           </Text>
           <Text style={styles.summaryText}>
             Modalidad: {form.modality || 'Sin modalidad'}
-            {form.location ? ` · ${form.location}` : ''}
           </Text>
+          {form.modality === 'Presencial' || form.modality === 'Mixta' ? <Text style={styles.summaryText}>Sala: {form.room || 'Sin informar'}</Text> : null}
+          {form.modality === 'Virtual' || form.modality === 'Mixta' ? <Text style={styles.summaryText}>Enlace de videoconferencia: {form.videoConferenceUrl || 'Sin informar'}</Text> : null}
+          {form.modality === 'Telefonica' ? <Text style={styles.summaryText}>Número de teléfono: {form.phoneNumber || 'Sin informar'}</Text> : null}
         </View>
       ) : null}
 
@@ -371,6 +387,31 @@ export default function NewHearingScreen({ navigation, route }) {
         title={successFeedback?.title}
         visible={Boolean(successFeedback)}
       />
+      <DatePickerModal
+        visible={datePickerOpen}
+        selectedValue={form.date ? parseMaskedDateToIso(form.date) : ''}
+        confirmSelection
+        colors={colors}
+        onClose={() => setDatePickerOpen(false)}
+        onSelect={(value) => {
+          if (value) {
+            const [year, month, day] = value.split('-');
+            updateField('date', `${day}/${month}/${year}`);
+          }
+          setDatePickerOpen(false);
+        }}
+      />
+      <TimePickerModal
+        visible={timePickerOpen}
+        value={draftTime}
+        colors={colors}
+        onChange={setDraftTime}
+        onClose={() => setTimePickerOpen(false)}
+        onConfirm={() => {
+          updateField('time', `${draftTime.hour}:${draftTime.minute}`);
+          setTimePickerOpen(false);
+        }}
+      />
     </ScrollView>
   );
 }
@@ -384,6 +425,44 @@ function Field({ children, containerStyle, hint, label, styles }) {
     </View>
   );
 }
+
+function TimePickerModal({ visible, value, colors, onChange, onClose, onConfirm }) {
+  const styles = useMemo(() => createTimePickerStyles(colors), [colors]);
+  return <Modal transparent animationType="fade" visible={visible} onRequestClose={onClose}>
+    <View style={styles.backdrop}>
+      <Pressable accessibilityRole="button" accessibilityLabel="Cerrar selector de horario" onPress={onClose} style={StyleSheet.absoluteFill} />
+      <View accessibilityViewIsModal style={styles.dialog}>
+        <Text style={styles.title}>Elegir horario</Text>
+        <Text style={styles.preview}>{value.hour}:{value.minute}</Text>
+        <View style={styles.columns}>
+          <View style={styles.column}><Text style={styles.columnLabel}>Hora</Text><ScrollView style={styles.options} nestedScrollEnabled showsVerticalScrollIndicator>{Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0')).map((hour) => <Pressable accessibilityRole="button" accessibilityState={{ selected: value.hour === hour }} key={hour} onPress={() => onChange((current) => ({ ...current, hour }))} style={[styles.option, value.hour === hour && styles.optionActive]}><Text style={[styles.optionText, value.hour === hour && styles.optionTextActive]}>{hour}</Text></Pressable>)}</ScrollView></View>
+          <View style={styles.column}><Text style={styles.columnLabel}>Minuto</Text><ScrollView style={styles.options} nestedScrollEnabled showsVerticalScrollIndicator>{Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0')).map((minute) => <Pressable accessibilityRole="button" accessibilityState={{ selected: value.minute === minute }} key={minute} onPress={() => onChange((current) => ({ ...current, minute }))} style={[styles.option, value.minute === minute && styles.optionActive]}><Text style={[styles.optionText, value.minute === minute && styles.optionTextActive]}>{minute}</Text></Pressable>)}</ScrollView></View>
+        </View>
+        <View style={styles.actions}><Pressable onPress={onClose} style={styles.cancel}><Text style={styles.cancelText}>Cancelar</Text></Pressable><Pressable onPress={onConfirm} style={styles.confirm}><Text style={styles.confirmText}>Confirmar</Text></Pressable></View>
+      </View>
+    </View>
+  </Modal>;
+}
+
+const createTimePickerStyles = (colors) => StyleSheet.create({
+  backdrop: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 16, backgroundColor: 'rgba(0, 0, 0, 0.58)' },
+  dialog: { width: '100%', maxWidth: 360, maxHeight: '85%', padding: 18, borderRadius: 20, borderWidth: 1, borderColor: colors.borderSoft, backgroundColor: colors.card },
+  title: { color: colors.text, fontSize: 18, fontWeight: '700', textAlign: 'center' },
+  preview: { color: colors.primary, fontSize: 32, fontWeight: '800', textAlign: 'center', marginVertical: 12 },
+  columns: { flexDirection: 'row', gap: 12, height: 260 },
+  column: { flex: 1, minWidth: 0 },
+  columnLabel: { color: colors.textSecondary, fontSize: 12, fontWeight: '700', textAlign: 'center', marginBottom: 6 },
+  options: { flex: 1, borderRadius: 12, backgroundColor: colors.backgroundAlt },
+  option: { minHeight: 42, alignItems: 'center', justifyContent: 'center', borderRadius: 10, marginHorizontal: 4, marginVertical: 2 },
+  optionActive: { backgroundColor: colors.primary },
+  optionText: { color: colors.textSecondary, fontSize: 15 },
+  optionTextActive: { color: colors.textOnPrimary, fontWeight: '700' },
+  actions: { flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 8, marginTop: 14, borderTopWidth: 1, borderTopColor: colors.borderSoft, paddingTop: 12 },
+  cancel: { minHeight: 42, justifyContent: 'center', paddingHorizontal: 12 },
+  cancelText: { color: colors.textSecondary, fontSize: 14, fontWeight: '600' },
+  confirm: { minHeight: 42, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 12, backgroundColor: colors.primary },
+  confirmText: { color: colors.textOnPrimary, fontSize: 14, fontWeight: '700' },
+});
 
 const createStyles = (colors, layout) => StyleSheet.create({
   screen: {
@@ -465,6 +544,19 @@ const createStyles = (colors, layout) => StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.borderSoft,
   },
+  pickerInput: {
+    minHeight: 50,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+    backgroundColor: colors.inputBackground,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+  },
+  pickerText: { flex: 1, color: colors.text, fontSize: 15 },
+  pickerPlaceholder: { color: colors.textMuted },
   selectorList: {
     gap: 10,
   },

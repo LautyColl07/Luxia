@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
@@ -30,6 +30,7 @@ export default function CaseDetailScreen({ navigation, route }) {
   const [showMoveModal, setShowMoveModal] = useState(false);
   const [moving, setMoving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [clockNow, setClockNow] = useState(() => Date.now());
   const requestSequenceRef = useRef(0);
 
   const loadCase = useCallback(async ({ preserveExisting = false } = {}) => {
@@ -59,7 +60,8 @@ export default function CaseDetailScreen({ navigation, route }) {
   useFocusEffect(
     useCallback(() => {
       void loadCase();
-      return () => { requestSequenceRef.current += 1; };
+      const timer = setInterval(() => setClockNow(Date.now()), 15000);
+      return () => { clearInterval(timer); requestSequenceRef.current += 1; };
     }, [loadCase])
   );
 
@@ -83,6 +85,11 @@ export default function CaseDetailScreen({ navigation, route }) {
   }
 
   const hearings = caseDetail?.hearings || [];
+  const upcomingHearings = hearings.filter((hearing) => Number.isFinite(Date.parse(hearing?.date)) && Date.parse(hearing.date) >= clockNow)
+    .sort((a, b) => Date.parse(a.date) - Date.parse(b.date) || String(a.id).localeCompare(String(b.id)));
+  const recentHearings = hearings.filter((hearing) => Number.isFinite(Date.parse(hearing?.date)) && Date.parse(hearing.date) < clockNow)
+    .sort((a, b) => Date.parse(b.date) - Date.parse(a.date) || String(a.id).localeCompare(String(b.id)));
+  const undatedHearings = hearings.filter((hearing) => !Number.isFinite(Date.parse(hearing?.date)));
   const documents = caseDetail?.documents || [];
   const tasks = caseDetail?.tasks || [];
   const sourceStudy = legalStudies.find((study) => String(study.id) === String(caseDetail?.legalStudyId));
@@ -219,41 +226,9 @@ export default function CaseDetailScreen({ navigation, route }) {
         </View>
       </Modal>
 
-      <Section colors={colors} styles={styles} title="Audiencias">
-        {hearings.length ? (
-          hearings.map((hearing) => (
-            <View key={hearing?.id} style={styles.sectionCard}>
-              <View style={styles.sectionCardHeader}>
-                <View style={styles.sectionCardCopy}>
-                  <Text style={styles.sectionCardTitle}>{hearing?.title || 'Audiencia sin titulo'}</Text>
-                  <Text style={styles.sectionCardSubtitle}>{formatDateTime(hearing?.date)}</Text>
-                </View>
-                <StatusBadge status={hearing?.status} />
-              </View>
-              <Text style={styles.sectionCardMeta}>
-                {hearing?.modality || 'Modalidad a confirmar'}
-                {hearing?.location ? ` · ${hearing.location}` : ''}
-              </Text>
-              <HearingRecordingPanel
-                caseDetail={caseDetail}
-                documents={documents}
-                hearing={hearing}
-                canTranscribe={caseDetail?.canTranscribe !== false}
-                onDocumentsChanged={refreshCase}
-                onViewDocuments={() => navigation.navigate('MainTabs', { screen: 'Documentos' })}
-              />
-            </View>
-          ))
-        ) : (
-          <EmptyState
-            actionLabel={caseDetail?.canEditCase !== false ? 'Registrar audiencia' : undefined}
-            icon="calendar-blank-outline"
-            message="Todavia no hay audiencias vinculadas a esta causa."
-            onAction={caseDetail?.canEditCase !== false ? () => navigation.navigate('NewHearing', { caseId: caseDetail?.id }) : undefined}
-            title="Sin audiencias registradas"
-          />
-        )}
-      </Section>
+      <HearingSection title="Próximas Audiencias" hearings={upcomingHearings} emptyMessage="No hay próximas audiencias programadas." {...{ colors, styles, caseDetail, documents, navigation, refreshCase }} />
+      <HearingSection title="Audiencias Recientes" hearings={recentHearings} emptyMessage="Todavía no hay audiencias anteriores." {...{ colors, styles, caseDetail, documents, navigation, refreshCase }} />
+      {undatedHearings.length ? <HearingSection title="Audiencias sin fecha" hearings={undatedHearings} emptyMessage="" {...{ colors, styles, caseDetail, documents, navigation, refreshCase }} /> : null}
 
       <Section
         actionLabel={caseDetail?.canUploadDocument !== false ? 'Subir documento' : undefined}
@@ -320,6 +295,71 @@ export default function CaseDetailScreen({ navigation, route }) {
       ) : null}
     </ScrollView>
   );
+}
+
+function HearingSection({ title, hearings, emptyMessage, colors, styles, caseDetail, documents, navigation, refreshCase }) {
+  const openVideoConference = (url) => {
+    const value = String(url || '').trim();
+    if (!/^https?:\/\/[^\s]+$/i.test(value)) {
+      Alert.alert('Enlace inválido', 'Esta audiencia no tiene un enlace de videoconferencia válido.');
+      return;
+    }
+
+    Linking.openURL(value).catch(() => {
+      Alert.alert('No se pudo abrir el enlace', 'Revisá el enlace de videoconferencia e intentá nuevamente.');
+    });
+  };
+
+  return <Section colors={colors} styles={styles} title={title}>
+    {hearings.length ? hearings.map((hearing) => (
+      <View key={hearing?.id} style={styles.sectionCard}>
+        <View style={styles.sectionCardHeader}>
+          <View style={styles.sectionCardCopy}>
+            <Text style={styles.sectionCardTitle}>{hearing?.title || 'Audiencia sin titulo'}</Text>
+            <Text style={styles.sectionCardSubtitle}>{formatDateTime(hearing?.date)}</Text>
+          </View>
+          <StatusBadge status={hearing?.status} />
+        </View>
+        <Text style={styles.sectionCardMeta}>{hearing?.modality || 'Modalidad a confirmar'}</Text>
+        {['Presencial', 'Mixta'].includes(hearing?.modality) ? (
+          <Text style={styles.hearingInfo}>
+            <Text style={styles.hearingInfoLabel}>Sala: </Text>{hearing?.room || hearing?.location || 'Sin informar'}
+          </Text>
+        ) : null}
+        {['Virtual', 'Mixta'].includes(hearing?.modality) ? (
+          hearing?.videoConferenceUrl ? (
+            <Pressable
+              accessibilityLabel={`Abrir videoconferencia: ${hearing.videoConferenceUrl}`}
+              accessibilityRole="link"
+              onPress={() => openVideoConference(hearing.videoConferenceUrl)}
+              style={styles.hearingLinkRow}
+            >
+              <Text style={styles.hearingLinkLabel}>Enlace de videoconferencia: </Text>
+              <Text style={styles.hearingLink}>{hearing.videoConferenceUrl}</Text>
+              <MaterialCommunityIcons color={colors.primary} name="open-in-new" size={16} style={styles.hearingLinkIcon} />
+            </Pressable>
+          ) : (
+            <Text style={styles.hearingInfo}>
+              <Text style={styles.hearingInfoLabel}>Enlace de videoconferencia: </Text>Sin informar
+            </Text>
+          )
+        ) : null}
+        {hearing?.modality === 'Telefonica' ? (
+          <Text style={styles.hearingInfo}>
+            <Text style={styles.hearingInfoLabel}>Número de teléfono: </Text>{hearing?.phoneNumber || 'Sin informar'}
+          </Text>
+        ) : null}
+        <HearingRecordingPanel caseDetail={caseDetail} documents={documents} hearing={hearing}
+          canTranscribe={caseDetail?.canTranscribe !== false} onDocumentsChanged={refreshCase}
+          canStartRecording={title !== 'Audiencias Recientes'}
+          onViewDocuments={() => navigation.navigate('MainTabs', { screen: 'Documentos' })} />
+      </View>
+    )) : <EmptyState
+      actionLabel={title === 'Próximas Audiencias' && caseDetail?.canEditCase !== false ? 'Registrar audiencia' : undefined}
+      icon="calendar-blank-outline" message={emptyMessage}
+      onAction={title === 'Próximas Audiencias' && caseDetail?.canEditCase !== false ? () => navigation.navigate('NewHearing', { caseId: caseDetail?.id }) : undefined}
+      title={title === 'Próximas Audiencias' ? 'Sin próximas audiencias' : 'Sin audiencias'} />}
+  </Section>;
 }
 
 function Section({ actionLabel, children, colors, onAction, styles, title }) {
@@ -492,6 +532,42 @@ const createStyles = (colors, layout) => StyleSheet.create({
     fontSize: 13,
     marginTop: 6,
     lineHeight: 20,
+  },
+  hearingInfo: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: '600',
+    marginTop: 8,
+    lineHeight: 22,
+  },
+  hearingInfoLabel: {
+    color: colors.text,
+    fontWeight: '800',
+  },
+  hearingLinkRow: {
+    alignSelf: 'stretch',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    marginTop: 8,
+    minHeight: 24,
+  },
+  hearingLinkLabel: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: '800',
+    lineHeight: 22,
+  },
+  hearingLink: {
+    color: colors.primary,
+    fontSize: 15,
+    fontWeight: '800',
+    lineHeight: 22,
+    textDecorationLine: 'underline',
+    flexShrink: 1,
+  },
+  hearingLinkIcon: {
+    marginLeft: 5,
   },
   taskRow: {
     backgroundColor: colors.card,

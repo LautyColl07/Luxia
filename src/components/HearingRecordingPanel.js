@@ -48,7 +48,7 @@ function getErrorMessage(error, fallback) {
   );
 }
 
-export default function HearingRecordingPanel({ caseDetail, hearing, onDocumentsChanged, onViewDocuments, canTranscribe = true }) {
+export default function HearingRecordingPanel({ caseDetail, hearing, onDocumentsChanged, onViewDocuments, canTranscribe = true, canStartRecording = true }) {
   const { colors } = useAppTheme();
   const { width: viewportWidth } = useWindowDimensions();
   const compactLayout = viewportWidth < 640;
@@ -682,13 +682,13 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
       </View>
 
       <View style={styles.buttonGrid}>
-        <ActionButton
+        {canStartRecording || isRecording || isStarting || hasActiveSession ? <ActionButton
           disabled={!canTranscribe || isRecording || isStarting || isFinishing || hasActiveSession || pendingChunkCount > 0}
           label={isStarting ? 'Iniciando...' : 'Iniciar grabación'}
           onPress={() => void handleStartRecording()}
           styles={styles}
           variant="primary"
-        />
+        /> : null}
         <ActionButton
           disabled={!canTranscribe || (!isRecording && !isStarting && !hasActiveSession) || isFinishing}
           label={
