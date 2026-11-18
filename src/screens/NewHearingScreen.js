@@ -426,7 +426,7 @@ function Field({ children, containerStyle, hint, label, styles }) {
   );
 }
 
-function TimePickerModal({ visible, value, colors, onChange, onClose, onConfirm }) {
+export function TimePickerModal({ visible, value, colors, onChange, onClose, onConfirm }) {
   const styles = useMemo(() => createTimePickerStyles(colors), [colors]);
   return <Modal transparent animationType="fade" visible={visible} onRequestClose={onClose}>
     <View style={styles.backdrop}>

@@ -285,7 +285,11 @@ function normalizeTask(task) {
     title: safeString(source.title ?? source.titulo, 'Tarea sin titulo'),
     dueDate,
     fechaVencimiento: dueDate,
-    completed: Boolean(source.completed ?? source.completada),
+    completed: Boolean(source.completedAt ?? source.completed ?? source.completada),
+    scheduledAt: source.scheduledAt ?? source.fechaProgramada ?? null,
+    allDay: Boolean(source.allDay ?? source.todoElDia),
+    assignedToId: source.assignedToId ?? null,
+    responsibilities: Array.isArray(source.responsibilities) ? source.responsibilities.map((item) => item.user || item).filter(Boolean) : (source.assignedTo ? [source.assignedTo] : []),
     caseId: getId(source.caseId ?? source.causaId),
   };
 }
@@ -483,6 +487,7 @@ function normalizeDashboardResumen(data) {
       tareasPendientes: toNumber(metricas.tareasPendientes ?? metricas.pendingTasks) ?? 0,
     },
     proximasAudiencias: sortByDateAsc(upcoming, 'date'),
+    tareasHoy: toArray(source.tareasHoy ?? source.tasksToday).map(normalizeTask),
   };
 }
 
@@ -1648,6 +1653,32 @@ export async function getHearings() {
   }
 
   return sortByDateAsc(Array.from(byId.values()), 'date');
+}
+
+export async function getTasks({ from, to } = {}) {
+  const query = appendQueryParams('/tareas', {
+    ...getActiveWorkContextQuery(),
+    ...(from ? { from } : {}),
+    ...(to ? { to } : {}),
+  });
+  const result = await request(query);
+  return Array.isArray(result) ? result.map(normalizeTask) : [];
+}
+
+export async function createCalendarTask(data) {
+  return request('/tareas', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function setTaskCompleted(id, completed) {
+  return request(`/tareas/${encodeURIComponent(id)}/completion`, {
+    method: 'PATCH', body: JSON.stringify({ completed }),
+  });
+}
+
+export async function setHearingCompleted(id, completed) {
+  return request(`/audiencias/${encodeURIComponent(id)}/completion`, {
+    method: 'PATCH', body: JSON.stringify({ completed }),
+  });
 }
 
 export async function getUpcomingHearings() {

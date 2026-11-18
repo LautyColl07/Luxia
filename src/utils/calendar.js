@@ -1,3 +1,5 @@
+import { getCaseCourtType } from '../constants/caseCourtTypes.js';
+
 const WEEKDAY_LABELS = ['LUN', 'MAR', 'MIE', 'JUE', 'VIE', 'SAB', 'DOM'];
 
 export const AREA_CONFIG = {
@@ -152,7 +154,7 @@ export function getWeekdayLabels() {
   return WEEKDAY_LABELS;
 }
 
-export function buildCalendarEvents({ hearings = [], caseDetails = [], cases = [] }) {
+export function buildCalendarEvents({ hearings = [], tasks = [], caseDetails = [], cases = [] }) {
   const caseMap = new Map();
 
   [...cases, ...caseDetails].forEach((item) => {
@@ -165,7 +167,12 @@ export function buildCalendarEvents({ hearings = [], caseDetails = [], cases = [
     .filter((item) => item?.date)
     .map((item) => {
       const relatedCase = caseMap.get(String(item?.caseId)) || {};
-      const area = inferLegalArea(relatedCase, item?.caseTitle);
+      const courtType = getCaseCourtType(item?.case?.courtType || relatedCase.courtType);
+      const area = courtType.value === 'CIVIL' ? AREA_CONFIG.civil : {
+        key: courtType.value || 'general',
+        label: courtType.shortLabel,
+        color: courtType.color,
+      };
 
       return {
         id: `hearing-${item?.id}`,
@@ -176,13 +183,16 @@ export function buildCalendarEvents({ hearings = [], caseDetails = [], cases = [
         caseId: item?.caseId,
         caseTitle: item?.caseTitle || relatedCase?.title || 'Causa sin referencia',
         court: item?.court || relatedCase?.court || 'Juzgado a confirmar',
+        courtType: courtType.value,
         area,
-        status: item?.status || 'Programada',
+        status: item?.completedAt ? 'Finalizada' : item?.status || 'Programada',
+        completed: Boolean(item?.completedAt),
+        responsibleUsers: item?.responsibleUsers || [],
         meta: item?.modality || 'Modalidad a confirmar',
       };
     });
 
-  const taskEvents = caseDetails.flatMap((caseItem) => {
+  const legacyTaskEvents = caseDetails.flatMap((caseItem) => {
     const area = inferLegalArea(caseItem);
 
     return (caseItem?.tasks || []).filter((task) => task?.dueDate).map((task) => ({
@@ -201,7 +211,27 @@ export function buildCalendarEvents({ hearings = [], caseDetails = [], cases = [
     }));
   });
 
-  return [...hearingEvents, ...taskEvents].sort((first, second) => {
+  const taskEvents = tasks.filter((task) => task?.scheduledAt || task?.dueDate).map((task) => ({
+    id: `task-${task.id}`,
+    sourceId: task.id,
+    type: 'task',
+    date: task.scheduledAt || task.dueDate,
+    title: task.title || 'Tarea sin título',
+    caseId: task.caseId,
+    caseTitle: task.case?.title || 'Tarea',
+    court: task.case?.court || '',
+    area: inferLegalArea(task.case || {}),
+    status: task.completedAt ? 'Finalizada' : task.status || 'Pendiente',
+    completed: Boolean(task.completedAt || task.completed || task.status === 'Finalizada'),
+    responsibleUsers: task.responsibilities?.length
+      ? task.responsibilities.map((item) => item.user || item)
+      : task.assignedTo ? [task.assignedTo] : [],
+    meta: task.description || 'Tarea',
+  }));
+
+  const uniqueEvents = new Map();
+  [...hearingEvents, ...legacyTaskEvents, ...taskEvents].forEach((event) => uniqueEvents.set(event.id, event));
+  return [...uniqueEvents.values()].sort((first, second) => {
     const firstDate = toDate(first?.date);
     const secondDate = toDate(second?.date);
     return (firstDate?.getTime() || 0) - (secondDate?.getTime() || 0);
@@ -223,4 +253,14 @@ export function groupEventsByDate(events = []) {
     accumulator[key].push(event);
     return accumulator;
   }, {});
+}
+
+export function filterCalendarEvents(events, { hearings, tasks, court, showCompleted, responsibleIds }) {
+  const selectedUsers = new Set(responsibleIds.map(String));
+  return events.filter((event) => {
+    if (event.type === 'hearing' && (!hearings || (court !== 'all' && event.courtType !== court))) return false;
+    if (event.type === 'task' && !tasks) return false;
+    if (!showCompleted && event.completed) return false;
+    return selectedUsers.size === 0 || event.responsibleUsers?.some((user) => selectedUsers.has(String(user.id)));
+  });
 }

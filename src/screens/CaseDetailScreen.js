@@ -85,10 +85,10 @@ export default function CaseDetailScreen({ navigation, route }) {
   }
 
   const hearings = caseDetail?.hearings || [];
-  const upcomingHearings = hearings.filter((hearing) => Number.isFinite(Date.parse(hearing?.date)) && Date.parse(hearing.date) >= clockNow)
+  const upcomingHearings = hearings.filter((hearing) => !hearing?.completedAt && Number.isFinite(Date.parse(hearing?.date)) && Date.parse(hearing.date) >= clockNow)
     .sort((a, b) => Date.parse(a.date) - Date.parse(b.date) || String(a.id).localeCompare(String(b.id)));
-  const recentHearings = hearings.filter((hearing) => Number.isFinite(Date.parse(hearing?.date)) && Date.parse(hearing.date) < clockNow)
-    .sort((a, b) => Date.parse(b.date) - Date.parse(a.date) || String(a.id).localeCompare(String(b.id)));
+  const recentHearings = hearings.filter((hearing) => hearing?.completedAt || (Number.isFinite(Date.parse(hearing?.date)) && Date.parse(hearing.date) < clockNow))
+    .sort((a, b) => Date.parse(b.completedAt || b.date) - Date.parse(a.completedAt || a.date) || String(a.id).localeCompare(String(b.id)));
   const undatedHearings = hearings.filter((hearing) => !Number.isFinite(Date.parse(hearing?.date)));
   const documents = caseDetail?.documents || [];
   const tasks = caseDetail?.tasks || [];

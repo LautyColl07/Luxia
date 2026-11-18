@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import EmptyState from '../components/EmptyState';
 import SharedDatePickerModal from '../components/DatePickerModal';
+import { FilterChip, FilterField, FilterPanel, FilterSection } from '../components/FilterControls';
 import LoadingState from '../components/LoadingState';
 import StatusBadge from '../components/StatusBadge';
 import DocumentPopover from '../components/documents/DocumentPopover';
@@ -146,18 +147,26 @@ export default function CasesScreen({ navigation }) {
           </View>
         </View>
 
-        {showFilters ? <View style={styles.filterPanel}>
-          <Text style={styles.filterLabel}>Estado</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.statusOptions}>
-            {STATUS_OPTIONS.map((option) => <Pressable key={option.value} onPress={() => setFilters((current) => ({ ...current, status: option.value }))} style={[styles.statusChip, filters.status === option.value && styles.statusChipActive]}><Text style={[styles.statusChipText, filters.status === option.value && styles.statusChipTextActive]}>{option.label}</Text></Pressable>)}
-          </ScrollView>
+        {showFilters ? <FilterPanel>
+          <FilterSection label="Estado">
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.statusOptions}>
+              {STATUS_OPTIONS.map((option) => (
+                <FilterChip
+                  key={option.value}
+                  label={option.label}
+                  selected={filters.status === option.value}
+                  onPress={() => setFilters((current) => ({ ...current, status: option.value }))}
+                />
+              ))}
+            </ScrollView>
+          </FilterSection>
           <View style={styles.dateRow}>
-            <DateFilterField label="Desde" value={filters.startDate} onPress={() => setDatePickerField('startDate')} colors={colors} styles={styles} />
-            <DateFilterField label="Hasta" value={filters.endDate} onPress={() => setDatePickerField('endDate')} colors={colors} styles={styles} />
+            <DateFilterField label="Desde" value={filters.startDate} onPress={() => setDatePickerField('startDate')} style={styles.dateField} />
+            <DateFilterField label="Hasta" value={filters.endDate} onPress={() => setDatePickerField('endDate')} style={styles.dateField} />
           </View>
           {filterDateError ? <Text accessibilityRole="alert" style={styles.dateError}>{filterDateError}</Text> : null}
           <View style={styles.filterActions}><Pressable onPress={clearFilters} style={styles.clearButton}><Text style={styles.clearButtonText}>Limpiar</Text></Pressable><Pressable onPress={applyFilters} style={styles.applyButton}><Text style={styles.applyButtonText}>Aplicar filtros</Text></Pressable></View>
-        </View> : null}
+        </FilterPanel> : null}
         <View style={styles.resultsRow}><Text style={styles.resultsText}>{totalItems === 1 ? '1 causa encontrada' : `${totalItems} causas encontradas`}</Text><View style={styles.separator} /></View>
         {error && !cases.length ? <View accessibilityRole="alert" style={styles.inlineError}>
           <View style={styles.inlineErrorCopy}><Text style={styles.inlineErrorTitle}>No pudimos cargar las causas</Text><Text style={styles.inlineErrorText}>{error}</Text></View>
@@ -193,15 +202,14 @@ export default function CasesScreen({ navigation }) {
   );
 }
 
-function DateFilterField({ label, value, onPress, colors, styles }) {
-  return <View style={styles.dateField}>
-    <Text style={styles.filterLabel}>{label}</Text>
-    <Pressable accessibilityRole="button" accessibilityLabel={`${label}: ${value ? formatFilterDate(value) : 'Elegir fecha'}`} onPress={onPress} style={styles.datePickerTrigger}>
-      <MaterialCommunityIcons color={colors.textSecondary} name="calendar-month-outline" size={18} />
-      <Text style={[styles.datePickerText, !value && styles.datePickerPlaceholder]}>{value ? formatFilterDate(value) : 'Elegir fecha'}</Text>
-      <MaterialCommunityIcons color={colors.textMuted} name="chevron-down" size={18} />
-    </Pressable>
-  </View>;
+function DateFilterField({ label, value, onPress, style }) {
+  return (
+    <View style={style}>
+      <FilterSection label={label}>
+        <FilterField label={label} value={value ? formatFilterDate(value) : 'Elegir fecha'} icon="calendar-month-outline" onPress={onPress} />
+      </FilterSection>
+    </View>
+  );
 }
 
 function DatePickerModal({ visible, selectedValue, minDate, maxDate, colors, onClose, onSelect }) {
@@ -316,18 +324,9 @@ const createStyles = (colors, layout, topInset) => StyleSheet.create({
   filterToggleTextActive: { color: colors.primary },
   sortTrigger: { minHeight: 44, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderColor: colors.borderSoft, borderRadius: 14, backgroundColor: colors.card },
   sortText: { color: colors.textSecondary, fontSize: 12 },
-  filterPanel: { width: '100%', minWidth: 0, padding: 15, gap: 11, borderRadius: 17, borderWidth: 1, borderColor: colors.borderSoft, backgroundColor: colors.card },
-  filterLabel: { color: colors.textSecondary, fontSize: 11, fontWeight: '700', letterSpacing: 0.4, textTransform: 'uppercase' },
   statusOptions: { gap: 7, paddingVertical: 2 },
-  statusChip: { paddingHorizontal: 11, paddingVertical: 7, borderRadius: 12, borderWidth: 1, borderColor: colors.borderSoft, backgroundColor: colors.background },
-  statusChipActive: { borderColor: colors.primary, backgroundColor: colors.primary },
-  statusChipText: { color: colors.textSecondary, fontSize: 12 },
-  statusChipTextActive: { color: colors.textOnPrimary, fontWeight: '700' },
   dateRow: { width: '100%', minWidth: 0, flexDirection: layout.isPhone ? 'column' : 'row', gap: 10 },
   dateField: { ...(layout.isPhone ? {} : { flex: 1 }), minWidth: 0, gap: 7 },
-  datePickerTrigger: { width: '100%', minWidth: 0, minHeight: 44, borderRadius: 12, borderWidth: 1, borderColor: colors.borderSoft, backgroundColor: colors.inputBackground, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 9 },
-  datePickerText: { flex: 1, minWidth: 0, flexShrink: 1, color: colors.text, fontSize: 14 },
-  datePickerPlaceholder: { color: colors.textMuted },
   dateError: { color: colors.danger, fontSize: 12, lineHeight: 17 },
   inlineError: { padding: 12, borderRadius: 12, borderWidth: 1, borderColor: colors.danger, backgroundColor: colors.dangerSoft, flexDirection: 'row', alignItems: 'center', gap: 12 },
   inlineErrorCopy: { flex: 1, gap: 3 },

@@ -1,28 +1,36 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import CalendarFilters from '../components/CalendarFilters';
+import { FilterChip, FilterField, FilterSection } from '../components/FilterControls';
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
+import DatePickerModal from '../components/DatePickerModal';
+import StudyMembersDropdown from '../components/StudyMembersDropdown';
+import { TimePickerModal } from './NewHearingScreen';
+import { CASE_COURT_TYPES } from '../constants/caseCourtTypes';
 import { useAuth } from '../context/AuthContext';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
-import { getAllCases, getCaseById, getHearings } from '../services/api';
+import { createCalendarTask, getAllCases, getCaseById, getHearings, getStudyMembers, getTasks, setHearingCompleted, setTaskCompleted } from '../services/api';
 import { useResponsiveLayout } from '../theme/layout';
 import {
   addMonths,
-  AREA_CONFIG,
   buildCalendarEvents,
+  filterCalendarEvents,
   formatAgendaDate,
   formatMonthYear,
   getDateKey,
@@ -35,17 +43,16 @@ import {
 } from '../utils/calendar';
 import { formatTime } from '../utils/date';
 
-const CATEGORY_OPTIONS = [
-  { key: 'all', label: 'Todas' },
-  ...Object.values(AREA_CONFIG)
-    .filter((item) => item.key !== 'general')
-    .map((item) => ({ key: item.key, label: item.label })),
-];
+const DEFAULT_FILTERS = { hearings: true, tasks: true, court: 'all' };
+const EMPTY_MEMBERS = [];
 
-export default function CalendarScreen({ navigation }) {
+export default function CalendarScreen({ navigation, route }) {
   const { colors } = useAppTheme();
   const { authStatus, currentUser, isAuthReady } = useAuth();
-  const { activeContextKey, isHydrated } = useStudyContext();
+  const { activeContextKey, activeContext, activeLegalStudy, isHydrated } = useStudyContext();
+  const canFilterByResponsible = activeContext.type === 'study' &&
+    (activeLegalStudy?.capabilities?.canManageStudy === true || ['ADMIN', 'OWNER'].includes(activeLegalStudy?.role));
+  const studyId = canFilterByResponsible ? activeContext.legalStudyId : null;
   const requestSequenceRef = useRef(0);
   const insets = useSafeAreaInsets();
   const layout = useResponsiveLayout();
@@ -56,11 +63,15 @@ export default function CalendarScreen({ navigation }) {
   const today = useMemo(() => startOfDay(new Date()) || new Date(), []);
   const [calendarMonth, setCalendarMonth] = useState(today);
   const [selectedDate, setSelectedDate] = useState(today);
-  const [selectedArea, setSelectedArea] = useState('all');
   const [showFilters, setShowFilters] = useState(false);
   const [showReviewed, setShowReviewed] = useState(true);
+  const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  const [responsibleFilter, setResponsibleFilter] = useState([]);
+  const [dueDatePickerOpen, setDueDatePickerOpen] = useState(false);
+  const [timePickerTarget, setTimePickerTarget] = useState(null);
+  const [timeDraft, setTimeDraft] = useState({ hour: '09', minute: '00' });
+  const [assignmentMode, setAssignmentMode] = useState('GROUP');
   const [favorites, setFavorites] = useState({});
-  const [reviewed, setReviewed] = useState({});
   const [calendarData, setCalendarData] = useState({
     hearings: [],
     cases: [],
@@ -68,6 +79,61 @@ export default function CalendarScreen({ navigation }) {
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [menuEvent, setMenuEvent] = useState(null);
+  const [taskModalOpen, setTaskModalOpen] = useState(false);
+  const [taskTitle, setTaskTitle] = useState('');
+  const [taskDescription, setTaskDescription] = useState('');
+  const [taskStartTime, setTaskStartTime] = useState('09:00');
+  const [taskEndTime, setTaskEndTime] = useState('09:30');
+  const [taskDueDate, setTaskDueDate] = useState('');
+  const [taskAllDay, setTaskAllDay] = useState(true);
+  const [taskAssignees, setTaskAssignees] = useState([]);
+  const [memberResult, setMemberResult] = useState(null);
+  const [memberReload, setMemberReload] = useState(0);
+  const currentMemberResult = studyId && memberResult?.studyId === studyId ? memberResult : null;
+  const studyMembers = currentMemberResult?.members || EMPTY_MEMBERS;
+  const reloadMembers = () => setMemberReload((count) => count + 1);
+  const memberOptions = {
+    members: studyMembers,
+    loading: !currentMemberResult,
+    error: currentMemberResult?.error,
+    onRetry: reloadMembers,
+  };
+
+  useEffect(() => {
+    setResponsibleFilter([]);
+    setTaskAssignees([]);
+  }, [activeContextKey, studyId]);
+
+  useEffect(() => {
+    setFilters((current) => current.court === 'all' ? current : { ...current, court: 'all' });
+  }, [activeContextKey]);
+
+  useEffect(() => {
+    if (!studyId) {
+      setMemberResult(null);
+      return;
+    }
+
+    let cancelled = false;
+    setMemberResult(null);
+    getStudyMembers(studyId).then((members) => {
+      if (cancelled) return;
+      const activeMembers = members.filter((member) => member.status === 'ACTIVE');
+      setMemberResult({ studyId, members: activeMembers });
+      const ids = new Set(activeMembers.map((member) => String(member.userId)));
+      setResponsibleFilter((selected) => selected.filter((id) => ids.has(id)));
+      setTaskAssignees((selected) => selected.filter((id) => ids.has(id)));
+    }).catch(() => {
+      if (!cancelled) setMemberResult({ studyId, error: true });
+    });
+
+    return () => { cancelled = true; };
+  }, [studyId, memberReload]);
+  useEffect(() => {
+    const date = route?.params?.selectedDate ? startOfDay(route.params.selectedDate) : null;
+    if (date) { setSelectedDate(date); setCalendarMonth(new Date(date.getFullYear(), date.getMonth(), 1)); }
+  }, [route?.params?.selectedDate]);
 
   const loadCalendar = useCallback(async () => {
     if (!isAuthReady || !isHydrated || authStatus !== 'authenticated' || !currentUser) {
@@ -80,14 +146,16 @@ export default function CalendarScreen({ navigation }) {
       setCalendarData({ hearings: [], cases: [], caseDetails: [] });
       setError('');
 
-      const [hearingsResult, casesResult] = await Promise.allSettled([
+      const [hearingsResult, casesResult, tasksResult] = await Promise.allSettled([
         getHearings(),
         getAllCases(),
+        getTasks(),
       ]);
       const hearings = hearingsResult.status === 'fulfilled' ? hearingsResult.value : [];
       const cases = casesResult.status === 'fulfilled' ? casesResult.value : [];
+      const tasks = tasksResult.status === 'fulfilled' ? tasksResult.value : [];
       if (requestSequenceRef.current !== requestId) return;
-      const failedResult = [hearingsResult, casesResult].find(
+      const failedResult = [hearingsResult, casesResult, tasksResult].find(
         (result) => result.status === 'rejected'
       );
 
@@ -118,6 +186,7 @@ export default function CalendarScreen({ navigation }) {
       if (requestSequenceRef.current !== requestId) return;
       setCalendarData({
         hearings: Array.isArray(hearings) ? hearings : [],
+        tasks: Array.isArray(tasks) ? tasks : [],
         cases,
         caseDetails: detailedCases.filter(Boolean),
       });
@@ -146,39 +215,29 @@ export default function CalendarScreen({ navigation }) {
   );
 
   const allEvents = useMemo(() => buildCalendarEvents(calendarData), [calendarData]);
-  const eventsByDate = useMemo(() => groupEventsByDate(allEvents), [allEvents]);
+  const courtTypes = useMemo(() => {
+    const savedTypes = new Set(calendarData.cases.map((item) => item.courtType));
+    return CASE_COURT_TYPES.filter(({ value }) => savedTypes.has(value));
+  }, [calendarData.cases]);
+  const court = courtTypes.some(({ value }) => value === filters.court) ? filters.court : 'all';
+  const filteredEvents = useMemo(() => filterCalendarEvents(allEvents, {
+    ...filters,
+    court,
+    showCompleted: showReviewed,
+    responsibleIds: canFilterByResponsible ? responsibleFilter : [],
+  }), [allEvents, canFilterByResponsible, court, filters, responsibleFilter, showReviewed]);
+  const eventsByDate = useMemo(() => groupEventsByDate(filteredEvents), [filteredEvents]);
   const monthDays = useMemo(() => getMonthMatrix(calendarMonth), [calendarMonth]);
   const weekdayLabels = useMemo(() => getWeekdayLabels(), []);
 
-  const selectedDayEvents = useMemo(() => {
-    const dayKey = getDateKey(selectedDate);
-    const dailyEvents = eventsByDate[dayKey] || [];
-
-    return dailyEvents.filter((event) => {
-      const matchesArea = selectedArea === 'all' || event?.area?.key === selectedArea;
-      const isReviewed = reviewed[event.id];
-
-      if (!showReviewed && isReviewed) {
-        return false;
-      }
-
-      return matchesArea;
-    });
-  }, [eventsByDate, reviewed, selectedArea, selectedDate, showReviewed]);
+  const dayKey = getDateKey(selectedDate);
+  const selectedDayEvents = eventsByDate[dayKey] || [];
+  const dayHasExcludedEvents = !selectedDayEvents.length && allEvents.some((event) => getDateKey(event.date) === dayKey);
 
   const visibleAreas = useMemo(() => {
-    const areaMap = new Map();
-
-    allEvents.forEach((event) => {
-      if (event?.area?.key && !areaMap.has(event.area.key)) {
-        areaMap.set(event.area.key, event.area);
-      }
-    });
-
-    return Object.values(AREA_CONFIG)
-      .filter((area) => area.key !== 'general')
-      .filter((area) => areaMap.has(area.key));
-  }, [allEvents]);
+    const areas = filteredEvents.map((event) => event.area);
+    return [...new Map(areas.map((area) => [area.key, area])).values()];
+  }, [filteredEvents]);
 
   const handleSelectDay = useCallback((day) => {
     setSelectedDate(day);
@@ -191,44 +250,66 @@ export default function CalendarScreen({ navigation }) {
   const handleResetToday = useCallback(() => {
     setCalendarMonth(today);
     setSelectedDate(today);
-    setSelectedArea('all');
-    setShowFilters(false);
   }, [today]);
 
   const handleOpenEventMenu = useCallback((event) => {
-    const buttons = [
-      {
-        text: event?.caseId ? 'Ver causa' : 'Cerrar',
-        onPress: () => {
-          if (event?.caseId) {
-            navigation.navigate('CaseDetail', { caseId: event.caseId });
-          }
-        },
-      },
-      {
-        text: event?.type === 'hearing' ? 'Ir a audiencias' : 'Abrir calendario',
-        onPress: () => {
-          if (event?.type === 'hearing' && event?.caseId) {
-            navigation.navigate('CaseDetail', { caseId: event.caseId });
-            return;
-          }
-
-          setSelectedDate(startOfDay(event?.date) || today);
-        },
-      },
-      { text: 'Cancelar', style: 'cancel' },
-    ];
-
-    Alert.alert(event?.title || 'Evento', 'Selecciona una accion para continuar.', buttons);
-  }, [navigation, today]);
+    setMenuEvent(event);
+  }, []);
 
   const toggleFavorite = useCallback((eventId) => {
     setFavorites((current) => ({ ...current, [eventId]: !current[eventId] }));
   }, []);
 
-  const toggleReviewed = useCallback((eventId) => {
-    setReviewed((current) => ({ ...current, [eventId]: !current[eventId] }));
-  }, []);
+  const toggleReviewed = useCallback(async (event) => {
+    const completed = !event.completed;
+    try {
+      if (event.type === 'hearing') await setHearingCompleted(event.sourceId, completed);
+      else await setTaskCompleted(event.sourceId, completed);
+      await loadCalendar();
+    } catch (error) {
+      Alert.alert('No se pudo guardar', error?.message || 'Intentá nuevamente.');
+    }
+  }, [loadCalendar]);
+
+  const saveTask = useCallback(async () => {
+    if (!taskTitle.trim()) return Alert.alert('Falta el título', 'Ingresá el título de la tarea.');
+    const datePart = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}-${String(selectedDate.getDate()).padStart(2, '0')}`;
+    const validTime = (value) => /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+    if (!taskAllDay && (!validTime(taskStartTime) || !validTime(taskEndTime) || taskEndTime <= taskStartTime)) {
+      return Alert.alert('Horario inválido', 'Ingresá un horario válido y posterior al inicio.');
+    }
+    try {
+      const buildLocalDate = (date, time) => new Date(`${date}T${time}:00`).toISOString();
+      const payload = {
+        title: taskTitle.trim(), description: taskDescription.trim(), allDay: taskAllDay,
+        scheduledAt: buildLocalDate(datePart, taskAllDay ? '12:00' : taskStartTime),
+        ...(taskDueDate ? { dueDate: buildLocalDate(taskDueDate, '23:59') } : {}),
+        ...(!taskAllDay ? { startsAt: buildLocalDate(datePart, taskStartTime), endsAt: buildLocalDate(datePart, taskEndTime) } : {}),
+        timeZone: 'America/Argentina/Buenos_Aires',
+        ...(activeContext?.type === 'study' ? { legalStudyId: activeContext.legalStudyId } : {}),
+        ...(taskAssignees.length ? { assignedToIds: taskAssignees.map(Number), assignmentMode: taskAssignees.length > 1 ? assignmentMode : 'GROUP' } : {}),
+      };
+      await createCalendarTask(payload);
+      setTaskModalOpen(false);
+      setTaskTitle('');
+      setTaskDescription('');
+      setTaskDueDate(''); setTaskAssignees([]); setTaskAllDay(true);
+      await loadCalendar();
+    } catch (error) {
+      Alert.alert('No se pudo guardar', error?.message || 'Intentá nuevamente.');
+    }
+  }, [activeContext, assignmentMode, loadCalendar, selectedDate, taskAllDay, taskAssignees, taskDescription, taskDueDate, taskEndTime, taskStartTime, taskTitle]);
+
+  const openTaskModal = () => {
+    setTaskModalOpen(true);
+    if (currentMemberResult?.error) reloadMembers();
+  };
+
+  const clearFilters = () => {
+    setFilters(DEFAULT_FILTERS);
+    setResponsibleFilter([]);
+    setShowReviewed(true);
+  };
 
   if (loading && !allEvents.length) {
     return (
@@ -362,71 +443,48 @@ export default function CalendarScreen({ navigation }) {
           <View style={styles.agendaIcon}>
             <MaterialCommunityIcons color={colors.primary} name="calendar-blank-outline" size={18} />
           </View>
-          <Text style={styles.agendaTitle}>
-            {formatAgendaDate(selectedDate).toUpperCase()}
+          <Text accessibilityRole="header" style={styles.agendaTitle}>
+            {formatAgendaDate(selectedDate)}
           </Text>
         </View>
 
         <View style={styles.agendaActions}>
-          <Pressable
-            onPress={() => setShowFilters((current) => !current)}
-            style={[styles.iconButton, showFilters && styles.iconButtonActive]}
-          >
-            <MaterialCommunityIcons
-              color={showFilters ? colors.textOnPrimary : colors.primary}
-              name="filter-variant"
-              size={18}
-            />
-          </Pressable>
-          <Pressable onPress={handleResetToday} style={styles.iconButton}>
-            <MaterialCommunityIcons color={colors.primary} name="history" size={18} />
-          </Pressable>
-          <Pressable
+          <AgendaAction label="Crear tarea" icon="plus" active onPress={openTaskModal} colors={colors} styles={styles} />
+          <AgendaAction label="Filtros" icon="filter-variant" active={showFilters} expanded={showFilters} onPress={() => setShowFilters((current) => !current)} colors={colors} styles={styles} />
+          <AgendaAction label="Ir a hoy" icon="history" onPress={handleResetToday} colors={colors} styles={styles} />
+          <AgendaAction
+            label={showReviewed ? 'Ocultar finalizados' : 'Mostrar finalizados'}
+            icon={showReviewed ? 'eye-off-outline' : 'eye-outline'}
             onPress={() => setShowReviewed((current) => !current)}
-            style={[styles.iconButton, !showReviewed && styles.iconButtonActive]}
-          >
-            <MaterialCommunityIcons
-              color={!showReviewed ? colors.textOnPrimary : colors.primary}
-              name="format-list-bulleted"
-              size={18}
-            />
-          </Pressable>
+            colors={colors}
+            styles={styles}
+          />
         </View>
       </View>
 
       {showFilters ? (
-        <View style={styles.filterPanel}>
-          {CATEGORY_OPTIONS.filter((item) => item.key === 'all' || visibleAreas.some((area) => area.key === item.key)).map((item) => (
-            <Pressable
-              key={item.key}
-              onPress={() => setSelectedArea(item.key)}
-              style={[
-                styles.filterChip,
-                selectedArea === item.key && styles.filterChipActive,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.filterChipText,
-                  selectedArea === item.key && styles.filterChipTextActive,
-                ]}
-              >
-                {item.label}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+        <CalendarFilters
+          key={activeContextKey}
+          filters={{ ...filters, court }}
+          courtTypes={courtTypes}
+          onChange={(changes) => setFilters((current) => ({ ...current, ...changes }))}
+          responsible={canFilterByResponsible ? {
+            ...memberOptions,
+            selected: responsibleFilter,
+            onSelect: setResponsibleFilter,
+          } : null}
+        />
       ) : null}
 
       {selectedDayEvents.length ? (
         selectedDayEvents.map((event) => {
           const isFavorite = Boolean(favorites[event.id]);
-          const isReviewed = Boolean(reviewed[event.id]);
+          const isReviewed = event.completed;
 
           return (
             <View key={event.id} style={styles.eventCard}>
               <Pressable
-                onPress={() => toggleReviewed(event.id)}
+                onPress={() => toggleReviewed(event)}
                 style={[styles.checkbox, isReviewed && styles.checkboxActive]}
               >
                 {isReviewed ? (
@@ -450,6 +508,7 @@ export default function CalendarScreen({ navigation }) {
                 </View>
                 <Text style={styles.eventMeta}>{event.caseTitle}</Text>
                 <Text style={styles.eventMeta}>{event.court}</Text>
+                {canFilterByResponsible ? <Text style={styles.eventMeta}>Responsables: {(event.responsibleUsers || []).map((user) => user.name).join(', ') || 'Sin asignar'}</Text> : null}
               </View>
 
               <View style={styles.eventActions}>
@@ -469,18 +528,123 @@ export default function CalendarScreen({ navigation }) {
         })
       ) : (
         <EmptyState
-          actionLabel="Registrar audiencia"
+          actionLabel={dayHasExcludedEvents ? 'Limpiar filtros' : 'Registrar audiencia'}
           icon="calendar-remove-outline"
-          message="No hay eventos registrados para la fecha seleccionada."
-          onAction={() => navigation.navigate('NewHearing')}
-          title="Agenda sin actividad"
+          message={dayHasExcludedEvents ? 'Ningún evento de este día coincide con los filtros actuales.' : 'No hay eventos registrados para la fecha seleccionada.'}
+          onAction={dayHasExcludedEvents ? clearFilters : () => navigation.navigate('NewHearing')}
+          title={dayHasExcludedEvents ? 'Sin resultados' : 'Agenda sin actividad'}
         />
       )}
+      <Modal transparent animationType="fade" visible={Boolean(menuEvent)} onRequestClose={() => setMenuEvent(null)}>
+        <Pressable accessibilityRole="button" onPress={() => setMenuEvent(null)} style={styles.menuBackdrop}>
+          <View accessibilityRole="menu" style={styles.eventMenu}>
+            <Text style={styles.menuTitle}>{menuEvent?.title}</Text>
+            {menuEvent?.caseId ? <Pressable accessibilityRole="menuitem" onPress={() => { const event = menuEvent; setMenuEvent(null); navigation.navigate('CaseDetail', { caseId: event.caseId }); }} style={styles.menuOption}><Text style={styles.menuOptionText}>Ver causa</Text></Pressable> : null}
+            <Pressable accessibilityRole="menuitem" onPress={() => { const event = menuEvent; setMenuEvent(null); if (event?.type === 'hearing' && event?.caseId) { navigation.navigate('CaseDetail', { caseId: event.caseId, hearingId: event.sourceId }); return; } setSelectedDate(startOfDay(event?.date) || today); }} style={styles.menuOption}><Text style={styles.menuOptionText}>{menuEvent?.type === 'hearing' ? 'Ir a audiencias' : 'Abrir calendario'}</Text></Pressable>
+            <Pressable accessibilityRole="menuitem" onPress={() => setMenuEvent(null)} style={styles.menuOption}><Text style={styles.menuOptionText}>Cancelar</Text></Pressable>
+          </View>
+        </Pressable>
+      </Modal>
+      <Modal transparent animationType="fade" visible={taskModalOpen} onRequestClose={() => setTaskModalOpen(false)}>
+        <View style={styles.menuBackdrop}>
+          <ScrollView nestedScrollEnabled contentContainerStyle={styles.taskModalContent} keyboardShouldPersistTaps="handled">
+            <View style={styles.eventMenu}>
+              <Text style={styles.menuTitle}>Nueva tarea · {formatAgendaDate(selectedDate)}</Text>
+              <TextInput onChangeText={setTaskTitle} placeholder="Título" placeholderTextColor={colors.textMuted} style={styles.taskInput} value={taskTitle} />
+              <TextInput multiline onChangeText={setTaskDescription} placeholder="Descripción" placeholderTextColor={colors.textMuted} style={[styles.taskInput, styles.taskDescription]} value={taskDescription} />
+              <Pressable accessibilityRole="checkbox" aria-checked={taskAllDay} onPress={() => setTaskAllDay((value) => !value)} style={[styles.menuOption, styles.allDayControl]}>
+                <View style={[styles.checkbox, styles.allDayCheckbox, taskAllDay && styles.checkboxActive]}>
+                  {taskAllDay ? <MaterialCommunityIcons color={colors.textOnPrimary} name="check" size={14} /> : null}
+                </View>
+                <Text style={styles.menuOptionText}>Todo el día</Text>
+              </Pressable>
+              {!taskAllDay ? (
+                <View style={styles.taskTimeRow}>
+                  <Pressable accessibilityRole="button" onPress={() => { setTimeDraft({ hour: taskStartTime.slice(0, 2), minute: taskStartTime.slice(3, 5) }); setTimePickerTarget('start'); }} style={[styles.taskInput, styles.taskTimeField]}>
+                    <Text style={styles.menuOptionText}>Inicio · {taskStartTime}</Text>
+                  </Pressable>
+                  <Pressable accessibilityRole="button" onPress={() => { setTimeDraft({ hour: taskEndTime.slice(0, 2), minute: taskEndTime.slice(3, 5) }); setTimePickerTarget('end'); }} style={[styles.taskInput, styles.taskTimeField]}>
+                    <Text style={styles.menuOptionText}>Fin · {taskEndTime}</Text>
+                  </Pressable>
+                </View>
+              ) : null}
+              <FilterField
+                label="Vencimiento"
+                value={taskDueDate ? `Vencimiento · ${taskDueDate}` : 'Elegir vencimiento'}
+                icon="clock-outline"
+                expanded={dueDatePickerOpen}
+                onPress={() => setDueDatePickerOpen(true)}
+              />
+              {canFilterByResponsible ? (
+                <FilterSection label="Asignar responsables">
+                  <StudyMembersDropdown
+                    key={activeContextKey}
+                    {...memberOptions}
+                    label="Asignar responsables"
+                    emptyLabel="Elegir integrantes"
+                    selected={taskAssignees}
+                    onSelect={setTaskAssignees}
+                  />
+                  {taskAssignees.length > 1 ? (
+                    <View style={styles.assignmentModes}>
+                      <FilterChip label="Individual" selected={assignmentMode === 'INDIVIDUAL'} onPress={() => setAssignmentMode('INDIVIDUAL')} />
+                      <FilterChip label="En grupo" selected={assignmentMode === 'GROUP'} onPress={() => setAssignmentMode('GROUP')} />
+                    </View>
+                  ) : null}
+                </FilterSection>
+              ) : null}
+              <View style={styles.taskModalActions}>
+                <Pressable accessibilityRole="button" onPress={saveTask} style={[styles.menuOption, { backgroundColor: colors.primary }]}>
+                  <Text style={styles.taskActionText}>Guardar tarea</Text>
+                </Pressable>
+                <Pressable accessibilityRole="button" onPress={() => setTaskModalOpen(false)} style={[styles.menuOption, { backgroundColor: colors.danger }]}>
+                  <Text style={styles.taskActionText}>Cancelar</Text>
+                </Pressable>
+              </View>
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
+      <DatePickerModal visible={dueDatePickerOpen} selectedValue={taskDueDate} colors={colors} onClose={() => setDueDatePickerOpen(false)} onSelect={(value) => { setTaskDueDate(value); setDueDatePickerOpen(false); }} />
+      <TimePickerModal visible={Boolean(timePickerTarget)} value={timeDraft} colors={colors} onChange={setTimeDraft} onClose={() => setTimePickerTarget(null)} onConfirm={() => { const value = `${timeDraft.hour}:${timeDraft.minute}`; timePickerTarget === 'start' ? setTaskStartTime(value) : setTaskEndTime(value); setTimePickerTarget(null); }} />
     </ScrollView>
   );
 }
 
+function AgendaAction({ label, icon, active, expanded, onPress, colors, styles }) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <Pressable
+      accessibilityLabel={label}
+      accessibilityRole="button"
+      aria-expanded={expanded}
+      onBlur={() => setFocused(false)}
+      onFocus={() => setFocused(true)}
+      onPress={onPress}
+      style={({ pressed }) => [styles.actionTextButton, active && styles.actionActive, (focused || pressed) && styles.actionFocus]}
+    >
+      <MaterialCommunityIcons color={active ? colors.text : colors.textSecondary} name={icon} size={18} />
+      <Text style={styles.actionText}>{label}</Text>
+    </Pressable>
+  );
+}
+
 const createStyles = (colors, layout, topInset) => StyleSheet.create({
+  menuBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', padding: 24 },
+  eventMenu: { width: '100%', maxWidth: 520, alignSelf: 'center', backgroundColor: colors.card, borderColor: colors.borderSoft, borderWidth: 1, borderRadius: 18, padding: 18, gap: 8 },
+  menuTitle: { color: colors.text, fontSize: 18, fontWeight: '800', marginBottom: 4 },
+  menuOption: { minHeight: 46, justifyContent: 'center', paddingHorizontal: 12, borderRadius: 10, backgroundColor: colors.cardAlt },
+  menuOptionText: { color: colors.text, fontSize: 15, fontWeight: '700' },
+  taskModalContent: { flexGrow: 1, justifyContent: 'center' },
+  taskInput: { minHeight: 46, color: colors.text, backgroundColor: colors.cardAlt, borderRadius: 10, borderWidth: 1, borderColor: colors.borderSoft, paddingHorizontal: 12 },
+  taskDescription: { minHeight: 84, textAlignVertical: 'top', paddingTop: 12 },
+  allDayControl: { flexDirection: 'row', justifyContent: 'flex-start', alignItems: 'center', gap: 10 },
+  allDayCheckbox: { marginTop: 0 },
+  taskTimeRow: { flexDirection: 'row', gap: 8 },
+  taskTimeField: { flex: 1, minWidth: 0, justifyContent: 'center' },
+  assignmentModes: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  taskModalActions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 12, marginTop: 8 },
+  taskActionText: { color: colors.textOnPrimary, fontSize: 15, fontWeight: '700' },
   screen: {
     flex: 1,
     backgroundColor: colors.backgroundAlt,
@@ -679,16 +843,13 @@ const createStyles = (colors, layout, topInset) => StyleSheet.create({
     borderColor: colors.borderSoft,
     paddingHorizontal: 14,
     paddingVertical: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    alignItems: 'stretch',
     gap: 12,
   },
   agendaHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    flex: 1,
   },
   agendaIcon: {
     width: 28,
@@ -699,59 +860,33 @@ const createStyles = (colors, layout, topInset) => StyleSheet.create({
     justifyContent: 'center',
   },
   agendaTitle: {
-    flex: 1,
+    flexShrink: 1,
     color: colors.text,
     fontSize: 15,
     fontWeight: '800',
+    textTransform: 'uppercase',
   },
   agendaActions: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  iconButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.borderSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.card,
-  },
-  iconButtonActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  filterPanel: {
-    backgroundColor: colors.card,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: colors.borderSoft,
-    padding: 12,
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
   },
-  filterChip: {
-    borderRadius: 999,
+  actionTextButton: {
+    minHeight: 44,
+    maxWidth: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.borderSoft,
-    backgroundColor: colors.backgroundAlt,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    backgroundColor: colors.background,
   },
-  filterChipActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  filterChipText: {
-    color: colors.legendText,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  filterChipTextActive: {
-    color: colors.textOnPrimary,
-  },
+  actionText: { flexShrink: 1, color: colors.text, fontSize: 13, fontWeight: '700' },
+  actionActive: { backgroundColor: colors.accentStrong, borderColor: colors.primary },
+  actionFocus: { borderColor: colors.focusRing },
   eventCard: {
     backgroundColor: colors.card,
     borderRadius: 18,

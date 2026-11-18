@@ -201,6 +201,7 @@ export default function DashboardScreen({ navigation }) {
     tareasPendientes: 0,
   };
   const proximasAudiencias = data?.proximasAudiencias || [];
+  const tareasHoy = data?.tareasHoy || [];
   const nombreUsuario = getUserDisplayName(data?.usuario, currentUser);
   const userInitials = getUserInitials(data?.usuario, currentUser);
   const luxContext = useMemo(
@@ -342,9 +343,9 @@ export default function DashboardScreen({ navigation }) {
 
           <LuxAssistantBanner isActive={isFocused && !isLuxVisible} onPress={handleOpenLux} />
 
-          <View style={styles.hearingsSection}>
+          <View style={styles.summarySection}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Próximas audiencias</Text>
+              <Text accessibilityRole="header" style={styles.sectionTitle}>Próximas audiencias</Text>
               <Pressable
                 accessibilityRole="button"
                 onPress={handleOpenCalendar}
@@ -374,6 +375,42 @@ export default function DashboardScreen({ navigation }) {
                   <MaterialCommunityIcons color={colors.primary} name="calendar-plus" size={17} />
                   <Text style={styles.emptyActionText}>Programar audiencia</Text>
                 </Pressable>
+              </View>
+            )}
+          </View>
+
+          <View style={styles.summarySection}>
+            <View style={styles.sectionHeader}>
+              <Text accessibilityRole="header" style={styles.sectionTitle}>Tareas de hoy</Text>
+            </View>
+            {tareasHoy.length ? (
+              tareasHoy.map((task, index) => (
+                <View key={task.id}>
+                  {index > 0 ? <View style={styles.taskSeparator} /> : null}
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => navigation.navigate('MainTabs', {
+                      screen: 'Calendario',
+                      params: { selectedDate: task.scheduledAt || task.dueDate },
+                    })}
+                    style={({ focused, hovered, pressed }) => [
+                      styles.taskRow,
+                      (hovered || pressed) && styles.taskRowHighlighted,
+                      focused && styles.focused,
+                    ]}
+                  >
+                    <MaterialCommunityIcons aria-hidden color={colors.primary} name="checkbox-marked-circle-outline" size={20} />
+                    <View style={styles.taskCopy}>
+                      <Text style={styles.taskTitle}>{task.title}</Text>
+                      <Text style={styles.taskDescription}>{task.description || 'Tarea pendiente'}</Text>
+                    </View>
+                    <MaterialCommunityIcons aria-hidden color={colors.legendText} name="chevron-right" size={22} />
+                  </Pressable>
+                </View>
+              ))
+            ) : (
+              <View style={styles.emptySection}>
+                <Text style={styles.emptyText}>No hay tareas pendientes para hoy</Text>
               </View>
             )}
           </View>
@@ -575,7 +612,7 @@ const createStyles = (colors, layout, topInset, isDark) => StyleSheet.create({
     borderLeftWidth: 1,
     borderLeftColor: colors.borderSoft
   },
-  hearingsSection: {
+  summarySection: {
     backgroundColor: colors.card,
     borderRadius: 16,
     paddingHorizontal: layout.isCompact ? 10 : 14,
@@ -584,9 +621,11 @@ const createStyles = (colors, layout, topInset, isDark) => StyleSheet.create({
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    alignContent: 'center',
     justifyContent: 'space-between',
     flexWrap: 'wrap',
     columnGap: 6,
+    minHeight: 51,
     paddingTop: 5,
     paddingBottom: 2
   },
@@ -635,6 +674,39 @@ const createStyles = (colors, layout, topInset, isDark) => StyleSheet.create({
     color: colors.primary,
     fontSize: 12,
     fontWeight: '600'
+  },
+  taskRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: layout.isCompact ? 8 : 12,
+    paddingVertical: 13,
+    borderWidth: 1,
+    borderColor: 'transparent',
+    borderRadius: 8
+  },
+  taskRowHighlighted: {
+    backgroundColor: colors.accent
+  },
+  taskSeparator: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.borderSoft
+  },
+  taskCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2
+  },
+  taskTitle: {
+    color: colors.text,
+    fontSize: layout.isCompact ? 13 : 15,
+    lineHeight: 20,
+    fontWeight: '700'
+  },
+  taskDescription: {
+    color: colors.legendText,
+    fontSize: 12,
+    lineHeight: 17
   },
   activityShortcut: {
     flexDirection: 'row',
