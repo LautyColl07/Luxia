@@ -3,6 +3,10 @@ const STATUS_LABELS = {
   active: 'Activa',
   pendiente: 'Pendiente',
   pending: 'Pendiente',
+  en_curso: 'En Curso',
+  encurso: 'En Curso',
+  sin_fecha: 'Sin fecha',
+  sinfecha: 'Sin fecha',
   finalizada: 'Finalizada',
   finalized: 'Finalizada',
   archivada: 'Archivada',
@@ -47,12 +51,15 @@ export function getStatusTone(status) {
     case 'Activa':
     case 'Confirmada':
       return 'success';
+    case 'En Curso':
+      return 'warning';
     case 'Pendiente':
     case 'Programada':
     case 'En proceso':
     case 'En revision':
       return 'warning';
     case 'Archivada':
+    case 'Sin fecha':
       return 'neutral';
     case 'Finalizada':
       return 'danger';

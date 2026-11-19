@@ -51,6 +51,28 @@ function loadApi(fetchImplementation, { browser = false, FormDataConstructor = F
       if (request === 'firebase/auth') return { signOut: async () => undefined };
       if (request === '../data/mockData') return [];
       if (request === '../utils/status') return { normalizeStatusLabel: (value) => value || 'Pendiente' };
+      if (request === '../utils/apiError') {
+        return {
+          normalizeApiErrorPayload: (data, error) => ({
+            code: data?.errorCode ?? data?.code ?? data?.error?.code ?? error?.code ?? null,
+            message: typeof data === 'string'
+              ? data
+              : typeof data?.error === 'string'
+                ? data.error
+                : data?.error?.message ?? data?.message ?? error?.message ?? null,
+          }),
+        };
+      }
+      if (request === '../utils/studyInvitationStatus') {
+        return {
+          requirePendingStudyInvitation: (invitation) => {
+            if (!invitation || invitation.status !== 'PENDING') {
+              throw Object.assign(new Error('Estado de invitación inválido.'), { code: 'INVITATION_STATE_UNAVAILABLE' });
+            }
+            return invitation;
+          },
+        };
+      }
       if (request === '../utils/userDisplay') {
         return {
           getUserDisplayName: () => 'Usuario',

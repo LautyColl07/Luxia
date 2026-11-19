@@ -198,6 +198,40 @@ test('getAllCases recorre todas las paginas, no duplica y preserva IDs string', 
   assert.ok(cases.every((item) => typeof item.id === 'string'));
 });
 
+test('getCaseById normaliza grupos nuevos, alias antiguo y audiencias canónicas sin duplicar IDs', async () => {
+  const payloads = [
+    {
+      id: 42,
+      hearings: [{ id: 1, title: 'Una audiencia', date: '2026-11-18T10:00:00.000Z' }],
+      inProgressHearings: [
+        { id: 1, title: 'Una audiencia', date: '2026-11-18T10:00:00.000Z' },
+        { id: 2, title: 'Otra audiencia', date: '2026-11-19T10:00:00.000Z' },
+      ],
+      upcomingHearings: [{ id: 3, title: 'Próxima audiencia', date: '2026-11-20T10:00:00.000Z' }],
+      recentHearings: [{ id: 4, title: 'Finalizada', completedAt: '2026-11-18T11:00:00.000Z' }],
+      documents: [],
+    },
+    {
+      id: 43,
+      hearings: [],
+      overdueHearings: [{ id: 5, title: 'Audiencia de versión anterior', date: '2026-11-18T10:00:00.000Z' }],
+      documents: [],
+    },
+  ];
+  let requestIndex = 0;
+  const api = loadApi(async () => jsonResponse(200, payloads[requestIndex++]));
+  api.setAuthState('authenticated');
+
+  const current = await api.getCaseById(42);
+  const legacy = await api.getCaseById(43);
+
+  assert.deepEqual(current.inProgressHearings.map(({ id }) => id), [1, 2]);
+  assert.strictEqual(current.overdueHearings, current.inProgressHearings);
+  assert.deepEqual(Array.from(current.hearings, ({ id }) => id), [1, 2, 3, 4]);
+  assert.deepEqual(Array.from(legacy.inProgressHearings, ({ id }) => id), [5]);
+  assert.deepEqual(Array.from(legacy.hearings, ({ id }) => id), [5]);
+});
+
 test('errores 401, 403 y 500 se propagan; no se convierten en una lista vacia', async () => {
   for (const status of [401, 403, 500]) {
     const api = loadApi(async () => jsonResponse(status, { error: 'error de prueba' }));
@@ -619,11 +653,16 @@ test('el centro vuelve a cargar al enfocarse y el calendario consume cada salto 
   assert.match(center, /loadSequenceRef\.current !== requestId/);
   assert.match(center, /centerContextKey === requestContextKey/);
   assert.match(center, /hasCurrentContextData \? center : \{ pendingTasks: \[\], notifications: \[\], notificationCount: 0, evaluatedAt: null \}/);
+  assert.match(center, /const \[pendingExpanded, setPendingExpanded\] = useState\(true\)/);
+  assert.match(center, /const \[upcomingExpanded, setUpcomingExpanded\] = useState\(true\)/);
+  assert.match(center, /setPendingExpanded\(true\);\s*setOverdueExpanded\(false\);\s*setUpcomingExpanded\(true\)/);
+  assert.match(center, /expanded=\{pendingExpanded\}/);
+  assert.match(center, /expanded=\{upcomingExpanded\}/);
   assert.match(center, /notificationIntentId: intentId/);
   assert.match(center, /task\.isOverdue === true/);
   assert.match(center, /Tareas vencidas/);
-  assert.match(center, /accessibilityState=\{\{ expanded: overdueExpanded \}\}/);
-  assert.match(center, /isFocusedRef\.current = true;\s*setOverdueExpanded\(false\);/);
+  assert.match(center, /accessibilityState=\{\{ expanded \}\}/);
+  assert.match(center, /isFocusedRef\.current = true;\s*setPendingExpanded\(true\);\s*setOverdueExpanded\(false\);/);
   assert.match(center, /getHearingDayMessage\(notification\.title \|\| 'Audiencia próxima', notification\.date, visibleCenter\.evaluatedAt\)/);
   assert.match(center, /navigation\.navigate\('CaseDetail',/);
   assert.match(center, /hearingId: notification\.hearingId/);
@@ -641,12 +680,37 @@ test('el centro vuelve a cargar al enfocarse y el calendario consume cada salto 
 
 test('las audiencias abren el detalle en su sección y despliegan el elemento señalado', () => {
   const detail = fs.readFileSync(path.join(root, 'src/screens/CaseDetailScreen.js'), 'utf8');
-  assert.match(detail, /scrollRef\.current\?\.scrollTo\(\{ y: Math\.max\(0, upcomingSectionY - 24\), animated: true \}\)/);
+  assert.match(detail, /scrollRef\.current\?\.scrollTo\(\{ y: Math\.max\(0, hearingListY \+ cardY - 24\), animated: true \}\)/);
   assert.match(detail, /navigation\.setParams\(\{ hearingId: undefined, notificationIntentId: undefined \}\)/);
-  assert.match(detail, /notificationIntentId \|\| `\$\{caseId\}:\$\{hearingIdIntent\}`/);
-  assert.match(detail, /setUpcomingSectionY\(null\)[\s\S]*?consumedHearingIntentRef\.current = null[\s\S]*?\[caseId\]/);
-  assert.match(detail, /String\(highlightedHearingId\) === String\(hearing\?\.id\)/);
+  assert.match(detail, /notificationIntentId \|\| String\(caseId\) \+ ':' \+ String\(hearingIdIntent\)/);
+  assert.match(detail, /hearingLayoutsRef\.current\.clear\(\)[\s\S]*?consumedHearingIntentRef\.current = null[\s\S]*?\[caseId\]/);
+  assert.match(detail, /String\(highlightedHearingId\) === hearingKey/);
+  assert.match(detail, /hearingSections\.flatMap/);
+  assert.match(detail, /key=\{'hearing-' \+ hearingKey\}/);
   assert.match(detail, /hearingHighlight/);
+});
+
+test('Notificaciones y detalle ofrecen desplegables accesibles con valores iniciales por grupo', () => {
+  const center = fs.readFileSync(path.join(root, 'src/screens/NotificationCenterScreen.js'), 'utf8');
+  const detail = fs.readFileSync(path.join(root, 'src/screens/CaseDetailScreen.js'), 'utf8');
+  const panel = fs.readFileSync(path.join(root, 'src/components/HearingRecordingPanel.js'), 'utf8');
+
+  assert.match(center, /function NotificationSectionToggle/);
+  assert.match(center, /accessibilityState=\{\{ expanded \}\}/);
+  assert.match(center, /expanded=\{pendingExpanded\}/);
+  assert.match(center, /expanded=\{upcomingExpanded\}/);
+  assert.match(detail, /key: 'inProgress',[\s\S]*?key: 'upcoming',[\s\S]*?key: 'recent'/);
+  assert.match(detail, /const defaultTranscriptionExpanded = section\.key === 'inProgress'/);
+  assert.match(detail, /transcriptionExpandedByHearing\[hearingKey\] \?\? defaultTranscriptionExpanded/);
+  assert.match(detail, /onToggleTranscription/);
+  assert.match(detail, /onActivityChange=\{handleHearingActivityChange\}/);
+  assert.match(detail, /!visible && styles\.hiddenHearingCard/);
+  assert.match(panel, /accessibilityLabel=\{transcriptionExpanded \? 'Ocultar transcripción' : 'Mostrar transcripción'\}/);
+  assert.match(panel, /hasOperationToExpose/);
+  assert.match(panel, /Cancelar inicio/);
+  assert.match(panel, /Reintentar envío/);
+  assert.doesNotMatch(panel, /canStartRecording/);
+  assert.match(panel, /browser\.isSecureContext === false/);
 });
 
 test('el calendario prioriza la fecha agendada y usa el vencimiento como respaldo', () => {
@@ -766,9 +830,11 @@ test('la navegación web marca el inicio y asocia pantallas secundarias con su s
   assert.match(sidebar, /\['InvitacionesEstudio', 'LuxMemory'\]\.includes\(activeRoute\)/);
   assert.match(sidebar, /borderColor: colors\.gold/);
   assert.match(detail, /accessibilityState=\{\{ expanded \}\}/);
-  assert.match(detail, /Ocultar audiencias recientes/);
-  assert.match(detail, /Audiencias vencidas sin finalizar/);
-  assert.match(detail, /completedAt \? 'Finalizada'/);
+  assert.match(detail, /Audiencias en Curso/);
+  assert.match(detail, /status = sectionKey === 'inProgress'[\s\S]*?'En Curso'/);
+  assert.match(detail, /status=\{status\}/);
+  assert.match(detail, /Audiencias Recientes/);
+  assert.doesNotMatch(detail, /Audiencias vencidas sin finalizar/);
   assert.match(detail, /completedHearingBackground/);
   assert.match(colors, /completedHearingBackground: '#4A151B'/);
   assert.match(colors, /completedHearingText: '#FF8A91'/);

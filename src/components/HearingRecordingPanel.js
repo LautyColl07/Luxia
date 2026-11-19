@@ -10,6 +10,7 @@ import {
 } from 'expo-audio';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import ActionFeedbackModal from './ActionFeedbackModal';
 import { API_ROOT_URL } from '../config/api';
@@ -48,7 +49,16 @@ function getErrorMessage(error, fallback) {
   );
 }
 
-export default function HearingRecordingPanel({ caseDetail, hearing, onDocumentsChanged, onViewDocuments, canTranscribe = true, canStartRecording = true }) {
+export default function HearingRecordingPanel({
+  caseDetail,
+  hearing,
+  onDocumentsChanged,
+  onViewDocuments,
+  canTranscribe = true,
+  transcriptionExpanded = false,
+  onToggleTranscription,
+  onActivityChange,
+}) {
   const { colors } = useAppTheme();
   const { width: viewportWidth } = useWindowDimensions();
   const compactLayout = viewportWidth < 640;
@@ -129,6 +139,7 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
   const hearingId = hearing?.id ?? hearing?.audienciaId ?? hearing?.hearingId;
   const hasTranscript = Boolean(transcriptText.trim());
   const hasActiveSession = transcriptInfo?.status === 'recording' && Boolean(transcriptInfo?.sessionId);
+  const hasOperationToExpose = isStarting || isRecording || isFinishing || hasActiveSession || pendingChunkCount > 0 || isQueueBlocked;
   const showProgress = isStarting || isFinishing || isUploadingAudio || isTranscribing || isGeneratingPdf;
   const canDownloadPdf = Boolean(transcriptInfo?.pdfAvailable && transcriptInfo?.downloadUrl);
   const canGeneratePdf = Boolean(
@@ -199,6 +210,10 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
   useEffect(() => {
     void refreshTranscript();
   }, [refreshTranscript]);
+
+  useEffect(() => {
+    onActivityChange?.(String(hearingId), hasOperationToExpose);
+  }, [hasOperationToExpose, hearingId, onActivityChange]);
 
   const waitForChunkEnd = useCallback(
     () =>
@@ -322,6 +337,12 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
     try {
       setIsStarting(true);
       setStatusText('Solicitando acceso al micrófono...');
+      if (Platform.OS === 'web') {
+        const browser = globalThis;
+        if (browser.isSecureContext === false || !browser.navigator?.mediaDevices?.getUserMedia) {
+          throw new Error('Para grabar en el navegador, abrí Luxia desde HTTPS o desde http://localhost y habilitá el acceso al micrófono.');
+        }
+      }
       const permission = await requestRecordingPermissionsAsync();
 
       if (!permission.granted) {
@@ -679,105 +700,127 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
             {canTranscribe ? 'Grabá la audiencia y visualizá la transcripción en tiempo real.' : 'Podés consultar la transcripción; solo los abogados responsables pueden iniciar una nueva.'}
           </Text>
         </View>
-      </View>
-
-      <View style={styles.buttonGrid}>
-        {canStartRecording || isRecording || isStarting || hasActiveSession ? <ActionButton
-          disabled={!canTranscribe || isRecording || isStarting || isFinishing || hasActiveSession || pendingChunkCount > 0}
-          label={isStarting ? 'Iniciando...' : 'Iniciar grabación'}
-          onPress={() => void handleStartRecording()}
-          styles={styles}
-          variant="primary"
-        /> : null}
-        <ActionButton
-          disabled={!canTranscribe || (!isRecording && !isStarting && !hasActiveSession) || isFinishing}
-          label={
-            isStarting
-              ? 'Cancelar inicio'
-              : isFinishing
-                ? 'Deteniendo...'
-                : isRecording
-                  ? 'Detener grabación'
-                  : 'Finalizar y guardar'
-          }
-          onPress={() => void handleStopRecording()}
-          styles={styles}
-          variant="secondary"
-        />
-        <ActionButton
-          disabled={!canTranscribe || isRecording || isStarting || isFinishing || isUploadingAudio || isTranscribing || isGeneratingPdf}
-          label={isUploadingAudio ? 'Subiendo...' : 'Subir audio'}
-          onPress={() => void handleUploadAudio()}
-          styles={styles}
-          variant="secondary"
-        />
-      </View>
-
-      {isQueueBlocked && pendingChunkCount > 0 ? (
-        <View style={styles.buttonGrid}>
-          <ActionButton
-            disabled={isTranscribing || isFinishing}
-            label={`Reintentar envío (${pendingChunkCount})`}
-            onPress={() => void retryQueueRef.current?.()}
-            styles={styles}
-            variant="secondary"
+        <Pressable
+          accessibilityLabel={transcriptionExpanded ? 'Ocultar transcripción' : 'Mostrar transcripción'}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: transcriptionExpanded }}
+          onPress={onToggleTranscription}
+          style={({ focused, pressed }) => [
+            styles.transcriptionToggle,
+            focused && styles.transcriptionToggleFocused,
+            pressed && styles.buttonPressed,
+          ]}
+        >
+          <MaterialCommunityIcons
+            color={colors.primary}
+            name={transcriptionExpanded ? 'chevron-up' : 'chevron-down'}
+            size={18}
           />
-        </View>
-      ) : null}
+          <Text style={styles.transcriptionToggleText}>
+            {transcriptionExpanded ? 'Ocultar transcripción' : 'Mostrar transcripción'}
+          </Text>
+        </Pressable>
+      </View>
 
-      {showProgress ? (
-        <View style={styles.progressBlock}>
-          <Text style={styles.progressText}>{statusText}</Text>
-          <View style={styles.progressTrack}>
-            <View style={styles.progressFill} />
-          </View>
-        </View>
-      ) : (
-        <Text style={styles.panelStatus}>
-          {loadingTranscript ? 'Cargando transcripción...' : statusText}
-        </Text>
-      )}
-
-      {pendingChunkCount > 0 ? (
-        <Text style={styles.panelStatus}>
-          {pendingChunkCount} bloque(s) en cola de transcripción.
-        </Text>
-      ) : null}
-
-      {selectedAudio ? (
-        <View style={[styles.selectedAudio, compactLayout && styles.selectedAudioCompact]}>
-          <View style={styles.selectedAudioIcon}>
-            <Text style={styles.selectedAudioIconText}>♫</Text>
-          </View>
-          <View style={styles.selectedAudioCopy}>
-            <Text numberOfLines={1} style={styles.selectedAudioName}>{selectedAudio.name}</Text>
-            <Text style={styles.selectedAudioMeta}>
-              {selectedAudio.mimeType} · {selectedAudio.size ? `${Math.ceil(selectedAudio.size / 1024 / 1024)} MB` : 'archivo seleccionado'}
-            </Text>
-          </View>
-          <View style={[styles.transcribeButtonWrap, compactLayout && styles.transcribeButtonWrapCompact]}>
+      {transcriptionExpanded ? (
+        <View style={styles.transcriptionContent}>
+          <View style={styles.buttonGrid}>
             <ActionButton
-              disabled={!canTranscribe || isTranscribing || isUploadingAudio || selectedAudio.status === 'transcribed'}
-              label={isTranscribing ? 'Transcribiendo...' : 'Transcribir'}
-              onPress={() => void handleTranscribeUploadedAudio()}
+              disabled={!canTranscribe || isRecording || isStarting || isFinishing || hasActiveSession || pendingChunkCount > 0}
+              label={isStarting ? 'Iniciando...' : 'Iniciar grabación'}
+              onPress={() => void handleStartRecording()}
               styles={styles}
               variant="primary"
             />
+            <ActionButton
+              disabled={!canTranscribe || (!isRecording && !isStarting && !hasActiveSession) || isFinishing}
+              label={
+                isStarting
+                  ? 'Cancelar inicio'
+                  : isFinishing
+                    ? 'Deteniendo...'
+                    : isRecording
+                      ? 'Detener grabación'
+                      : 'Finalizar y guardar'
+              }
+              onPress={() => void handleStopRecording()}
+              styles={styles}
+              variant="secondary"
+            />
+            <ActionButton
+              disabled={!canTranscribe || isRecording || isStarting || isFinishing || isUploadingAudio || isTranscribing || isGeneratingPdf}
+              label={isUploadingAudio ? 'Subiendo...' : 'Subir audio'}
+              onPress={() => void handleUploadAudio()}
+              styles={styles}
+              variant="secondary"
+            />
           </View>
-        </View>
-      ) : null}
 
-      <View style={styles.transcriptPreview}>
-        <Text style={styles.previewTitle}>Vista previa de la transcripción</Text>
-        <View style={styles.documentBox}>
-          <Text style={[styles.transcriptText, !hasTranscript && styles.placeholderText]}>
-            {hasTranscript ? transcriptText : 'Todavía no hay transcripción disponible.'}
-          </Text>
-        </View>
-      </View>
+          {isQueueBlocked && pendingChunkCount > 0 ? (
+            <View style={styles.buttonGrid}>
+              <ActionButton
+                disabled={isTranscribing || isFinishing}
+                label={`Reintentar envío (${pendingChunkCount})`}
+                onPress={() => void retryQueueRef.current?.()}
+                styles={styles}
+                variant="secondary"
+              />
+            </View>
+          ) : null}
 
-      {hasTranscript ? (
-        <View style={styles.pdfActions}>
+          {showProgress ? (
+            <View style={styles.progressBlock}>
+              <Text style={styles.progressText}>{statusText}</Text>
+              <View style={styles.progressTrack}>
+                <View style={styles.progressFill} />
+              </View>
+            </View>
+          ) : (
+            <Text style={styles.panelStatus}>
+              {loadingTranscript ? 'Cargando transcripción...' : statusText}
+            </Text>
+          )}
+
+          {pendingChunkCount > 0 ? (
+            <Text style={styles.panelStatus}>
+              {pendingChunkCount} bloque(s) en cola de transcripción.
+            </Text>
+          ) : null}
+
+          {selectedAudio ? (
+            <View style={[styles.selectedAudio, compactLayout && styles.selectedAudioCompact]}>
+              <View style={styles.selectedAudioIcon}>
+                <Text style={styles.selectedAudioIconText}>♫</Text>
+              </View>
+              <View style={styles.selectedAudioCopy}>
+                <Text numberOfLines={1} style={styles.selectedAudioName}>{selectedAudio.name}</Text>
+                <Text style={styles.selectedAudioMeta}>
+                  {selectedAudio.mimeType} · {selectedAudio.size ? `${Math.ceil(selectedAudio.size / 1024 / 1024)} MB` : 'archivo seleccionado'}
+                </Text>
+              </View>
+              <View style={[styles.transcribeButtonWrap, compactLayout && styles.transcribeButtonWrapCompact]}>
+                <ActionButton
+                  disabled={!canTranscribe || isTranscribing || isUploadingAudio || selectedAudio.status === 'transcribed'}
+                  label={isTranscribing ? 'Transcribiendo...' : 'Transcribir'}
+                  onPress={() => void handleTranscribeUploadedAudio()}
+                  styles={styles}
+                  variant="primary"
+                />
+              </View>
+            </View>
+          ) : null}
+
+          <View style={styles.transcriptPreview}>
+            <Text style={styles.previewTitle}>Vista previa de la transcripción</Text>
+            <View style={styles.documentBox}>
+              <Text style={[styles.transcriptText, !hasTranscript && styles.placeholderText]}>
+                {hasTranscript ? transcriptText : 'Todavía no hay transcripción disponible.'}
+              </Text>
+            </View>
+          </View>
+
+          {hasTranscript ? (
+            <View style={styles.pdfActions}>
           <ActionButton
             disabled={!canTranscribe || isGeneratingPdf || !canGeneratePdf}
             label={isGeneratingPdf ? 'Guardando PDF...' : 'Guardar transcripción en PDF'}
@@ -793,6 +836,52 @@ export default function HearingRecordingPanel({ caseDetail, hearing, onDocuments
               styles={styles}
               variant="secondary"
             />
+          ) : null}
+            </View>
+          ) : null}
+        </View>
+      ) : hasOperationToExpose ? (
+        <View style={styles.activeRecordingControls}>
+          <View style={styles.buttonGrid}>
+            <ActionButton
+              disabled={!canTranscribe || (!isRecording && !isStarting && !hasActiveSession) || isFinishing}
+              label={
+                isStarting
+                  ? 'Cancelar inicio'
+                  : isFinishing
+                    ? 'Deteniendo...'
+                    : isRecording
+                      ? 'Detener grabación'
+                      : 'Finalizar y guardar'
+              }
+              onPress={() => void handleStopRecording()}
+              styles={styles}
+              variant="secondary"
+            />
+            {isQueueBlocked && pendingChunkCount > 0 ? (
+              <ActionButton
+                disabled={isTranscribing || isFinishing}
+                label={`Reintentar envío (${pendingChunkCount})`}
+                onPress={() => void retryQueueRef.current?.()}
+                styles={styles}
+                variant="secondary"
+              />
+            ) : null}
+          </View>
+          {showProgress ? (
+            <View style={styles.progressBlock}>
+              <Text style={styles.progressText}>{statusText}</Text>
+              <View style={styles.progressTrack}>
+                <View style={styles.progressFill} />
+              </View>
+            </View>
+          ) : (
+            <Text style={styles.panelStatus}>{statusText}</Text>
+          )}
+          {pendingChunkCount > 0 ? (
+            <Text style={styles.panelStatus}>
+              {pendingChunkCount} bloque(s) en cola de transcripción.
+            </Text>
           ) : null}
         </View>
       ) : null}
@@ -837,6 +926,8 @@ const createStyles = (colors) => StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
     gap: 10,
   },
   recordingIndicator: {
@@ -851,6 +942,37 @@ const createStyles = (colors) => StyleSheet.create({
   },
   headerCopy: {
     flex: 1,
+    minWidth: 150,
+  },
+  transcriptionToggle: {
+    minHeight: 40,
+    maxWidth: '100%',
+    borderWidth: 2,
+    borderColor: 'transparent',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    backgroundColor: colors.accentSoft,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  transcriptionToggleFocused: {
+    borderColor: colors.focusRing,
+  },
+  transcriptionToggleText: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  buttonPressed: {
+    opacity: 0.75,
+  },
+  transcriptionContent: {
+    gap: 14,
+  },
+  activeRecordingControls: {
+    gap: 10,
   },
   panelTitle: {
     color: colors.text,

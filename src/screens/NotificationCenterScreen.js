@@ -32,7 +32,9 @@ export default function NotificationCenterScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [pendingExpanded, setPendingExpanded] = useState(true);
   const [overdueExpanded, setOverdueExpanded] = useState(false);
+  const [upcomingExpanded, setUpcomingExpanded] = useState(true);
   const loadSequenceRef = useRef(0);
   const navigationIntentSequenceRef = useRef(0);
   const isFocusedRef = useRef(false);
@@ -41,7 +43,9 @@ export default function NotificationCenterScreen({ navigation }) {
   const visibleCenter = hasCurrentContextData ? center : { pendingTasks: [], notifications: [], notificationCount: 0, evaluatedAt: null };
 
   useEffect(() => {
+    setPendingExpanded(true);
     setOverdueExpanded(false);
+    setUpcomingExpanded(true);
   }, [requestContextKey]);
 
   const loadCenter = useCallback(async (isRefresh = false) => {
@@ -84,7 +88,9 @@ export default function NotificationCenterScreen({ navigation }) {
   useFocusEffect(
     useCallback(() => {
       isFocusedRef.current = true;
+      setPendingExpanded(true);
       setOverdueExpanded(false);
+      setUpcomingExpanded(true);
       void loadCenter();
       return () => {
         isFocusedRef.current = false;
@@ -164,38 +170,35 @@ export default function NotificationCenterScreen({ navigation }) {
       ) : null}
 
       <View style={styles.section}>
-        <View style={styles.sectionHeading}>
-          <View style={styles.sectionIcon}>
-            <MaterialCommunityIcons color={colors.primary} name="checkbox-marked-circle-auto-outline" size={20} />
-          </View>
-          <Text accessibilityRole="header" style={styles.sectionTitle}>Tareas pendientes</Text>
-          <Text style={styles.count}>{visibleCenter.pendingTasks.length}</Text>
-        </View>
-        {upcomingTasks.length ? (
+        <NotificationSectionToggle
+          count={visibleCenter.pendingTasks.length}
+          expanded={pendingExpanded}
+          icon="checkbox-marked-circle-auto-outline"
+          label="Tareas pendientes"
+          onPress={() => setPendingExpanded((expanded) => !expanded)}
+          styles={styles}
+          tint={colors.primary}
+        />
+        {pendingExpanded && upcomingTasks.length ? (
           <View style={styles.list}>
             {upcomingTasks.map((task) => <TaskRow key={task.id} task={task} colors={colors} styles={styles} onPress={() => openTaskInCalendar(task)} />)}
           </View>
-        ) : (
+        ) : pendingExpanded ? (
           <EmptyState title="No hay tareas próximas a vencer" message="Las tareas vencidas aparecen en la lista desplegable de abajo." icon="check-all" />
-        )}
+        ) : null}
       </View>
 
       {overdueTasks.length ? (
         <View style={styles.section}>
-          <Pressable
-            accessibilityLabel={`${overdueExpanded ? 'Ocultar' : 'Mostrar'} ${overdueTasks.length} tareas vencidas`}
-            accessibilityRole="button"
-            accessibilityState={{ expanded: overdueExpanded }}
+          <NotificationSectionToggle
+            count={overdueTasks.length}
+            expanded={overdueExpanded}
+            icon="alert-circle-outline"
+            label="Tareas vencidas"
             onPress={() => setOverdueExpanded((expanded) => !expanded)}
-            style={({ focused, pressed }) => [styles.sectionHeading, focused && styles.toggleFocused, pressed && styles.pressed]}
-          >
-            <View style={styles.sectionIcon}>
-              <MaterialCommunityIcons color={colors.danger} name="alert-circle-outline" size={20} />
-            </View>
-            <Text accessibilityRole="header" style={styles.sectionTitle}>Tareas vencidas</Text>
-            <Text style={styles.count}>{overdueTasks.length}</Text>
-            <MaterialCommunityIcons color={colors.textSecondary} name={overdueExpanded ? 'chevron-up' : 'chevron-down'} size={20} />
-          </Pressable>
+            styles={styles}
+            tint={colors.danger}
+          />
           {overdueExpanded ? (
             <View style={styles.list}>
               {overdueTasks.map((task) => <TaskRow key={task.id} task={task} overdue colors={colors} styles={styles} onPress={() => openTaskInCalendar(task)} />)}
@@ -205,14 +208,16 @@ export default function NotificationCenterScreen({ navigation }) {
       ) : null}
 
       <View style={styles.section}>
-        <View style={styles.sectionHeading}>
-          <View style={styles.sectionIcon}>
-            <MaterialCommunityIcons color={colors.gold} name="bell-ring-outline" size={20} />
-          </View>
-          <Text accessibilityRole="header" style={styles.sectionTitle}>Próximas audiencias</Text>
-          <Text style={styles.count}>{visibleCenter.notifications.length}</Text>
-        </View>
-        {visibleCenter.notifications.length ? (
+        <NotificationSectionToggle
+          count={visibleCenter.notifications.length}
+          expanded={upcomingExpanded}
+          icon="bell-ring-outline"
+          label="Próximas audiencias"
+          onPress={() => setUpcomingExpanded((expanded) => !expanded)}
+          styles={styles}
+          tint={colors.gold}
+        />
+        {upcomingExpanded && visibleCenter.notifications.length ? (
           <View style={styles.list}>
             {visibleCenter.notifications.map((notification) => (
               <Pressable
@@ -234,11 +239,30 @@ export default function NotificationCenterScreen({ navigation }) {
               </Pressable>
             ))}
           </View>
-        ) : (
+        ) : upcomingExpanded ? (
           <EmptyState title="No hay próximas audiencias" message="Las audiencias de los próximos siete días aparecerán acá." icon="bell-check-outline" />
-        )}
+        ) : null}
       </View>
     </ScrollView>
+  );
+}
+
+export function NotificationSectionToggle({ count, expanded, icon, label, onPress, styles, tint }) {
+  return (
+    <Pressable
+      accessibilityLabel={(expanded ? 'Ocultar ' : 'Mostrar ') + label + ', ' + count + ' elementos'}
+      accessibilityRole="button"
+      accessibilityState={{ expanded }}
+      onPress={onPress}
+      style={({ focused, pressed }) => [styles.sectionHeading, styles.sectionToggle, focused && styles.toggleFocused, pressed && styles.pressed]}
+    >
+      <View style={styles.sectionIcon}>
+        <MaterialCommunityIcons color={tint} name={icon} size={20} />
+      </View>
+      <Text style={styles.sectionTitle}>{label}</Text>
+      <Text style={styles.count}>{count}</Text>
+      <MaterialCommunityIcons color={tint} name={expanded ? 'chevron-up' : 'chevron-down'} size={20} />
+    </Pressable>
   );
 }
 
@@ -302,6 +326,7 @@ const createStyles = (colors, layout) => StyleSheet.create({
     backgroundColor: colors.card,
   },
   sectionHeading: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  sectionToggle: { minHeight: 44, borderWidth: 2, borderColor: 'transparent', borderRadius: 14, padding: 2 },
   sectionIcon: {
     width: 38,
     height: 38,

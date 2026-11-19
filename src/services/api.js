@@ -425,10 +425,28 @@ function normalizeCase(caseItem) {
   const createdAt = normalizeDateValue(source.createdAt ?? source.fechaCreacion ?? source.fechaAlta ?? source.fecha);
   const defaultCase = { id: source.id, title, court };
   const rawHearings = toArray(source.hearings ?? source.audiencias);
-  const hearings = rawHearings.map((item) => normalizeHearing(item, { defaultCase }));
-  const upcomingHearings = toArray(source.upcomingHearings ?? source.proximasAudiencias).map((item) => normalizeHearing(item, { defaultCase }));
-  const recentHearings = toArray(source.recentHearings ?? source.audienciasRecientes).map((item) => normalizeHearing(item, { defaultCase }));
+  const inProgressHearings = toArray(source.inProgressHearings ?? source.overdueHearings ?? source.audienciasEnCurso)
+    .map((item) => normalizeHearing(item, { defaultCase }));
+  const upcomingHearings = toArray(source.upcomingHearings ?? source.proximasAudiencias)
+    .map((item) => normalizeHearing(item, { defaultCase }));
+  const recentHearings = toArray(source.recentHearings ?? source.audienciasRecientes)
+    .map((item) => normalizeHearing(item, { defaultCase }));
   const undatedHearings = toArray(source.undatedHearings ?? source.audienciasSinFecha).map((item) => normalizeHearing(item, { defaultCase }));
+  const normalizedHearingCandidates = [
+    ...rawHearings.map((item) => normalizeHearing(item, { defaultCase })),
+    ...inProgressHearings,
+    ...upcomingHearings,
+    ...recentHearings,
+    ...undatedHearings,
+  ];
+  const seenHearingIds = new Set();
+  const hearings = normalizedHearingCandidates.filter((hearing) => {
+    if (hearing.id == null) return true;
+    const id = String(hearing.id);
+    if (seenHearingIds.has(id)) return false;
+    seenHearingIds.add(id);
+    return true;
+  });
   const nestedDocuments = rawHearings.flatMap((hearing) =>
     toArray(hearing.files ?? hearing.documents ?? hearing.documentos ?? hearing.archivos).map((item) =>
       normalizeDocument(
@@ -464,6 +482,8 @@ function normalizeCase(caseItem) {
     fecha: createdAt,
     hearings,
     audiencias: hearings,
+    inProgressHearings,
+    overdueHearings: inProgressHearings,
     upcomingHearings,
     recentHearings,
     undatedHearings,
