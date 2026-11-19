@@ -323,12 +323,17 @@ test('el contexto global llega a causas, audiencias, documentos y dashboard', as
 test('las respuestas tardías de dos estudios no reemplazan el último contexto seleccionado', async () => {
   const pending = new Map();
   const calls = [];
-  const api = loadApi((url) => new Promise((resolve) => {
+  const api = loadApi((url) => {
+    if (String(url).includes('/notificaciones/centro')) {
+      return Promise.resolve(jsonResponse(200, { pendingTasks: [], notifications: [] }));
+    }
+    return new Promise((resolve) => {
     const query = new URL(url).searchParams;
     const key = query.get('scope') === 'study' ? query.get('legalStudyId') : 'personal';
     calls.push(String(url));
     pending.set(key, resolve);
-  }));
+    });
+  });
   api.setAuthState('authenticated');
 
   const personalPromise = api.getDashboardBootstrap();
@@ -542,6 +547,95 @@ test('al cambiar de cuenta se invalida el resumen personal en caché', async () 
   const next = await api.getDashboardBootstrap();
   assert.equal(summaries, 2);
   assert.equal(next.resumen.metricas.causasActivas, 2);
+});
+
+test('el centro solicita notificaciones en el contexto activo y alimenta el contador de Inicio', async () => {
+  const calls = [];
+  const api = loadApi(async (url, options) => {
+    calls.push({ url: String(url), authorization: options.headers.Authorization });
+    if (String(url).includes('/dashboard/resumen')) {
+      return jsonResponse(200, { usuario: { nombre: 'Usuario' }, metricas: {}, proximasAudiencias: [] });
+    }
+    return jsonResponse(200, {
+      pendingTasks: [],
+      notifications: [{ id: 'hearing-reminder:4' }, { id: 'hearing-reminder:5' }],
+    });
+  });
+  api.setAuthState('authenticated');
+  api.setApiWorkContext({ type: 'study', legalStudyId: 'study-a' });
+
+  const bootstrap = await api.getDashboardBootstrap();
+  const center = await api.getNotificationCenter({ context: { type: 'study', legalStudyId: 'study-a' } });
+
+  assert.equal(bootstrap.notificationCount, 2);
+  assert.deepEqual(JSON.parse(JSON.stringify(center)), {
+    pendingTasks: [],
+    notifications: [{ id: 'hearing-reminder:4' }, { id: 'hearing-reminder:5' }],
+  });
+  assert.equal(calls.filter(({ url }) => url.includes('/notificaciones/centro')).length, 2);
+  assert.ok(calls.every(({ url }) => url.includes('scope=study&legalStudyId=study-a')));
+  assert.ok(calls.every(({ authorization }) => authorization === 'Bearer test-token'));
+});
+
+test('la campana abre Notificaciones y el avatar mantiene el acceso a Más', () => {
+  const dashboard = fs.readFileSync(path.join(root, 'src/screens/DashboardScreen.js'), 'utf8');
+  const navigator = fs.readFileSync(path.join(root, 'src/navigation/DashboardNavigator.js'), 'utf8');
+  const header = fs.readFileSync(path.join(root, 'src/components/WebHeader.js'), 'utf8');
+  assert.match(dashboard, /const handleNotificationsPress = useCallback\(\(\) => \{\s*navigation\.navigate\('Notificaciones'\)/);
+  assert.match(dashboard, /const handleProfilePress = useCallback\(\(\) => \{\s*navigation\.navigate\('Mas'\)/);
+  assert.match(dashboard, /onPress=\{handleNotificationsPress\}[\s\S]*?name="bell-outline"/);
+  assert.match(dashboard, /accessibilityLabel="Ver mi perfil"[\s\S]*?onPress=\{handleProfilePress\}/);
+  assert.match(navigator, /<Stack\.Screen component=\{NotificationCenterScreen\} name="Notificaciones"/);
+  assert.match(header, /Notificaciones: 'Notificaciones'/);
+});
+
+test('el centro vuelve a cargar al enfocarse y el calendario consume cada salto una sola vez', () => {
+  const center = fs.readFileSync(path.join(root, 'src/screens/NotificationCenterScreen.js'), 'utf8');
+  const calendar = fs.readFileSync(path.join(root, 'src/screens/CalendarScreen.js'), 'utf8');
+  assert.match(center, /useFocusEffect\([\s\S]*?void loadCenter\(\)/);
+  assert.match(center, /force: true,[\s\S]*?context: activeContext/);
+  assert.match(center, /loadSequenceRef\.current !== requestId/);
+  assert.match(center, /centerContextKey === requestContextKey/);
+  assert.match(center, /hasCurrentContextData \? center : \{ pendingTasks: \[\], notifications: \[\] \}/);
+  assert.match(center, /notificationIntentId: intentId/);
+  assert.match(calendar, /consumedCalendarIntentRef\.current === intentId/);
+  assert.match(calendar, /navigation\.setParams\(\{ selectedDate: undefined, selectedTaskId: undefined, notificationIntentId: undefined \}\)/);
+  assert.match(calendar, /setFilters\(DEFAULT_FILTERS\)/);
+  assert.match(calendar, /String\(event\.sourceId\) === String\(notificationTaskId\)/);
+});
+
+test('el calendario prioriza la fecha agendada y usa el vencimiento como respaldo', () => {
+  const filename = path.join(root, 'src/utils/calendar.js');
+  const transformed = babel.transformSync(fs.readFileSync(filename, 'utf8'), {
+    filename,
+    plugins: ['@babel/plugin-transform-modules-commonjs'],
+  }).code;
+  const module = { exports: {} };
+  vm.runInNewContext(transformed, {
+    Date,
+    Intl,
+    JSON,
+    Map,
+    Math,
+    Number,
+    Object,
+    String,
+    module,
+    exports: module.exports,
+    require: (request) => {
+      if (request === '../constants/caseCourtTypes.js') return { getCaseCourtType: () => '' };
+      throw new Error(`Modulo no esperado: ${request}`);
+    },
+  });
+
+  const { buildCalendarEvents, getTaskCalendarDate } = module.exports;
+  const scheduled = '2026-12-02T14:30:00.000Z';
+  const due = '2026-12-05T23:00:00.000Z';
+  assert.equal(getTaskCalendarDate({ scheduledAt: scheduled, dueDate: due }), scheduled);
+  assert.equal(getTaskCalendarDate({ scheduledAt: null, dueDate: due }), due);
+  assert.equal(getTaskCalendarDate({}), null);
+  const [event] = buildCalendarEvents({ tasks: [{ id: 10, title: 'Presentar escrito', scheduledAt: scheduled, dueDate: due }] });
+  assert.equal(event.date, scheduled);
 });
 
 test('Inicio controla el selector; otras pantallas no muestran selectores redundantes', () => {

@@ -142,6 +142,10 @@ export default function DashboardScreen({ navigation }) {
   }, [loadDashboard, refreshLegalStudies]);
 
   const handleNotificationsPress = useCallback(() => {
+    navigation.navigate('Notificaciones');
+  }, [navigation]);
+
+  const handleProfilePress = useCallback(() => {
     navigation.navigate('Mas');
   }, [navigation]);
 
@@ -279,7 +283,7 @@ export default function DashboardScreen({ navigation }) {
             </Text>
             <View style={styles.heroActions}>
               <Pressable
-                accessibilityLabel={notificationCount > 0 ? `Notificaciones: ${notificationCount} sin leer` : 'Notificaciones'}
+                accessibilityLabel={notificationCount > 0 ? `Notificaciones: ${notificationCount} avisos` : 'Notificaciones'}
                 accessibilityRole="button"
                 onPress={handleNotificationsPress}
                 style={({ focused, pressed }) => [
@@ -298,7 +302,7 @@ export default function DashboardScreen({ navigation }) {
               <Pressable
                 accessibilityLabel="Ver mi perfil"
                 accessibilityRole="button"
-                onPress={handleNotificationsPress}
+                onPress={handleProfilePress}
                 style={({ focused, pressed }) => [
                   styles.avatar,
                   focused && styles.heroButtonFocused,

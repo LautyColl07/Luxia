@@ -21,9 +21,11 @@ export default function WebSidebar({ activeRoute = 'Inicio', currentUser, onNavi
   const navItems = legalStudies.some((study) => study.role === 'ADMIN')
     ? [...NAV_ITEMS, { label: 'Administración', route: 'AdministracionEstudio', icon: 'office-building-cog-outline' }]
     : NAV_ITEMS;
-  const selectedRoute = ['InvitacionesEstudio', 'LuxMemory'].includes(activeRoute)
-    ? 'Mas'
-    : activeRoute;
+  const selectedRoute = activeRoute === 'Notificaciones'
+    ? 'Inicio'
+    : ['InvitacionesEstudio', 'LuxMemory'].includes(activeRoute)
+      ? 'Mas'
+      : activeRoute;
 
   return (
     <View style={[styles.sidebar, collapsed && styles.sidebarCollapsed]}>

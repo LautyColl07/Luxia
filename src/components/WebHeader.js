@@ -5,6 +5,7 @@ import { useAppTheme } from '../context/ThemeContext';
 
 const SECTION_LABELS = {
   Inicio: 'Panel principal',
+  Notificaciones: 'Notificaciones',
   Causas: 'Expedientes y seguimiento',
   Calendario: 'Agenda judicial',
   Documentos: 'Repositorio documental',

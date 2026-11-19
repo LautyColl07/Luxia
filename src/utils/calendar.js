@@ -83,6 +83,10 @@ export function startOfDay(value) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
+export function getTaskCalendarDate(task = {}) {
+  return task.scheduledAt || task.dueDate || null;
+}
+
 export function getDateKey(value) {
   const date = toDate(value);
 
@@ -211,11 +215,11 @@ export function buildCalendarEvents({ hearings = [], tasks = [], caseDetails = [
     }));
   });
 
-  const taskEvents = tasks.filter((task) => task?.scheduledAt || task?.dueDate).map((task) => ({
+  const taskEvents = tasks.filter((task) => getTaskCalendarDate(task)).map((task) => ({
     id: `task-${task.id}`,
     sourceId: task.id,
     type: 'task',
-    date: task.scheduledAt || task.dueDate,
+    date: getTaskCalendarDate(task),
     title: task.title || 'Tarea sin título',
     caseId: task.caseId,
     caseTitle: task.case?.title || 'Tarea',

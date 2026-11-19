@@ -14,6 +14,7 @@ import DocumentsScreen from '../screens/DocumentsScreen';
 import LiveTranscriptionScreen from '../screens/LiveTranscriptionScreen';
 import LuxMemoryScreen from '../screens/LuxMemoryScreen';
 import MoreScreen from '../screens/MoreScreen';
+import NotificationCenterScreen from '../screens/NotificationCenterScreen';
 import StudyAdministrationScreen from '../screens/StudyAdministrationScreen';
 import StudyInvitationsScreen from '../screens/StudyInvitationsScreen';
 import NewCaseScreen from '../screens/NewCaseScreen';
@@ -110,6 +111,7 @@ export default function DashboardNavigator() {
       }}
     >
       <Stack.Screen component={DashboardTabs} name="MainTabs" options={{ headerShown: false }} />
+      <Stack.Screen component={NotificationCenterScreen} name="Notificaciones" options={{ title: 'Notificaciones' }} />
       <Stack.Screen
         component={ActivityHistoryScreen}
         name="ActivityHistory"

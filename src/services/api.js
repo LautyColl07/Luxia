@@ -18,6 +18,7 @@ export const API_BASE_URL = CONFIG_API_BASE_URL;
 export const FILE_BASE_URL = API_ROOT_URL;
 
 let authToken = null;
+let authCacheUserId = auth?.currentUser?.uid ?? null;
 let authState = 'initializing';
 let mockStore = JSON.parse(JSON.stringify(mockData));
 let mockStudyInvitations = [];
@@ -37,6 +38,7 @@ const PROTECTED_ENDPOINT_PREFIXES = [
   '/audiencias',
   '/hearings',
   '/documentos',
+  '/notificaciones',
   '/tasks',
   '/legal-studies',
   '/lux/chat',
@@ -47,7 +49,6 @@ const PROTECTED_ENDPOINT_PREFIXES = [
 ];
 const DASHBOARD_BOOTSTRAP_CACHE_MS = 1200;
 let dashboardResumenInFlight = null;
-let notificationsInFlight = null;
 let dashboardBootstrapInFlight = null;
 let workContextEpoch = 0;
 const caseRequestsInFlight = new Map();
@@ -1017,10 +1018,14 @@ export async function request(endpoint, options = {}) {
 }
 
 export function setAuthToken(token) {
+  const currentUserId = auth?.currentUser?.uid ?? null;
+  if (authCacheUserId !== currentUserId) setScopedCacheDirty();
+  authCacheUserId = currentUserId;
   authToken = token;
 }
 
 export function setAuthState(nextState) {
+  if (authState !== nextState) setScopedCacheDirty();
   authState = nextState;
 }
 
@@ -1741,6 +1746,7 @@ export async function createHearing(data) {
     });
 
     mockStore.hearings = [...mockStore.hearings, newHearing];
+    setScopedCacheDirty();
     return simulateDelay(newHearing);
   }
 
@@ -1754,6 +1760,7 @@ export async function createHearing(data) {
         : {}),
     },
   });
+  setScopedCacheDirty();
 
   return normalizeHearing({
     ...response,
@@ -2423,18 +2430,48 @@ export async function getNotifications(options = {}) {
   if (USE_MOCKS) {
     return simulateDelay([...mockStore.notifications]);
   }
+  const response = await request(withWorkScope('/notificaciones'), {
+    timeout: DATA_REQUEST_TIMEOUT_MS,
+  });
+  return Array.isArray(response) ? response : [];
+}
 
-  if (!options.force && notificationsInFlight) {
-    return notificationsInFlight;
+export async function getNotificationCenter(options = {}) {
+  if (USE_MOCKS) {
+    const now = Date.now();
+    const nextWeek = now + 7 * 24 * 60 * 60 * 1000;
+    const pendingTasks = mockStore.tasks
+      .filter((task) => !task.completedAt && task.status !== 'Finalizada' && !task.completed)
+      .map((task) => normalizeTask(task))
+      .sort((first, second) => {
+        const firstDue = first.dueDate ? new Date(first.dueDate).getTime() : Number.MAX_SAFE_INTEGER;
+        const secondDue = second.dueDate ? new Date(second.dueDate).getTime() : Number.MAX_SAFE_INTEGER;
+        return firstDue - secondDue || Number(first.id) - Number(second.id);
+      });
+    const notifications = mockStore.hearings
+      .filter((hearing) => {
+        const date = new Date(hearing.date).getTime();
+        return !hearing.completedAt && date >= now && date < nextWeek;
+      })
+      .map((hearing) => ({
+        id: `hearing-reminder:${hearing.id}`,
+        type: 'HEARING_REMINDER',
+        title: safeString(hearing.title ?? hearing.titulo, 'Audiencia sin título'),
+        hearingId: hearing.id,
+        caseId: hearing.caseId ?? null,
+        caseTitle: mockStore.cases.find((caseItem) => String(caseItem.id) === String(hearing.caseId))?.title || 'Causa sin referencia',
+        date: normalizeDateValue(hearing.date),
+      }))
+      .sort((first, second) => new Date(first.date).getTime() - new Date(second.date).getTime() || Number(first.hearingId) - Number(second.hearingId));
+    return simulateDelay({ pendingTasks, notifications });
   }
 
-  // The current backend does not expose /api/v1/notificaciones. Keep this
-  // optional UI section local until that backend contract exists.
-  notificationsInFlight = Promise.resolve([]).finally(() => {
-    notificationsInFlight = null;
-  });
-
-  return notificationsInFlight;
+  const requestedContext = options.context || activeWorkContext;
+  const contextQuery = requestedContext?.type === 'study' && requestedContext?.legalStudyId
+    ? { scope: 'study', legalStudyId: requestedContext.legalStudyId }
+    : { scope: 'personal' };
+  const endpoint = appendQueryParams('/notificaciones/centro', contextQuery);
+  return request(endpoint, { timeout: options.timeout ?? DATA_REQUEST_TIMEOUT_MS });
 }
 
 export async function sendLuxMessage(message, context = {}, requestOptions = {}) {
@@ -2675,14 +2712,16 @@ export async function getDashboardBootstrap(options = {}) {
   const contextKey = getWorkContextKey();
   const epoch = workContextEpoch;
   const pending = (async () => {
-    const [resumen, notifications] = await Promise.all([
+    const [resumen, notificationCenter] = await Promise.all([
       getDashboardResumen(options),
-      getNotifications(options).catch(() => []),
+      getNotificationCenter(options).catch(() => ({ notifications: [] })),
     ]);
 
     const data = {
       resumen,
-      notificationCount: notifications.filter((item) => !item.read).length,
+      notificationCount: Array.isArray(notificationCenter?.notifications)
+        ? notificationCenter.notifications.length
+        : 0,
     };
 
     if (getWorkContextKey() === contextKey && workContextEpoch === epoch) lastDashboardBootstrap = { data, timestamp: Date.now() };

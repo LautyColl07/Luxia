@@ -54,6 +54,7 @@ export default function CalendarScreen({ navigation, route }) {
     (activeLegalStudy?.capabilities?.canManageStudy === true || ['ADMIN', 'OWNER'].includes(activeLegalStudy?.role));
   const studyId = canFilterByResponsible ? activeContext.legalStudyId : null;
   const requestSequenceRef = useRef(0);
+  const consumedCalendarIntentRef = useRef(null);
   const insets = useSafeAreaInsets();
   const layout = useResponsiveLayout();
   const styles = useMemo(
@@ -77,6 +78,7 @@ export default function CalendarScreen({ navigation, route }) {
     cases: [],
     caseDetails: [],
   });
+  const [notificationTaskId, setNotificationTaskId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [menuEvent, setMenuEvent] = useState(null);
@@ -132,8 +134,22 @@ export default function CalendarScreen({ navigation, route }) {
   }, [studyId, memberReload]);
   useEffect(() => {
     const date = route?.params?.selectedDate ? startOfDay(route.params.selectedDate) : null;
-    if (date) { setSelectedDate(date); setCalendarMonth(new Date(date.getFullYear(), date.getMonth(), 1)); }
-  }, [route?.params?.selectedDate]);
+    const intentId = route?.params?.notificationIntentId;
+    if (intentId && consumedCalendarIntentRef.current === intentId) return;
+
+    if (date) {
+      setSelectedDate(date);
+      setCalendarMonth(new Date(date.getFullYear(), date.getMonth(), 1));
+    }
+    if (intentId) {
+      consumedCalendarIntentRef.current = intentId;
+      setNotificationTaskId(route?.params?.selectedTaskId ?? null);
+      setFilters(DEFAULT_FILTERS);
+      setResponsibleFilter([]);
+      setShowReviewed(true);
+      navigation.setParams({ selectedDate: undefined, selectedTaskId: undefined, notificationIntentId: undefined });
+    }
+  }, [navigation, route?.params?.notificationIntentId, route?.params?.selectedDate, route?.params?.selectedTaskId]);
 
   const loadCalendar = useCallback(async () => {
     if (!isAuthReady || !isHydrated || authStatus !== 'authenticated' || !currentUser) {
@@ -241,6 +257,7 @@ export default function CalendarScreen({ navigation, route }) {
 
   const handleSelectDay = useCallback((day) => {
     setSelectedDate(day);
+    setNotificationTaskId(null);
 
     if (!isSameMonth(day, calendarMonth)) {
       setCalendarMonth(new Date(day.getFullYear(), day.getMonth(), 1));
@@ -482,7 +499,13 @@ export default function CalendarScreen({ navigation, route }) {
           const isReviewed = event.completed;
 
           return (
-            <View key={event.id} style={styles.eventCard}>
+            <View
+              key={event.id}
+              style={[
+                styles.eventCard,
+                event.type === 'task' && String(event.sourceId) === String(notificationTaskId) && styles.notificationTaskHighlighted,
+              ]}
+            >
               <Pressable
                 onPress={() => toggleReviewed(event)}
                 style={[styles.checkbox, isReviewed && styles.checkboxActive]}
@@ -902,6 +925,10 @@ const createStyles = (colors, layout, topInset) => StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 14,
     elevation: 3,
+  },
+  notificationTaskHighlighted: {
+    borderColor: colors.gold,
+    borderWidth: 2,
   },
   checkbox: {
     width: 20,

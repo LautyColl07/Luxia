@@ -2,7 +2,7 @@ import Constants from 'expo-constants';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { signOut } from 'firebase/auth';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -12,7 +12,7 @@ import { auth } from '../config/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useStudyContext } from '../context/StudyContext';
 import { useAppTheme } from '../context/ThemeContext';
-import { getMe, getMyStudyInvitations, getNotifications } from '../services/api';
+import { getMe, getMyStudyInvitations } from '../services/api';
 import { authClient } from '../services/authClient';
 import { useResponsiveLayout } from '../theme/layout';
 import { buildDisplayUser } from '../utils/userDisplay';
@@ -34,7 +34,6 @@ export default function MoreScreen({ navigation }) {
     [colors, insets.top, layout]
   );
   const [profile, setProfile] = useState(null);
-  const [notifications, setNotifications] = useState([]);
   const [studyInvitations, setStudyInvitations] = useState([]);
   const [settings, setSettings] = useState({
     hearingReminders: true,
@@ -53,9 +52,8 @@ export default function MoreScreen({ navigation }) {
     try {
       setLoading(true);
       setError('');
-      const [user, items, invitations] = await Promise.all([getMe(), getNotifications().catch(() => []), getMyStudyInvitations().catch(() => [])]);
+      const [user, invitations] = await Promise.all([getMe(), getMyStudyInvitations().catch(() => [])]);
       setProfile(user);
-      setNotifications(Array.isArray(items) ? items : []);
       setStudyInvitations(Array.isArray(invitations) ? invitations : []);
     } catch (loadError) {
       console.error('[MoreScreen] No se pudo cargar el perfil.');
@@ -85,22 +83,8 @@ export default function MoreScreen({ navigation }) {
     () => buildDisplayUser(profile, currentUser),
     [profile, currentUser]
   );
-  const unreadCount = notifications.filter((item) => !item?.read).length;
   const accountEmail = displayProfile.email || currentUser?.email || 'Sin email registrado';
   const accountId = currentUser?.uid ? `${currentUser.uid.slice(0, 8)}...` : 'No disponible';
-
-  useEffect(() => {
-    if (!notifications.length) {
-      return;
-    }
-
-    setSettings((current) => ({
-      ...current,
-      hearingReminders: current.hearingReminders || notifications.some((item) => !item?.read),
-      caseActivity: true,
-      dailySummary: notifications.length >= 3 ? current.dailySummary : false,
-    }));
-  }, [notifications]);
 
   const logout = useCallback(async () => {
     try {
@@ -305,6 +289,14 @@ export default function MoreScreen({ navigation }) {
         subtitle="Preferencias basicas para mantenerte al dia."
         title="Notificaciones"
       >
+        <ActionRow
+          colors={colors}
+          description="Revisá las tareas pendientes y las próximas audiencias."
+          icon="bell-ring-outline"
+          onPress={() => navigation.navigate('Notificaciones')}
+          styles={styles}
+          title="Abrir centro de notificaciones"
+        />
         <PreferenceRow
           colors={colors}
           description="Avisos utiles antes de cada audiencia programada."
@@ -414,17 +406,6 @@ export default function MoreScreen({ navigation }) {
           title="Transcripción de audiencia"
         />
       </CardSection>
-
-      <View style={styles.summaryRow}>
-        <View style={styles.summaryCard}>
-          <Text style={styles.summaryValue}>{unreadCount}</Text>
-          <Text style={styles.summaryLabel}>Alertas sin leer</Text>
-        </View>
-        <View style={styles.summaryCard}>
-          <Text style={styles.summaryValue}>{settings.dailySummary ? 'ON' : 'OFF'}</Text>
-          <Text style={styles.summaryLabel}>Resumen diario</Text>
-        </View>
-      </View>
 
       <Pressable onPress={handleLogout} style={styles.logoutButton}>
         <MaterialCommunityIcons color={colors.danger} name="logout" size={20} />
