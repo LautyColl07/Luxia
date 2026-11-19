@@ -1666,19 +1666,25 @@ export async function getTasks({ from, to } = {}) {
 }
 
 export async function createCalendarTask(data) {
-  return request('/tareas', { method: 'POST', body: JSON.stringify(data) });
+  const task = await request('/tareas', { method: 'POST', body: JSON.stringify(data) });
+  setScopedCacheDirty();
+  return task;
 }
 
 export async function setTaskCompleted(id, completed) {
-  return request(`/tareas/${encodeURIComponent(id)}/completion`, {
+  const task = await request(`/tareas/${encodeURIComponent(id)}/completion`, {
     method: 'PATCH', body: JSON.stringify({ completed }),
   });
+  setScopedCacheDirty();
+  return task;
 }
 
 export async function setHearingCompleted(id, completed) {
-  return request(`/audiencias/${encodeURIComponent(id)}/completion`, {
+  const hearing = await request(`/audiencias/${encodeURIComponent(id)}/completion`, {
     method: 'PATCH', body: JSON.stringify({ completed }),
   });
+  setScopedCacheDirty();
+  return hearing;
 }
 
 export async function getUpcomingHearings() {

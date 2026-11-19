@@ -30,6 +30,7 @@ export default function CaseDetailScreen({ navigation, route }) {
   const [showMoveModal, setShowMoveModal] = useState(false);
   const [moving, setMoving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [recentHearingsExpanded, setRecentHearingsExpanded] = useState(true);
   const [clockNow, setClockNow] = useState(() => Date.now());
   const requestSequenceRef = useRef(0);
 
@@ -87,9 +88,11 @@ export default function CaseDetailScreen({ navigation, route }) {
   const hearings = caseDetail?.hearings || [];
   const upcomingHearings = hearings.filter((hearing) => !hearing?.completedAt && Number.isFinite(Date.parse(hearing?.date)) && Date.parse(hearing.date) >= clockNow)
     .sort((a, b) => Date.parse(a.date) - Date.parse(b.date) || String(a.id).localeCompare(String(b.id)));
-  const recentHearings = hearings.filter((hearing) => hearing?.completedAt || (Number.isFinite(Date.parse(hearing?.date)) && Date.parse(hearing.date) < clockNow))
-    .sort((a, b) => Date.parse(b.completedAt || b.date) - Date.parse(a.completedAt || a.date) || String(a.id).localeCompare(String(b.id)));
-  const undatedHearings = hearings.filter((hearing) => !Number.isFinite(Date.parse(hearing?.date)));
+  const recentHearings = hearings.filter((hearing) => Boolean(hearing?.completedAt))
+    .sort((a, b) => Date.parse(b.completedAt) - Date.parse(a.completedAt) || String(a.id).localeCompare(String(b.id)));
+  const overdueHearings = hearings.filter((hearing) => !hearing?.completedAt && Number.isFinite(Date.parse(hearing?.date)) && Date.parse(hearing.date) < clockNow)
+    .sort((a, b) => Date.parse(b.date) - Date.parse(a.date) || String(a.id).localeCompare(String(b.id)));
+  const undatedHearings = hearings.filter((hearing) => !hearing?.completedAt && !Number.isFinite(Date.parse(hearing?.date)));
   const documents = caseDetail?.documents || [];
   const tasks = caseDetail?.tasks || [];
   const sourceStudy = legalStudies.find((study) => String(study.id) === String(caseDetail?.legalStudyId));
@@ -227,7 +230,16 @@ export default function CaseDetailScreen({ navigation, route }) {
       </Modal>
 
       <HearingSection title="Próximas Audiencias" hearings={upcomingHearings} emptyMessage="No hay próximas audiencias programadas." {...{ colors, styles, caseDetail, documents, navigation, refreshCase }} />
-      <HearingSection title="Audiencias Recientes" hearings={recentHearings} emptyMessage="Todavía no hay audiencias anteriores." {...{ colors, styles, caseDetail, documents, navigation, refreshCase }} />
+      <HearingSection
+        title="Audiencias Recientes"
+        hearings={recentHearings}
+        emptyMessage="Todavía no hay audiencias finalizadas."
+        expanded={recentHearingsExpanded}
+        onToggleExpanded={() => setRecentHearingsExpanded((expanded) => !expanded)}
+        collapsible
+        {...{ colors, styles, caseDetail, documents, navigation, refreshCase }}
+      />
+      {overdueHearings.length ? <HearingSection title="Audiencias vencidas sin finalizar" hearings={overdueHearings} emptyMessage="" {...{ colors, styles, caseDetail, documents, navigation, refreshCase }} /> : null}
       {undatedHearings.length ? <HearingSection title="Audiencias sin fecha" hearings={undatedHearings} emptyMessage="" {...{ colors, styles, caseDetail, documents, navigation, refreshCase }} /> : null}
 
       <Section
@@ -297,7 +309,7 @@ export default function CaseDetailScreen({ navigation, route }) {
   );
 }
 
-function HearingSection({ title, hearings, emptyMessage, colors, styles, caseDetail, documents, navigation, refreshCase }) {
+function HearingSection({ title, hearings, emptyMessage, colors, styles, caseDetail, documents, navigation, refreshCase, collapsible = false, expanded = true, onToggleExpanded }) {
   const openVideoConference = (url) => {
     const value = String(url || '').trim();
     if (!/^https?:\/\/[^\s]+$/i.test(value)) {
@@ -310,59 +322,84 @@ function HearingSection({ title, hearings, emptyMessage, colors, styles, caseDet
     });
   };
 
-  return <Section colors={colors} styles={styles} title={title}>
-    {hearings.length ? hearings.map((hearing) => (
-      <View key={hearing?.id} style={styles.sectionCard}>
-        <View style={styles.sectionCardHeader}>
-          <View style={styles.sectionCardCopy}>
-            <Text style={styles.sectionCardTitle}>{hearing?.title || 'Audiencia sin titulo'}</Text>
-            <Text style={styles.sectionCardSubtitle}>{formatDateTime(hearing?.date)}</Text>
+  const headerAction = collapsible ? (
+    <Pressable
+      accessibilityLabel={expanded ? 'Ocultar audiencias recientes' : 'Mostrar audiencias recientes'}
+      accessibilityRole="button"
+      accessibilityState={{ expanded }}
+      onPress={onToggleExpanded}
+      style={({ focused, hovered, pressed }) => [
+        styles.sectionAction,
+        focused && styles.sectionActionFocused,
+        hovered && { backgroundColor: colors.accent },
+        pressed && { opacity: 0.75 },
+      ]}
+    >
+      <MaterialCommunityIcons color={colors.primary} name={expanded ? 'chevron-up' : 'chevron-down'} size={18} />
+      <Text style={styles.sectionActionText}>{expanded ? 'Ocultar' : 'Mostrar'}</Text>
+    </Pressable>
+  ) : null;
+
+  return <Section colors={colors} styles={styles} title={title} headerAction={headerAction}>
+    {expanded && hearings.length ? hearings.map((hearing) => {
+      const isCompletedRecent = title === 'Audiencias Recientes' && Boolean(hearing?.completedAt);
+      return (
+        <View key={hearing?.id} style={styles.sectionCard}>
+          <View style={styles.sectionCardHeader}>
+            <View style={styles.sectionCardCopy}>
+              <Text style={styles.sectionCardTitle}>{hearing?.title || 'Audiencia sin titulo'}</Text>
+              <Text style={styles.sectionCardSubtitle}>{formatDateTime(hearing?.date)}</Text>
+            </View>
+            <StatusBadge
+              status={hearing?.completedAt ? 'Finalizada' : hearing?.status}
+              style={isCompletedRecent && styles.completedHearingBadge}
+              textStyle={isCompletedRecent && styles.completedHearingBadgeText}
+            />
           </View>
-          <StatusBadge status={hearing?.status} />
-        </View>
-        <Text style={styles.sectionCardMeta}>{hearing?.modality || 'Modalidad a confirmar'}</Text>
-        {['Presencial', 'Mixta'].includes(hearing?.modality) ? (
-          <Text style={styles.hearingInfo}>
-            <Text style={styles.hearingInfoLabel}>Sala: </Text>{hearing?.room || hearing?.location || 'Sin informar'}
-          </Text>
-        ) : null}
-        {['Virtual', 'Mixta'].includes(hearing?.modality) ? (
-          hearing?.videoConferenceUrl ? (
-            <Pressable
-              accessibilityLabel={`Abrir videoconferencia: ${hearing.videoConferenceUrl}`}
-              accessibilityRole="link"
-              onPress={() => openVideoConference(hearing.videoConferenceUrl)}
-              style={styles.hearingLinkRow}
-            >
-              <Text style={styles.hearingLinkLabel}>Enlace de videoconferencia: </Text>
-              <Text style={styles.hearingLink}>{hearing.videoConferenceUrl}</Text>
-              <MaterialCommunityIcons color={colors.primary} name="open-in-new" size={16} style={styles.hearingLinkIcon} />
-            </Pressable>
-          ) : (
+          <Text style={styles.sectionCardMeta}>{hearing?.modality || 'Modalidad a confirmar'}</Text>
+          {['Presencial', 'Mixta'].includes(hearing?.modality) ? (
             <Text style={styles.hearingInfo}>
-              <Text style={styles.hearingInfoLabel}>Enlace de videoconferencia: </Text>Sin informar
+              <Text style={styles.hearingInfoLabel}>Sala: </Text>{hearing?.room || hearing?.location || 'Sin informar'}
             </Text>
-          )
-        ) : null}
-        {hearing?.modality === 'Telefonica' ? (
-          <Text style={styles.hearingInfo}>
-            <Text style={styles.hearingInfoLabel}>Número de teléfono: </Text>{hearing?.phoneNumber || 'Sin informar'}
-          </Text>
-        ) : null}
-        <HearingRecordingPanel caseDetail={caseDetail} documents={documents} hearing={hearing}
-          canTranscribe={caseDetail?.canTranscribe !== false} onDocumentsChanged={refreshCase}
-          canStartRecording={title !== 'Audiencias Recientes'}
-          onViewDocuments={() => navigation.navigate('MainTabs', { screen: 'Documentos' })} />
-      </View>
-    )) : <EmptyState
+          ) : null}
+          {['Virtual', 'Mixta'].includes(hearing?.modality) ? (
+            hearing?.videoConferenceUrl ? (
+              <Pressable
+                accessibilityLabel={`Abrir videoconferencia: ${hearing.videoConferenceUrl}`}
+                accessibilityRole="link"
+                onPress={() => openVideoConference(hearing.videoConferenceUrl)}
+                style={styles.hearingLinkRow}
+              >
+                <Text style={styles.hearingLinkLabel}>Enlace de videoconferencia: </Text>
+                <Text style={styles.hearingLink}>{hearing.videoConferenceUrl}</Text>
+                <MaterialCommunityIcons color={colors.primary} name="open-in-new" size={16} style={styles.hearingLinkIcon} />
+              </Pressable>
+            ) : (
+              <Text style={styles.hearingInfo}>
+                <Text style={styles.hearingInfoLabel}>Enlace de videoconferencia: </Text>Sin informar
+              </Text>
+            )
+          ) : null}
+          {hearing?.modality === 'Telefonica' ? (
+            <Text style={styles.hearingInfo}>
+              <Text style={styles.hearingInfoLabel}>Número de teléfono: </Text>{hearing?.phoneNumber || 'Sin informar'}
+            </Text>
+          ) : null}
+          <HearingRecordingPanel caseDetail={caseDetail} documents={documents} hearing={hearing}
+            canTranscribe={caseDetail?.canTranscribe !== false} onDocumentsChanged={refreshCase}
+            canStartRecording={!['Audiencias Recientes', 'Audiencias vencidas sin finalizar'].includes(title)}
+            onViewDocuments={() => navigation.navigate('MainTabs', { screen: 'Documentos' })} />
+        </View>
+      );
+    }) : expanded ? <EmptyState
       actionLabel={title === 'Próximas Audiencias' && caseDetail?.canEditCase !== false ? 'Registrar audiencia' : undefined}
       icon="calendar-blank-outline" message={emptyMessage}
       onAction={title === 'Próximas Audiencias' && caseDetail?.canEditCase !== false ? () => navigation.navigate('NewHearing', { caseId: caseDetail?.id }) : undefined}
-      title={title === 'Próximas Audiencias' ? 'Sin próximas audiencias' : 'Sin audiencias'} />}
+      title={title === 'Próximas Audiencias' ? 'Sin próximas audiencias' : 'Sin audiencias'} /> : null}
   </Section>;
 }
 
-function Section({ actionLabel, children, colors, onAction, styles, title }) {
+function Section({ actionLabel, children, colors, headerAction, onAction, styles, title }) {
   return (
     <View style={styles.section}>
       <View style={styles.sectionHeader}>
@@ -373,6 +410,7 @@ function Section({ actionLabel, children, colors, onAction, styles, title }) {
             <Text style={styles.sectionActionText}>{actionLabel}</Text>
           </Pressable>
         ) : null}
+        {headerAction}
       </View>
       <View style={styles.sectionContent}>{children}</View>
     </View>
@@ -480,6 +518,8 @@ const createStyles = (colors, layout) => StyleSheet.create({
   },
   sectionAction: {
     minHeight: 36,
+    borderWidth: 1,
+    borderColor: 'transparent',
     paddingHorizontal: 10,
     borderRadius: 12,
     backgroundColor: colors.accentSoft,
@@ -491,6 +531,16 @@ const createStyles = (colors, layout) => StyleSheet.create({
     color: colors.primary,
     fontSize: 12,
     fontWeight: '700',
+  },
+  sectionActionFocused: {
+    borderWidth: 2,
+    borderColor: colors.focusRing,
+  },
+  completedHearingBadge: {
+    backgroundColor: colors.completedHearingBackground,
+  },
+  completedHearingBadgeText: {
+    color: colors.completedHearingText,
   },
   sectionContent: {
     gap: 12,

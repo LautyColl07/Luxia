@@ -21,6 +21,9 @@ export default function WebSidebar({ activeRoute = 'Inicio', currentUser, onNavi
   const navItems = legalStudies.some((study) => study.role === 'ADMIN')
     ? [...NAV_ITEMS, { label: 'Administración', route: 'AdministracionEstudio', icon: 'office-building-cog-outline' }]
     : NAV_ITEMS;
+  const selectedRoute = ['InvitacionesEstudio', 'LuxMemory'].includes(activeRoute)
+    ? 'Mas'
+    : activeRoute;
 
   return (
     <View style={[styles.sidebar, collapsed && styles.sidebarCollapsed]}>
@@ -60,7 +63,7 @@ export default function WebSidebar({ activeRoute = 'Inicio', currentUser, onNavi
         {!collapsed ? <Text style={styles.sectionLabel}>ESPACIO DE TRABAJO</Text> : null}
         <View style={styles.navList}>
           {navItems.map((item) => {
-            const isActive = activeRoute === item.route;
+            const isActive = selectedRoute === item.route;
             return (
               <Pressable
                 accessibilityRole="button"
@@ -187,6 +190,8 @@ const createStyles = (colors) => StyleSheet.create({
   navItem: {
     minHeight: 50,
     borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'transparent',
     paddingHorizontal: 12,
     flexDirection: 'row',
     alignItems: 'center',
@@ -199,6 +204,7 @@ const createStyles = (colors) => StyleSheet.create({
   },
   navItemActive: {
     backgroundColor: colors.sidebarActive,
+    borderColor: colors.gold,
   },
   navItemHovered: {
     backgroundColor: colors.sidebarHover,

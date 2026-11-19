@@ -224,6 +224,39 @@ test('dashboard resumen es una ruta protegida y envia el token Firebase', async 
   assert.equal(captured.options.headers.Authorization, 'Bearer test-token');
 });
 
+test('dashboard prioriza el instante ISO y conserva el contrato anterior de audiencia', async () => {
+  const api = loadApi(async () => jsonResponse(200, {
+    usuario: { nombre: 'Usuario' },
+    metricas: {},
+    proximasAudiencias: [
+      {
+        id: 1,
+        date: '2026-11-30T23:30:00-03:00',
+        fecha: '2026-12-01',
+        hora: '02:30',
+        titulo: 'Audiencia de madrugada',
+      },
+      { id: 2, fecha: '2026-12-01', hora: '12:00', titulo: 'Contrato anterior' },
+    ],
+  }));
+  api.setAuthState('authenticated');
+
+  const { proximasAudiencias } = await api.getDashboardResumen();
+  const [nearMidnight, legacy] = proximasAudiencias;
+
+  assert.equal(nearMidnight.date, '2026-12-01T02:30:00.000Z');
+  assert.equal(nearMidnight.fecha, '2026-12-01');
+  assert.equal(nearMidnight.hora, '02:30');
+  assert.equal(new Intl.DateTimeFormat('es-AR', {
+    day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'America/Argentina/Buenos_Aires',
+  }).format(new Date(nearMidnight.date)), '30/11/2026');
+  assert.equal(new Intl.DateTimeFormat('es-AR', {
+    hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Argentina/Buenos_Aires',
+  }).format(new Date(nearMidnight.date)), '23:30');
+  assert.equal(legacy.date, new Date('2026-12-01T12:00:00').toISOString());
+  assert.equal(legacy.titulo, 'Contrato anterior');
+});
+
 test('los componentes usan el resultado exitoso, conservan estados de error y recargan al recuperar foco', () => {
   const hearingSource = fs.readFileSync(path.join(root, 'src/screens/NewHearingScreen.js'), 'utf8');
   const caseSource = fs.readFileSync(path.join(root, 'src/screens/NewCaseScreen.js'), 'utf8');
@@ -279,6 +312,80 @@ test('el contexto global llega a causas, audiencias, documentos y dashboard', as
   await Promise.all([api.getCases(), api.getHearings(), api.getDocuments(), api.getDashboardResumen()]);
   assert.equal(calls.length, 4);
   assert.ok(calls.every((url) => url.includes('scope=personal') && !url.includes('legalStudyId=')));
+
+  calls.length = 0;
+  api.setApiWorkContext({ type: 'study', legalStudyId: 'study-b', name: 'Estudio B' });
+  await api.getDashboardResumen();
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].includes('scope=study') && calls[0].includes('legalStudyId=study-b'));
+});
+
+test('las respuestas tardías de dos estudios no reemplazan el último contexto seleccionado', async () => {
+  const pending = new Map();
+  const calls = [];
+  const api = loadApi((url) => new Promise((resolve) => {
+    const query = new URL(url).searchParams;
+    const key = query.get('scope') === 'study' ? query.get('legalStudyId') : 'personal';
+    calls.push(String(url));
+    pending.set(key, resolve);
+  }));
+  api.setAuthState('authenticated');
+
+  const personalPromise = api.getDashboardBootstrap();
+  api.setApiWorkContext({ type: 'study', legalStudyId: 'study-a' });
+  const firstStudyPromise = api.getDashboardBootstrap();
+  api.setApiWorkContext({ type: 'study', legalStudyId: 'study-b' });
+  const lastStudyPromise = api.getDashboardBootstrap();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  pending.get('study-b')(jsonResponse(200, { usuario: { nombre: 'Usuario' }, metricas: { tareasPendientes: 7 }, proximasAudiencias: [] }));
+  const lastStudy = await lastStudyPromise;
+  pending.get('study-a')(jsonResponse(200, { usuario: { nombre: 'Usuario' }, metricas: { tareasPendientes: 2 }, proximasAudiencias: [] }));
+  await firstStudyPromise;
+  pending.get('personal')(jsonResponse(200, { usuario: { nombre: 'Usuario' }, metricas: { tareasPendientes: 1 }, proximasAudiencias: [] }));
+  await personalPromise;
+
+  const cached = await api.getDashboardBootstrap();
+  assert.equal(lastStudy.resumen.metricas.tareasPendientes, 7);
+  assert.equal(cached.resumen.metricas.tareasPendientes, 7);
+  assert.equal(calls.length, 3);
+  assert.ok(calls.some((url) => url.includes('scope=personal')));
+  assert.ok(calls.some((url) => url.includes('scope=study') && url.includes('legalStudyId=study-a')));
+  assert.ok(calls.some((url) => url.includes('scope=study') && url.includes('legalStudyId=study-b')));
+});
+
+test('crear y completar tareas invalida el resumen del dashboard', async () => {
+  let summaries = 0;
+  let mutations = 0;
+  const api = loadApi(async (url, options = {}) => {
+    if (String(url).includes('/dashboard/resumen')) {
+      summaries += 1;
+      return jsonResponse(200, { usuario: { nombre: 'Usuario' }, metricas: { tareasPendientes: summaries }, proximasAudiencias: [] });
+    }
+    if (String(url).includes('/tareas')) {
+      mutations += 1;
+      return jsonResponse(200, { id: mutations, status: 'Pendiente' });
+    }
+    if (String(url).includes('/audiencias')) return jsonResponse(200, { id: 4, completedAt: '2026-11-19T12:00:00.000Z' });
+    return jsonResponse(200, []);
+  });
+  api.setAuthState('authenticated');
+
+  await api.getDashboardBootstrap();
+  await api.getDashboardBootstrap();
+  assert.equal(summaries, 1);
+
+  await api.createCalendarTask({ title: 'Tarea de prueba', legalStudyId: 'study-a' });
+  await api.getDashboardBootstrap();
+  assert.equal(summaries, 2);
+
+  await api.setTaskCompleted(1, true);
+  await api.getDashboardBootstrap();
+  assert.equal(summaries, 3);
+
+  await api.setHearingCompleted(4, true);
+  await api.getDashboardBootstrap();
+  assert.equal(summaries, 4);
 });
 
 test('el contrato documental privado conserva nombre original, MIME, bytes, fecha y URL autorizada', async () => {
@@ -452,6 +559,25 @@ test('Inicio controla el selector; otras pantallas no muestran selectores redund
   assert.match(newCase, /¿Dónde deseas guardar esta causa\?/);
   assert.match(provider, /STORAGE_KEY\}\.\$\{userKey\}/);
   assert.match(read('src/components/CaseScopeSelector.tsx'), /duration: reduceMotion\.current \? 0 : 220/);
+});
+
+test('la navegación web marca el inicio y asocia pantallas secundarias con su sección', () => {
+  const app = fs.readFileSync(path.join(root, 'App.tsx'), 'utf8');
+  const sidebar = fs.readFileSync(path.join(root, 'src/components/WebSidebar.js'), 'utf8');
+  const detail = fs.readFileSync(path.join(root, 'src/screens/CaseDetailScreen.js'), 'utf8');
+  const colors = fs.readFileSync(path.join(root, 'src/constants/colors.js'), 'utf8');
+
+  assert.match(app, /onReady=\{\(\) => setNavigationState\(navigationRef\.getRootState\(\)\)\}/);
+  assert.match(app, /current = focusedRoute\.state \|\| focusedRoute/);
+  assert.match(sidebar, /\['InvitacionesEstudio', 'LuxMemory'\]\.includes\(activeRoute\)/);
+  assert.match(sidebar, /borderColor: colors\.gold/);
+  assert.match(detail, /accessibilityState=\{\{ expanded \}\}/);
+  assert.match(detail, /Ocultar audiencias recientes/);
+  assert.match(detail, /Audiencias vencidas sin finalizar/);
+  assert.match(detail, /completedAt \? 'Finalizada'/);
+  assert.match(detail, /completedHearingBackground/);
+  assert.match(colors, /completedHearingBackground: '#4A151B'/);
+  assert.match(colors, /completedHearingText: '#FF8A91'/);
 });
 
 test('el administrador envía una invitación al estudio y puede mover una causa existente', async () => {

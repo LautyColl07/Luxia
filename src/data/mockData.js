@@ -100,6 +100,26 @@ const hearings = [
     modality: 'Presencial',
     location: 'Centro de Mediación',
     status: 'Realizada',
+    completedAt: createRelativeDate(-4, 15, 30),
+  },
+  {
+    id: 206,
+    caseId: 101,
+    title: 'Audiencia vencida pendiente de finalizar',
+    date: createRelativeDate(-3, 10, 30),
+    modality: 'Presencial',
+    location: 'Sala 4',
+    status: 'Programada',
+  },
+  {
+    id: 207,
+    caseId: 101,
+    title: 'Audiencia completada con fecha futura',
+    date: createRelativeDate(3, 10, 30),
+    modality: 'Virtual',
+    location: 'Meet judicial',
+    status: 'Programada',
+    completedAt: createRelativeDate(-1, 15, 30),
   },
 ];
 

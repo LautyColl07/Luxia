@@ -102,6 +102,7 @@ const AppNavigator = () => {
       />
       <NavigationContainer
         ref={navigationRef}
+        onReady={() => setNavigationState(navigationRef.getRootState())}
         onStateChange={setNavigationState}
         theme={navigationTheme}
       >
@@ -147,7 +148,8 @@ const AuthStack = ({ colors }: { colors: ReturnType<typeof import("./src/constan
 const getActiveRouteName = (state: any): string => {
   let current = state;
   while (current?.routes?.length) {
-    current = current.routes[current.index ?? 0];
+    const focusedRoute = current.routes[current.index ?? 0];
+    current = focusedRoute.state || focusedRoute;
   }
   const route = current?.name || "Inicio";
   if (["CaseDetail", "NewCase"].includes(route)) return "Causas";

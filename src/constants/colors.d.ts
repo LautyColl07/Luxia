@@ -19,6 +19,8 @@ export type AppColors = {
   successSoft: string;
   danger: string;
   dangerSoft: string;
+  completedHearingBackground: string;
+  completedHearingText: string;
   warning: string;
   warningSoft: string;
   accent: string;
