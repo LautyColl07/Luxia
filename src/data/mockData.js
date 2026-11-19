@@ -60,7 +60,7 @@ const hearings = [
     id: 201,
     caseId: 101,
     title: 'Audiencia preliminar',
-    date: createRelativeDate(0, 10, 30),
+    date: createRelativeDate(10, 10, 30),
     modality: 'Presencial',
     location: 'Sala 3',
     status: 'Confirmada',
@@ -164,7 +164,7 @@ const tasks = [
     title: 'Revisar estrategia de audiencia preliminar',
     completed: false,
     caseId: 101,
-    dueDate: createRelativeDate(0, 8, 30),
+    dueDate: createRelativeDate(1, 8, 30),
   },
   {
     id: 402,
@@ -172,6 +172,20 @@ const tasks = [
     completed: false,
     caseId: 102,
     dueDate: createRelativeDate(2, 18, 0),
+  },
+  {
+    id: 404,
+    title: 'Responder observación de la contraparte',
+    completed: false,
+    caseId: 101,
+    dueDate: createRelativeDate(-2, 16, 0),
+  },
+  {
+    id: 405,
+    title: 'Coordinar documentación con el cliente',
+    completed: false,
+    caseId: 103,
+    dueDate: null,
   },
   {
     id: 403,

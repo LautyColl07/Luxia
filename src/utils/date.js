@@ -32,6 +32,38 @@ function formatWithLocale(date, options) {
   return new Intl.DateTimeFormat(ARGENTINA_LOCALE, options).format(date);
 }
 
+function getCalendarDateParts(dateValue) {
+  const date = normalizeDate(dateValue);
+  if (!date) return null;
+
+  const parts = new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    timeZone: 'America/Argentina/Buenos_Aires',
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  return { year: Number(values.year), month: Number(values.month), day: Number(values.day) };
+}
+
+export function getCalendarDayDifference(dateValue, referenceValue = new Date()) {
+  const target = getCalendarDateParts(dateValue);
+  const reference = getCalendarDateParts(referenceValue);
+  if (!target || !reference) return null;
+
+  const targetDay = Date.UTC(target.year, target.month - 1, target.day) / 86400000;
+  const referenceDay = Date.UTC(reference.year, reference.month - 1, reference.day) / 86400000;
+  return targetDay - referenceDay;
+}
+
+export function getHearingDayMessage(title, dateValue, evaluatedAt) {
+  const days = getCalendarDayDifference(dateValue, evaluatedAt || new Date());
+  const daysUntil = days == null ? 0 : Math.max(0, days);
+  const hearingTitle = String(title || 'Audiencia próxima');
+  if (daysUntil === 1) return `Falta 1 día para el inicio de la Audiencia (${hearingTitle})`;
+  return `Faltan ${daysUntil} días para el inicio de la Audiencia (${hearingTitle})`;
+}
+
 export function formatDate(dateValue) {
   const date = normalizeDate(dateValue);
 

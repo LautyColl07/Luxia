@@ -15,7 +15,7 @@ function jsonResponse(status, body) {
   };
 }
 
-function loadApi(fetchImplementation) {
+function loadApi(fetchImplementation, { captureMode = false, mockDataFixture = [] } = {}) {
   const apiPath = path.join(root, 'src/services/api.js');
   const source = fs.readFileSync(apiPath, 'utf8');
   const transformed = babel.transformSync(source, {
@@ -27,12 +27,12 @@ function loadApi(fetchImplementation) {
     if (request === '../config/api') {
       return { API_BASE_URL: 'https://api.test/api/v1', API_ROOT_URL: 'https://api.test' };
     }
-    if (request === '../config/captureMode') return { IS_CAPTURE_MODE: false };
+    if (request === '../config/captureMode') return { IS_CAPTURE_MODE: captureMode };
     if (request === '../config/firebase') {
       return { auth: { currentUser: { getIdToken: async () => 'test-token' } } };
     }
     if (request === 'firebase/auth') return { signOut: async () => undefined };
-    if (request === '../data/mockData') return [];
+    if (request === '../data/mockData') return mockDataFixture;
     if (request === '../utils/status') return { normalizeStatusLabel: (value) => value || 'Pendiente' };
     if (request === '../utils/apiError') {
       return { normalizeApiErrorPayload: (data, error) => ({
@@ -557,8 +557,10 @@ test('el centro solicita notificaciones en el contexto activo y alimenta el cont
       return jsonResponse(200, { usuario: { nombre: 'Usuario' }, metricas: {}, proximasAudiencias: [] });
     }
     return jsonResponse(200, {
-      pendingTasks: [],
+      pendingTasks: [{ id: 8, title: 'Escrito pendiente', dueDate: '2026-11-25T12:00:00.000Z', scheduledAt: null, isOverdue: false }],
       notifications: [{ id: 'hearing-reminder:4' }, { id: 'hearing-reminder:5' }],
+      notificationCount: 3,
+      evaluatedAt: '2026-11-19T12:00:00.000Z',
     });
   });
   api.setAuthState('authenticated');
@@ -567,14 +569,34 @@ test('el centro solicita notificaciones en el contexto activo y alimenta el cont
   const bootstrap = await api.getDashboardBootstrap();
   const center = await api.getNotificationCenter({ context: { type: 'study', legalStudyId: 'study-a' } });
 
-  assert.equal(bootstrap.notificationCount, 2);
-  assert.deepEqual(JSON.parse(JSON.stringify(center)), {
-    pendingTasks: [],
-    notifications: [{ id: 'hearing-reminder:4' }, { id: 'hearing-reminder:5' }],
-  });
+  assert.equal(bootstrap.notificationCount, 3);
+  assert.equal(center.pendingTasks.length, 1);
+  assert.equal(center.pendingTasks[0].isOverdue, false);
+  assert.deepEqual(center.notifications.map(({ id }) => id), ['hearing-reminder:4', 'hearing-reminder:5']);
+  assert.equal(center.notificationCount, 3);
+  assert.equal(center.evaluatedAt, '2026-11-19T12:00:00.000Z');
   assert.equal(calls.filter(({ url }) => url.includes('/notificaciones/centro')).length, 2);
   assert.ok(calls.every(({ url }) => url.includes('scope=study&legalStudyId=study-a')));
   assert.ok(calls.every(({ authorization }) => authorization === 'Bearer test-token'));
+});
+
+test('el cliente completa centros antiguos y el contador combina tareas y audiencias', async () => {
+  const api = loadApi(async (url) => {
+    if (String(url).includes('/dashboard/resumen')) {
+      return jsonResponse(200, { usuario: { nombre: 'Usuario' }, metricas: {}, proximasAudiencias: [] });
+    }
+    return jsonResponse(200, {
+      pendingTasks: [{ id: 19, title: 'Tarea atrasada', dueDate: '2020-01-01T00:00:00.000Z', scheduledAt: null }],
+      notifications: [{ id: 'hearing-reminder:20', hearingId: 20, date: '2026-11-20T12:00:00.000Z' }],
+    });
+  });
+  api.setAuthState('authenticated');
+
+  const [bootstrap, center] = await Promise.all([api.getDashboardBootstrap(), api.getNotificationCenter()]);
+  assert.equal(bootstrap.notificationCount, 2);
+  assert.equal(center.notificationCount, 2);
+  assert.equal(center.pendingTasks[0].isOverdue, true);
+  assert.ok(Number.isFinite(Date.parse(center.evaluatedAt)));
 });
 
 test('la campana abre Notificaciones y el avatar mantiene el acceso a Más', () => {
@@ -596,12 +618,35 @@ test('el centro vuelve a cargar al enfocarse y el calendario consume cada salto 
   assert.match(center, /force: true,[\s\S]*?context: activeContext/);
   assert.match(center, /loadSequenceRef\.current !== requestId/);
   assert.match(center, /centerContextKey === requestContextKey/);
-  assert.match(center, /hasCurrentContextData \? center : \{ pendingTasks: \[\], notifications: \[\] \}/);
+  assert.match(center, /hasCurrentContextData \? center : \{ pendingTasks: \[\], notifications: \[\], notificationCount: 0, evaluatedAt: null \}/);
   assert.match(center, /notificationIntentId: intentId/);
+  assert.match(center, /task\.isOverdue === true/);
+  assert.match(center, /Tareas vencidas/);
+  assert.match(center, /accessibilityState=\{\{ expanded: overdueExpanded \}\}/);
+  assert.match(center, /isFocusedRef\.current = true;\s*setOverdueExpanded\(false\);/);
+  assert.match(center, /getHearingDayMessage\(notification\.title \|\| 'Audiencia próxima', notification\.date, visibleCenter\.evaluatedAt\)/);
+  assert.match(center, /navigation\.navigate\('CaseDetail',/);
+  assert.match(center, /hearingId: notification\.hearingId/);
+  assert.match(center, /notificationIntentId: `notification-hearing:/);
+  assert.match(center, /const \[overdueExpanded, setOverdueExpanded\] = useState\(false\)/);
+  assert.match(center, /setOverdueExpanded\(false\)[\s\S]*?\[requestContextKey\]/);
+  assert.match(center, /upcomingTasks\.map\(\(task\) => <TaskRow/);
+  assert.match(center, /overdueTasks\.map\(\(task\) => <TaskRow/);
+  assert.match(center, /dueDateText: \{ color: colors\.text, fontSize: 12, fontWeight: '700' \}/);
   assert.match(calendar, /consumedCalendarIntentRef\.current === intentId/);
   assert.match(calendar, /navigation\.setParams\(\{ selectedDate: undefined, selectedTaskId: undefined, notificationIntentId: undefined \}\)/);
   assert.match(calendar, /setFilters\(DEFAULT_FILTERS\)/);
   assert.match(calendar, /String\(event\.sourceId\) === String\(notificationTaskId\)/);
+});
+
+test('las audiencias abren el detalle en su sección y despliegan el elemento señalado', () => {
+  const detail = fs.readFileSync(path.join(root, 'src/screens/CaseDetailScreen.js'), 'utf8');
+  assert.match(detail, /scrollRef\.current\?\.scrollTo\(\{ y: Math\.max\(0, upcomingSectionY - 24\), animated: true \}\)/);
+  assert.match(detail, /navigation\.setParams\(\{ hearingId: undefined, notificationIntentId: undefined \}\)/);
+  assert.match(detail, /notificationIntentId \|\| `\$\{caseId\}:\$\{hearingIdIntent\}`/);
+  assert.match(detail, /setUpcomingSectionY\(null\)[\s\S]*?consumedHearingIntentRef\.current = null[\s\S]*?\[caseId\]/);
+  assert.match(detail, /String\(highlightedHearingId\) === String\(hearing\?\.id\)/);
+  assert.match(detail, /hearingHighlight/);
 });
 
 test('el calendario prioriza la fecha agendada y usa el vencimiento como respaldo', () => {
@@ -636,6 +681,61 @@ test('el calendario prioriza la fecha agendada y usa el vencimiento como respald
   assert.equal(getTaskCalendarDate({}), null);
   const [event] = buildCalendarEvents({ tasks: [{ id: 10, title: 'Presentar escrito', scheduledAt: scheduled, dueDate: due }] });
   assert.equal(event.date, scheduled);
+});
+
+test('los mensajes de audiencia comparan días calendario de Buenos Aires', () => {
+  const filename = path.join(root, 'src/utils/date.js');
+  const transformed = babel.transformSync(fs.readFileSync(filename, 'utf8'), {
+    filename,
+    plugins: ['@babel/plugin-transform-modules-commonjs'],
+  }).code;
+  const module = { exports: {} };
+  vm.runInNewContext(transformed, {
+    Date,
+    Intl,
+    Object,
+    Number,
+    module,
+    exports: module.exports,
+  });
+  const { getCalendarDayDifference, getHearingDayMessage } = module.exports;
+  assert.equal(getCalendarDayDifference('2026-12-01T01:30:00.000Z', '2026-12-01T02:30:00.000Z'), 0);
+  assert.equal(getCalendarDayDifference('2026-12-01T03:30:00.000Z', '2026-12-01T02:30:00.000Z'), 1);
+  assert.equal(getCalendarDayDifference('2026-11-29T15:00:00.000Z', '2026-12-01T02:30:00.000Z'), -1);
+  assert.equal(getHearingDayMessage('Audiencia preliminar', '2026-12-01T01:30:00.000Z', '2026-12-01T02:30:00.000Z'), 'Faltan 0 días para el inicio de la Audiencia (Audiencia preliminar)');
+  assert.equal(getHearingDayMessage('Audiencia preliminar', '2026-12-01T03:30:00.000Z', '2026-12-01T02:30:00.000Z'), 'Falta 1 día para el inicio de la Audiencia (Audiencia preliminar)');
+  assert.equal(getHearingDayMessage('Audiencia preliminar', '2026-12-01T03:30:00.000Z', '2026-11-28T15:00:00.000Z'), 'Faltan 3 días para el inicio de la Audiencia (Audiencia preliminar)');
+});
+
+test('los datos de captura producen cuatro tareas pendientes y dos avisos de audiencia', async () => {
+  const filename = path.join(root, 'src/data/mockData.js');
+  const transformed = babel.transformSync(fs.readFileSync(filename, 'utf8'), {
+    filename,
+    plugins: ['@babel/plugin-transform-modules-commonjs'],
+  }).code;
+  const fixtureModule = { exports: {} };
+  vm.runInNewContext(transformed, {
+    Date,
+    Math,
+    Number,
+    Object,
+    String,
+    module: fixtureModule,
+    exports: fixtureModule.exports,
+  });
+  const api = loadApi(async () => { throw new Error('Capture mode must not call the backend'); }, {
+    captureMode: true,
+    mockDataFixture: fixtureModule.exports.default,
+  });
+  api.setAuthState('authenticated');
+
+  const center = await api.getNotificationCenter();
+  assert.equal(center.pendingTasks.length, 4);
+  assert.equal(center.pendingTasks.filter((task) => task.isOverdue).length, 1);
+  assert.equal(center.pendingTasks.filter((task) => !task.isOverdue && task.dueDate).length, 2);
+  assert.equal(center.pendingTasks.filter((task) => !task.dueDate).length, 1);
+  assert.equal(center.notifications.length, 2);
+  assert.equal(center.notificationCount, 6);
 });
 
 test('Inicio controla el selector; otras pantallas no muestran selectores redundantes', () => {

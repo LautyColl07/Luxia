@@ -585,6 +585,39 @@ function normalizeNotification(notification) {
   };
 }
 
+function normalizeNotificationCenter(payload, receivedAt = new Date()) {
+  const source = Array.isArray(payload) ? { notifications: payload } : payload || {};
+  const evaluatedAt = normalizeDateValue(source.evaluatedAt) || normalizeDateValue(receivedAt);
+  const evaluatedTime = new Date(evaluatedAt).getTime();
+  const pendingTasks = (Array.isArray(source.pendingTasks) ? source.pendingTasks : []).map((task) => {
+    const normalizedTask = normalizeTask(task);
+    const dueTime = normalizedTask.dueDate ? new Date(normalizedTask.dueDate).getTime() : null;
+    return {
+      ...normalizedTask,
+      scheduledAt: normalizeDateValue(normalizedTask.scheduledAt),
+      isOverdue: typeof task?.isOverdue === 'boolean'
+        ? task.isOverdue
+        : dueTime != null && dueTime < evaluatedTime,
+    };
+  });
+  const notifications = (Array.isArray(source.notifications) ? source.notifications : []).map((notification) => ({
+    ...notification,
+    id: getId(notification?.id),
+    title: safeString(notification?.title ?? notification?.titulo, 'Audiencia próxima'),
+    date: normalizeDateValue(notification?.date ?? notification?.fecha),
+  }));
+  const providedCount = Number(source.notificationCount);
+
+  return {
+    pendingTasks,
+    notifications,
+    notificationCount: Number.isInteger(providedCount) && providedCount >= 0
+      ? providedCount
+      : pendingTasks.length + notifications.length,
+    evaluatedAt,
+  };
+}
+
 function mapUpcomingHearings(limit = 5) {
   const caseMap = getCaseMap();
 
@@ -2447,7 +2480,11 @@ export async function getNotificationCenter(options = {}) {
         const firstDue = first.dueDate ? new Date(first.dueDate).getTime() : Number.MAX_SAFE_INTEGER;
         const secondDue = second.dueDate ? new Date(second.dueDate).getTime() : Number.MAX_SAFE_INTEGER;
         return firstDue - secondDue || Number(first.id) - Number(second.id);
-      });
+      })
+      .map((task) => ({
+        ...task,
+        isOverdue: Boolean(task.dueDate && new Date(task.dueDate).getTime() < now),
+      }));
     const notifications = mockStore.hearings
       .filter((hearing) => {
         const date = new Date(hearing.date).getTime();
@@ -2463,7 +2500,12 @@ export async function getNotificationCenter(options = {}) {
         date: normalizeDateValue(hearing.date),
       }))
       .sort((first, second) => new Date(first.date).getTime() - new Date(second.date).getTime() || Number(first.hearingId) - Number(second.hearingId));
-    return simulateDelay({ pendingTasks, notifications });
+    return simulateDelay(normalizeNotificationCenter({
+      pendingTasks,
+      notifications,
+      notificationCount: pendingTasks.length + notifications.length,
+      evaluatedAt: new Date(now).toISOString(),
+    }));
   }
 
   const requestedContext = options.context || activeWorkContext;
@@ -2471,7 +2513,8 @@ export async function getNotificationCenter(options = {}) {
     ? { scope: 'study', legalStudyId: requestedContext.legalStudyId }
     : { scope: 'personal' };
   const endpoint = appendQueryParams('/notificaciones/centro', contextQuery);
-  return request(endpoint, { timeout: options.timeout ?? DATA_REQUEST_TIMEOUT_MS });
+  const response = await request(endpoint, { timeout: options.timeout ?? DATA_REQUEST_TIMEOUT_MS });
+  return normalizeNotificationCenter(response);
 }
 
 export async function sendLuxMessage(message, context = {}, requestOptions = {}) {
@@ -2714,14 +2757,15 @@ export async function getDashboardBootstrap(options = {}) {
   const pending = (async () => {
     const [resumen, notificationCenter] = await Promise.all([
       getDashboardResumen(options),
-      getNotificationCenter(options).catch(() => ({ notifications: [] })),
+      getNotificationCenter(options).catch(() => ({ pendingTasks: [], notifications: [], notificationCount: 0 })),
     ]);
 
     const data = {
       resumen,
-      notificationCount: Array.isArray(notificationCenter?.notifications)
-        ? notificationCenter.notifications.length
-        : 0,
+      notificationCount: Number.isInteger(notificationCenter?.notificationCount)
+        ? notificationCenter.notificationCount
+        : (Array.isArray(notificationCenter?.pendingTasks) ? notificationCenter.pendingTasks.length : 0)
+          + (Array.isArray(notificationCenter?.notifications) ? notificationCenter.notifications.length : 0),
     };
 
     if (getWorkContextKey() === contextKey && workContextEpoch === epoch) lastDashboardBootstrap = { data, timestamp: Date.now() };

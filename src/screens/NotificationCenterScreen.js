@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import EmptyState from '../components/EmptyState';
@@ -12,7 +12,7 @@ import { useAppTheme } from '../context/ThemeContext';
 import { getNotificationCenter } from '../services/api';
 import { useResponsiveLayout } from '../theme/layout';
 import { getTaskCalendarDate } from '../utils/calendar';
-import { formatDate, formatTime } from '../utils/date';
+import { formatDate, formatTime, getHearingDayMessage } from '../utils/date';
 
 function getErrorMessage(error) {
   if (error?.status === 401 || error?.status === 403) {
@@ -27,17 +27,22 @@ export default function NotificationCenterScreen({ navigation }) {
   const { activeContext, activeContextKey, isHydrated } = useStudyContext();
   const layout = useResponsiveLayout();
   const styles = useMemo(() => createStyles(colors, layout), [colors, layout]);
-  const [center, setCenter] = useState({ pendingTasks: [], notifications: [] });
+  const [center, setCenter] = useState({ pendingTasks: [], notifications: [], notificationCount: 0, evaluatedAt: null });
   const [centerContextKey, setCenterContextKey] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [overdueExpanded, setOverdueExpanded] = useState(false);
   const loadSequenceRef = useRef(0);
   const navigationIntentSequenceRef = useRef(0);
   const isFocusedRef = useRef(false);
   const requestContextKey = `${currentUser?.uid || 'anonymous'}:${activeContextKey || activeContext.legalStudyId || activeContext.type}`;
   const hasCurrentContextData = centerContextKey === requestContextKey;
-  const visibleCenter = hasCurrentContextData ? center : { pendingTasks: [], notifications: [] };
+  const visibleCenter = hasCurrentContextData ? center : { pendingTasks: [], notifications: [], notificationCount: 0, evaluatedAt: null };
+
+  useEffect(() => {
+    setOverdueExpanded(false);
+  }, [requestContextKey]);
 
   const loadCenter = useCallback(async (isRefresh = false) => {
     if (!isAuthReady || !isHydrated || authStatus !== 'authenticated' || !currentUser) return;
@@ -53,9 +58,15 @@ export default function NotificationCenterScreen({ navigation }) {
         context: activeContext,
       });
       if (!isFocusedRef.current || loadSequenceRef.current !== requestId) return;
+      const pendingTasks = Array.isArray(result?.pendingTasks) ? result.pendingTasks : [];
+      const notifications = Array.isArray(result?.notifications) ? result.notifications : [];
       setCenter({
-        pendingTasks: Array.isArray(result?.pendingTasks) ? result.pendingTasks : [],
-        notifications: Array.isArray(result?.notifications) ? result.notifications : [],
+        pendingTasks,
+        notifications,
+        notificationCount: Number.isInteger(result?.notificationCount)
+          ? result.notificationCount
+          : pendingTasks.length + notifications.length,
+        evaluatedAt: result?.evaluatedAt || new Date().toISOString(),
       });
       setCenterContextKey(requestContextKey);
     } catch (loadError) {
@@ -73,6 +84,7 @@ export default function NotificationCenterScreen({ navigation }) {
   useFocusEffect(
     useCallback(() => {
       isFocusedRef.current = true;
+      setOverdueExpanded(false);
       void loadCenter();
       return () => {
         isFocusedRef.current = false;
@@ -103,12 +115,30 @@ export default function NotificationCenterScreen({ navigation }) {
     });
   }, [navigation]);
 
-  if ((loading || !hasCurrentContextData) && !visibleCenter.pendingTasks.length && !visibleCenter.notifications.length) {
-    return <LoadingState title="Cargando notificaciones" message="Estamos revisando tus tareas y próximas audiencias." />;
-  }
+  const openHearingInCase = useCallback((notification) => {
+    if (notification?.caseId == null) return;
+    navigationIntentSequenceRef.current += 1;
+    navigation.navigate('CaseDetail', {
+      caseId: notification.caseId,
+      hearingId: notification.hearingId,
+      notificationIntentId: `notification-hearing:${notification.hearingId}:${navigationIntentSequenceRef.current}`,
+    });
+  }, [navigation]);
+
+  const sortTasksByDueDate = (first, second) => {
+    const firstDue = first.dueDate ? new Date(first.dueDate).getTime() : Number.MAX_SAFE_INTEGER;
+    const secondDue = second.dueDate ? new Date(second.dueDate).getTime() : Number.MAX_SAFE_INTEGER;
+    return firstDue - secondDue || String(first.id).localeCompare(String(second.id), undefined, { numeric: true });
+  };
+  const overdueTasks = visibleCenter.pendingTasks.filter((task) => task.isOverdue === true).sort(sortTasksByDueDate);
+  const upcomingTasks = visibleCenter.pendingTasks.filter((task) => task.isOverdue !== true).sort(sortTasksByDueDate);
 
   if (error && !visibleCenter.pendingTasks.length && !visibleCenter.notifications.length) {
     return <ErrorState title="No pudimos cargar las notificaciones" message={error} onRetry={() => void loadCenter()} />;
+  }
+
+  if ((loading || !hasCurrentContextData) && !visibleCenter.pendingTasks.length && !visibleCenter.notifications.length) {
+    return <LoadingState title="Cargando notificaciones" message="Estamos revisando tus tareas y próximas audiencias." />;
   }
 
   return (
@@ -121,6 +151,9 @@ export default function NotificationCenterScreen({ navigation }) {
       <View style={styles.heading}>
         <Text accessibilityRole="header" style={styles.title}>Notificaciones</Text>
         <Text style={styles.subtitle}>{activeContext.type === 'study' ? activeContext.name || 'Estudio jurídico' : 'Mis casos'}</Text>
+        <Text accessibilityLabel={`${visibleCenter.notificationCount} notificaciones en total`} style={styles.totalCount}>
+          {visibleCenter.notificationCount} en total
+        </Text>
       </View>
 
       {error ? (
@@ -138,76 +171,110 @@ export default function NotificationCenterScreen({ navigation }) {
           <Text accessibilityRole="header" style={styles.sectionTitle}>Tareas pendientes</Text>
           <Text style={styles.count}>{visibleCenter.pendingTasks.length}</Text>
         </View>
-        {visibleCenter.pendingTasks.length ? (
+        {upcomingTasks.length ? (
           <View style={styles.list}>
-            {visibleCenter.pendingTasks.map((task) => {
-              const calendarDate = getTaskCalendarDate(task);
-              const taskCard = (
-                <>
-                  <View style={styles.taskIcon}>
-                    <MaterialCommunityIcons color={colors.primary} name="calendar-arrow-right" size={20} />
-                  </View>
-                  <View style={styles.itemCopy}>
-                    <Text style={styles.itemTitle}>{task.title || 'Tarea pendiente'}</Text>
-                    <Text style={styles.itemMeta}>
-                      {task.dueDate ? `Vence ${formatDate(task.dueDate)}` : 'Sin fecha de vencimiento'}
-                    </Text>
-                    {task.scheduledAt && task.dueDate && new Date(task.scheduledAt).getTime() !== new Date(task.dueDate).getTime() ? (
-                      <Text style={styles.itemMeta}>Agendada {formatDate(task.scheduledAt)} · {formatTime(task.scheduledAt)}</Text>
-                    ) : null}
-                  </View>
-                  {calendarDate ? <MaterialCommunityIcons color={colors.textMuted} name="chevron-right" size={20} /> : null}
-                </>
-              );
-
-              return calendarDate ? (
-                <Pressable
-                  accessibilityLabel={`Abrir calendario para ${task.title || 'tarea pendiente'}, ${task.dueDate ? `vence ${formatDate(task.dueDate)}` : 'sin fecha de vencimiento'}`}
-                  accessibilityRole="button"
-                  key={task.id}
-                  onPress={() => openTaskInCalendar(task)}
-                  style={({ focused, pressed }) => [styles.taskRow, focused && styles.focused, pressed && styles.pressed]}
-                >
-                  {taskCard}
-                </Pressable>
-              ) : (
-                <View key={task.id} style={styles.taskRow}>{taskCard}</View>
-              );
-            })}
+            {upcomingTasks.map((task) => <TaskRow key={task.id} task={task} colors={colors} styles={styles} onPress={() => openTaskInCalendar(task)} />)}
           </View>
         ) : (
-          <EmptyState title="No hay tareas pendientes" message="Las tareas pendientes de tu contexto aparecerán acá." icon="check-all" />
+          <EmptyState title="No hay tareas próximas a vencer" message="Las tareas vencidas aparecen en la lista desplegable de abajo." icon="check-all" />
         )}
       </View>
+
+      {overdueTasks.length ? (
+        <View style={styles.section}>
+          <Pressable
+            accessibilityLabel={`${overdueExpanded ? 'Ocultar' : 'Mostrar'} ${overdueTasks.length} tareas vencidas`}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: overdueExpanded }}
+            onPress={() => setOverdueExpanded((expanded) => !expanded)}
+            style={({ focused, pressed }) => [styles.sectionHeading, focused && styles.toggleFocused, pressed && styles.pressed]}
+          >
+            <View style={styles.sectionIcon}>
+              <MaterialCommunityIcons color={colors.danger} name="alert-circle-outline" size={20} />
+            </View>
+            <Text accessibilityRole="header" style={styles.sectionTitle}>Tareas vencidas</Text>
+            <Text style={styles.count}>{overdueTasks.length}</Text>
+            <MaterialCommunityIcons color={colors.textSecondary} name={overdueExpanded ? 'chevron-up' : 'chevron-down'} size={20} />
+          </Pressable>
+          {overdueExpanded ? (
+            <View style={styles.list}>
+              {overdueTasks.map((task) => <TaskRow key={task.id} task={task} overdue colors={colors} styles={styles} onPress={() => openTaskInCalendar(task)} />)}
+            </View>
+          ) : null}
+        </View>
+      ) : null}
 
       <View style={styles.section}>
         <View style={styles.sectionHeading}>
           <View style={styles.sectionIcon}>
             <MaterialCommunityIcons color={colors.gold} name="bell-ring-outline" size={20} />
           </View>
-          <Text accessibilityRole="header" style={styles.sectionTitle}>Notificaciones</Text>
+          <Text accessibilityRole="header" style={styles.sectionTitle}>Próximas audiencias</Text>
           <Text style={styles.count}>{visibleCenter.notifications.length}</Text>
         </View>
         {visibleCenter.notifications.length ? (
           <View style={styles.list}>
             {visibleCenter.notifications.map((notification) => (
-              <View key={notification.id} style={styles.notificationRow}>
+              <Pressable
+                accessibilityLabel={`Abrir ${notification.title || 'audiencia'}, ${notification.caseTitle || 'causa'}, ${formatDate(notification.date)} a las ${formatTime(notification.date)}`}
+                accessibilityRole="button"
+                key={notification.id}
+                onPress={() => openHearingInCase(notification)}
+                style={({ focused, pressed }) => [styles.notificationRow, focused && styles.focused, pressed && styles.pressed]}
+              >
                 <View style={styles.hearingIcon}>
                   <MaterialCommunityIcons color={colors.gold} name="gavel" size={20} />
                 </View>
                 <View style={styles.itemCopy}>
-                  <Text style={styles.itemTitle}>{notification.title || 'Audiencia próxima'}</Text>
+                  <Text style={styles.hearingMessage}>{getHearingDayMessage(notification.title || 'Audiencia próxima', notification.date, visibleCenter.evaluatedAt)}</Text>
                   <Text style={styles.itemMeta}>{notification.caseTitle || 'Causa'}</Text>
                   <Text style={styles.itemMeta}>{formatDate(notification.date)} · {formatTime(notification.date)}</Text>
                 </View>
-              </View>
+                <MaterialCommunityIcons color={colors.textMuted} name="chevron-right" size={20} />
+              </Pressable>
             ))}
           </View>
         ) : (
-          <EmptyState title="No hay avisos nuevos" message="Te avisaremos cuando tengas una audiencia dentro de los próximos siete días." icon="bell-check-outline" />
+          <EmptyState title="No hay próximas audiencias" message="Las audiencias de los próximos siete días aparecerán acá." icon="bell-check-outline" />
         )}
       </View>
     </ScrollView>
+  );
+}
+
+function TaskRow({ task, overdue = false, colors, styles, onPress }) {
+  const calendarDate = getTaskCalendarDate(task);
+  const title = task.title || 'Tarea pendiente';
+  const dueDateText = task.dueDate
+    ? `${overdue ? 'Venció el' : 'Vence el'} ${formatDate(task.dueDate)}`
+    : (!task.scheduledAt ? 'Sin fecha' : null);
+  const scheduledAtDiffers = task.scheduledAt && (
+    !task.dueDate || new Date(task.scheduledAt).getTime() !== new Date(task.dueDate).getTime()
+  );
+  const row = (
+    <>
+      <View style={[styles.taskIcon, overdue && styles.overdueIcon]}>
+        <MaterialCommunityIcons color={overdue ? colors.danger : colors.primary} name={overdue ? 'calendar-alert' : 'calendar-arrow-right'} size={20} />
+      </View>
+      <View style={styles.itemCopy}>
+        <Text style={styles.itemTitle}>{title}</Text>
+        {dueDateText ? <Text style={overdue ? styles.overdueText : styles.dueDateText}>{dueDateText}</Text> : null}
+        {scheduledAtDiffers ? <Text style={styles.itemMeta}>Agendada {formatDate(task.scheduledAt)} · {formatTime(task.scheduledAt)}</Text> : null}
+      </View>
+      {calendarDate ? <MaterialCommunityIcons color={colors.textMuted} name="chevron-right" size={20} /> : null}
+    </>
+  );
+
+  if (!calendarDate) return <View style={styles.taskRow}>{row}</View>;
+  return (
+    <Pressable
+      accessibilityLabel={`Abrir calendario para ${title}${task.dueDate ? `, ${overdue ? 'venció' : 'vence'} ${formatDate(task.dueDate)}` : ', sin fecha'}`}
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ focused, pressed }) => [styles.taskRow, focused && styles.focused, pressed && styles.pressed]}
+    >
+      {row}
+    </Pressable>
   );
 }
 
@@ -225,6 +292,7 @@ const createStyles = (colors, layout) => StyleSheet.create({
   heading: { gap: 4, marginBottom: 2 },
   title: { color: colors.text, fontSize: layout.isPhone ? 25 : 29, fontWeight: '800' },
   subtitle: { color: colors.textSecondary, fontSize: 14 },
+  totalCount: { color: colors.primary, fontSize: 13, fontWeight: '700', marginTop: 6 },
   section: {
     padding: layout.isPhone ? 15 : 20,
     gap: 14,
@@ -281,11 +349,16 @@ const createStyles = (colors, layout) => StyleSheet.create({
     backgroundColor: colors.cardElevated,
   },
   taskIcon: { width: 40, height: 40, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.accentSoft },
+  overdueIcon: { backgroundColor: colors.dangerSoft },
   hearingIcon: { width: 40, height: 40, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.warningSoft },
   itemCopy: { flex: 1, gap: 3 },
   itemTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
   itemMeta: { color: colors.textSecondary, fontSize: 12 },
+  dueDateText: { color: colors.text, fontSize: 12, fontWeight: '700' },
+  overdueText: { color: colors.danger, fontSize: 12, fontWeight: '700' },
+  hearingMessage: { color: colors.text, fontSize: 14, fontWeight: '800' },
   focused: { borderColor: colors.focusRing },
+  toggleFocused: { borderWidth: 2, borderColor: colors.focusRing, borderRadius: 14 },
   pressed: { opacity: 0.78 },
   errorBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12, borderRadius: 14, backgroundColor: colors.dangerSoft },
   errorText: { flex: 1, color: colors.danger, fontSize: 13, fontWeight: '600' },

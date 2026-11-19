@@ -1,6 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import EmptyState from '../components/EmptyState';
@@ -31,8 +31,20 @@ export default function CaseDetailScreen({ navigation, route }) {
   const [moving, setMoving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [recentHearingsExpanded, setRecentHearingsExpanded] = useState(true);
+  const [upcomingSectionY, setUpcomingSectionY] = useState(null);
+  const [highlightedHearingId, setHighlightedHearingId] = useState(null);
   const [clockNow, setClockNow] = useState(() => Date.now());
   const requestSequenceRef = useRef(0);
+  const scrollRef = useRef(null);
+  const consumedHearingIntentRef = useRef(null);
+  const hearingIdIntent = route?.params?.hearingId;
+  const notificationIntentId = route?.params?.notificationIntentId;
+
+  useEffect(() => {
+    setUpcomingSectionY(null);
+    setHighlightedHearingId(null);
+    consumedHearingIntentRef.current = null;
+  }, [caseId]);
 
   const loadCase = useCallback(async ({ preserveExisting = false } = {}) => {
     const requestId = ++requestSequenceRef.current;
@@ -65,6 +77,17 @@ export default function CaseDetailScreen({ navigation, route }) {
       return () => { clearInterval(timer); requestSequenceRef.current += 1; };
     }, [loadCase])
   );
+
+  useEffect(() => {
+    if (!caseDetail || hearingIdIntent == null || upcomingSectionY == null) return;
+    const intentKey = notificationIntentId || `${caseId}:${hearingIdIntent}`;
+    if (consumedHearingIntentRef.current === intentKey) return;
+
+    consumedHearingIntentRef.current = intentKey;
+    setHighlightedHearingId(hearingIdIntent);
+    scrollRef.current?.scrollTo({ y: Math.max(0, upcomingSectionY - 24), animated: true });
+    navigation.setParams({ hearingId: undefined, notificationIntentId: undefined });
+  }, [caseDetail, caseId, hearingIdIntent, navigation, notificationIntentId, upcomingSectionY]);
 
   if (loading && !caseDetail) {
     return (
@@ -162,7 +185,7 @@ export default function CaseDetailScreen({ navigation, route }) {
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} style={styles.screen}>
+    <ScrollView ref={scrollRef} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} style={styles.screen}>
       <View style={styles.heroCard}>
         <View style={styles.heroHeader}>
           <View style={styles.heroCopy}>
@@ -229,7 +252,14 @@ export default function CaseDetailScreen({ navigation, route }) {
         </View>
       </Modal>
 
-      <HearingSection title="Próximas Audiencias" hearings={upcomingHearings} emptyMessage="No hay próximas audiencias programadas." {...{ colors, styles, caseDetail, documents, navigation, refreshCase }} />
+      <HearingSection
+        title="Próximas Audiencias"
+        hearings={upcomingHearings}
+        emptyMessage="No hay próximas audiencias programadas."
+        onLayout={({ nativeEvent }) => setUpcomingSectionY(nativeEvent.layout.y)}
+        highlightedHearingId={highlightedHearingId}
+        {...{ colors, styles, caseDetail, documents, navigation, refreshCase }}
+      />
       <HearingSection
         title="Audiencias Recientes"
         hearings={recentHearings}
@@ -309,7 +339,7 @@ export default function CaseDetailScreen({ navigation, route }) {
   );
 }
 
-function HearingSection({ title, hearings, emptyMessage, colors, styles, caseDetail, documents, navigation, refreshCase, collapsible = false, expanded = true, onToggleExpanded }) {
+function HearingSection({ title, hearings, emptyMessage, colors, styles, caseDetail, documents, navigation, refreshCase, collapsible = false, expanded = true, onToggleExpanded, onLayout, highlightedHearingId }) {
   const openVideoConference = (url) => {
     const value = String(url || '').trim();
     if (!/^https?:\/\/[^\s]+$/i.test(value)) {
@@ -340,11 +370,11 @@ function HearingSection({ title, hearings, emptyMessage, colors, styles, caseDet
     </Pressable>
   ) : null;
 
-  return <Section colors={colors} styles={styles} title={title} headerAction={headerAction}>
+  return <Section colors={colors} styles={styles} title={title} headerAction={headerAction} onLayout={onLayout}>
     {expanded && hearings.length ? hearings.map((hearing) => {
       const isCompletedRecent = title === 'Audiencias Recientes' && Boolean(hearing?.completedAt);
       return (
-        <View key={hearing?.id} style={styles.sectionCard}>
+        <View key={hearing?.id} style={[styles.sectionCard, String(highlightedHearingId) === String(hearing?.id) && styles.hearingHighlight]}>
           <View style={styles.sectionCardHeader}>
             <View style={styles.sectionCardCopy}>
               <Text style={styles.sectionCardTitle}>{hearing?.title || 'Audiencia sin titulo'}</Text>
@@ -399,9 +429,9 @@ function HearingSection({ title, hearings, emptyMessage, colors, styles, caseDet
   </Section>;
 }
 
-function Section({ actionLabel, children, colors, headerAction, onAction, styles, title }) {
+function Section({ actionLabel, children, colors, headerAction, onAction, onLayout, styles, title }) {
   return (
-    <View style={styles.section}>
+    <View onLayout={onLayout} style={styles.section}>
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>{title}</Text>
         {actionLabel && onAction ? (
@@ -556,6 +586,10 @@ const createStyles = (colors, layout) => StyleSheet.create({
     elevation: 3,
     borderWidth: 1,
     borderColor: colors.borderSoft,
+  },
+  hearingHighlight: {
+    borderColor: colors.focusRing,
+    backgroundColor: colors.accentSoft,
   },
   sectionCardHeader: {
     flexDirection: 'row',
